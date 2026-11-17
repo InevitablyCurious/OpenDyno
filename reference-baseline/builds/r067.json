@@ -1,0 +1,133 @@
+{
+  "id": "r067",
+  "source": {
+    "kind": "testset",
+    "matrix": null,
+    "row": null
+  },
+  "input": {
+    "path": "testset/r067/report.json",
+    "sha256": "eae51393693deaa28177d0e7a87a8649f93b10d61457c1096bb4c0100fde4771"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 1,
+  "verdict": "FAIL",
+  "render_blocked": null,
+  "failed_gates": [
+    "F29",
+    "F32",
+    "F83"
+  ],
+  "findings": [
+    {
+      "gate": "F29",
+      "aspect": "thin",
+      "problem_index": 0,
+      "told": true
+    },
+    {
+      "gate": "F32",
+      "aspect": "narrow",
+      "problem_index": 1,
+      "told": true
+    },
+    {
+      "gate": "F83",
+      "aspect": null,
+      "problem_index": 2,
+      "told": true
+    }
+  ],
+  "told": [
+    {
+      "index": 1,
+      "text": "GOAL: We are building a fully functioning backgammon game using Node.js and TypeScript, served and played in the browser — a complete, playable game from the opening position through rolling dice, moving checkers around the board, bearing off, and winning.",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 2,
+      "text": "PROBLEM: The game is not fully functional yet and requires work.",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 3,
+      "text": "TASK: Here are the problems that require attention:",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 4,
+      "text": "Before the list: every time I check, I run your latest code from scratch and start a brand-new game. I play it on an ordinary laptop screen — 1280×800, and 1440×900. I play white: my checkers travel anticlockwise, from point 24 around to point 1, and black's travel the opposite way round, from point 1 up to point 24.",
+      "finding_key": null,
+      "declared_class": "excuse-eliminator"
+    },
+    {
+      "index": 5,
+      "text": "I've checked your work thoroughly, and I want to list the issues that I've encountered while playing the game:",
+      "finding_key": null,
+      "declared_class": "section-headers"
+    },
+    {
+      "index": 6,
+      "text": "1) The triangles facing each other across the board are the same colour — I expect light to face dark.",
+      "finding_key": "F83",
+      "declared_class": null
+    },
+    {
+      "index": 7,
+      "text": "2) The bar down the middle is just a thin line — I expect it wide enough for a piece I've hit to sit on it.",
+      "finding_key": "F29.thin",
+      "declared_class": null
+    },
+    {
+      "index": 8,
+      "text": "Also, my software team ran your app through their own checks — on the code underneath it and on exact measurements of the page — and found these problems:",
+      "finding_key": null,
+      "declared_class": "section-headers"
+    },
+    {
+      "index": 9,
+      "text": "1) Their measurements of the page: the off tray is 10 px wide; a checker lying on its side needs 67 px. The brief has the off tray at least as wide as a piece, so a borne-off piece fits lying on its side.",
+      "finding_key": "F32.narrow",
+      "declared_class": null
+    },
+    {
+      "index": 10,
+      "text": "They work from the written spec for this app, against the code exactly as it is right now, on a clean checkout — so if they can't find something, it isn't there to find.",
+      "finding_key": null,
+      "declared_class": "team-excuse-eliminator"
+    },
+    {
+      "index": 11,
+      "text": "While you fix these, keep what the team's software depends on exactly as it is — don't rename or remove any of it:",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 12,
+      "text": "- the data-testid tags: scoreWhite, scoreBlack, difficulty, newGameBtn, board, playfield, checkerLayer, pointHints, turnIndicator, pipWhite, pipBlack, cube, cubeVal, cubeOwner, dice, rollBtn, doubleBtn, undoBtn, endTurnBtn, message, modalOverlay, modalTitle, modalBody, modalBtns; and on the dynamic elements point, die, bar, off-tray, off-you",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 13,
+      "text": "- the ids of the static elements above, each the same string as its tag",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 14,
+      "text": "- the routes: POST /api/state, /api/new, /api/roll, /api/move, /api/undo, /api/endturn, /api/double, /api/double/respond, /api/ai, and GET /health; and, with DEBUG_API=1, POST /api/debug/state and POST /api/debug/roll",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 15,
+      "text": "- the fields every response returns: points, bar, off, turn, phase, dice, remainingDice, cube, difficulty, score, winner, winType, pointsWon, doubleOfferedBy, message, turnOver, gamesPlayed, pip, legalMoves, canDouble",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    }
+  ]
+}

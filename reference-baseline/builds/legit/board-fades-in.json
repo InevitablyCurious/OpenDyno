@@ -1,0 +1,19 @@
+{
+  "id": "legit/board-fades-in",
+  "source": {
+    "kind": "matrix",
+    "matrix": "legit",
+    "row": "board-fades-in"
+  },
+  "input": {
+    "path": "matrix/legit/board-fades-in-report.json",
+    "sha256": "8a1cbf99234465d3ad84d5bce26b4f1a26687134d5b0f1e048a7b4444d891f19"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 3,
+  "verdict": "PASS",
+  "render_blocked": null,
+  "failed_gates": [],
+  "findings": [],
+  "told": []
+}

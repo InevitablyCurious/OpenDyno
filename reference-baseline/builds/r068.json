@@ -1,0 +1,19 @@
+{
+  "id": "r068",
+  "source": {
+    "kind": "testset",
+    "matrix": null,
+    "row": null
+  },
+  "input": {
+    "path": "testset/r068/report.json",
+    "sha256": "538bc78ac91c412514c65d16b1e092789990142db4fca7203b99569847c8307b"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 1,
+  "verdict": "PASS",
+  "render_blocked": null,
+  "failed_gates": [],
+  "findings": [],
+  "told": []
+}

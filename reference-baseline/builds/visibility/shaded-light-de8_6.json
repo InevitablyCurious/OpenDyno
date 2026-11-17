@@ -1,0 +1,95 @@
+{
+  "id": "visibility/shaded-light-de8_6",
+  "source": {
+    "kind": "matrix",
+    "matrix": "visibility",
+    "row": "shaded-light-de8_6"
+  },
+  "input": {
+    "path": "matrix/visibility/shaded-light-de8_6-report.json",
+    "sha256": "ab50f78dd76acf1d45d13c276b4dedd054a92807800284725d2608deddb1d764"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 1,
+  "verdict": "FAIL",
+  "render_blocked": null,
+  "failed_gates": [
+    "F91"
+  ],
+  "findings": [
+    {
+      "gate": "F91",
+      "aspect": null,
+      "problem_index": 0,
+      "told": true
+    }
+  ],
+  "told": [
+    {
+      "index": 1,
+      "text": "GOAL: We are building a fully functioning backgammon game using Node.js and TypeScript, served and played in the browser — a complete, playable game from the opening position through rolling dice, moving checkers around the board, bearing off, and winning.",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 2,
+      "text": "PROBLEM: The game is not fully functional yet and requires work.",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 3,
+      "text": "TASK: Here are the problems that require attention:",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 4,
+      "text": "Before the list: every time I check, I run your latest code from scratch and start a brand-new game. I play it on an ordinary laptop screen — 1280×800, and 1440×900. I play white: my checkers travel anticlockwise, from point 24 around to point 1, and black's travel the opposite way round, from point 1 up to point 24.",
+      "finding_key": null,
+      "declared_class": "excuse-eliminator"
+    },
+    {
+      "index": 5,
+      "text": "I've checked your work thoroughly, and I want to list the issues that I've encountered while playing the game:",
+      "finding_key": null,
+      "declared_class": "section-headers"
+    },
+    {
+      "index": 6,
+      "text": "1) I see pieces on the board already — I asked for just the board and the buttons first, with no pieces yet.",
+      "finding_key": "F91",
+      "declared_class": null
+    },
+    {
+      "index": 7,
+      "text": "While you fix these, keep what the team's software depends on exactly as it is — don't rename or remove any of it:",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 8,
+      "text": "- the data-testid tags: scoreWhite, scoreBlack, difficulty, newGameBtn, board, playfield, checkerLayer, pointHints, turnIndicator, pipWhite, pipBlack, cube, cubeVal, cubeOwner, dice, rollBtn, doubleBtn, undoBtn, endTurnBtn, message, modalOverlay, modalTitle, modalBody, modalBtns; and on the dynamic elements point, die, bar, off-tray, off-you",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 9,
+      "text": "- the ids of the static elements above, each the same string as its tag",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 10,
+      "text": "- the routes: POST /api/state, /api/new, /api/roll, /api/move, /api/undo, /api/endturn, /api/double, /api/double/respond, /api/ai, and GET /health; and, with DEBUG_API=1, POST /api/debug/state and POST /api/debug/roll",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 11,
+      "text": "- the fields every response returns: points, bar, off, turn, phase, dice, remainingDice, cube, difficulty, score, winner, winType, pointsWon, doubleOfferedBy, message, turnOver, gamesPlayed, pip, legalMoves, canDouble",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    }
+  ]
+}

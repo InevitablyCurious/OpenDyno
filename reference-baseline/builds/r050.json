@@ -1,0 +1,183 @@
+{
+  "id": "r050",
+  "source": {
+    "kind": "testset",
+    "matrix": null,
+    "row": null
+  },
+  "input": {
+    "path": "testset/r050/report.json",
+    "sha256": "1948c5c84e88c9d6242893e42954124a6de2da9af48f748e19aaa9a73baeb1ff"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 1,
+  "verdict": "FAIL",
+  "render_blocked": null,
+  "failed_gates": [
+    "F32",
+    "F30",
+    "F70",
+    "F91",
+    "F82"
+  ],
+  "findings": [
+    {
+      "gate": "F32",
+      "aspect": "side",
+      "problem_index": 0,
+      "told": false
+    },
+    {
+      "gate": "F30",
+      "aspect": null,
+      "problem_index": 1,
+      "told": false
+    },
+    {
+      "gate": "F70",
+      "aspect": "touching",
+      "problem_index": 2,
+      "told": false
+    },
+    {
+      "gate": "F91",
+      "aspect": null,
+      "problem_index": 3,
+      "told": false
+    },
+    {
+      "gate": "F82",
+      "aspect": null,
+      "problem_index": 4,
+      "told": false
+    }
+  ],
+  "told": [
+    {
+      "index": 1,
+      "text": "GOAL: We are building a fully functioning backgammon game using Node.js and TypeScript, served and played in the browser — a complete, playable game from the opening position through rolling dice, moving checkers around the board, bearing off, and winning.",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 2,
+      "text": "PROBLEM: The game is not fully functional yet and requires work.",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 3,
+      "text": "TASK: Here are the problems that require attention:",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 4,
+      "text": "Before the list: every time I check, I run your latest code from scratch and start a brand-new game. I play it on an ordinary laptop screen — 1280×800, and 1440×900. I play white: my checkers travel anticlockwise, from point 24 around to point 1, and black's travel the opposite way round, from point 1 up to point 24.",
+      "finding_key": null,
+      "declared_class": "excuse-eliminator"
+    },
+    {
+      "index": 5,
+      "text": "I've checked your work thoroughly, and I want to list the issues that I've encountered while playing the game:",
+      "finding_key": null,
+      "declared_class": "section-headers"
+    },
+    {
+      "index": 6,
+      "text": "1) The triangles aren't drawn right. Here's what I expect:",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 7,
+      "text": "   - The bar splits each row in half, so the board has four quarters with six triangles in each.",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 8,
+      "text": "   - The six triangles fill their quarter edge to edge, with no empty strip left over — on the left from the board's edge to the bar, on the right from the bar to the off tray — and all 24 are the same width.",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 9,
+      "text": "   - Each triangle's wide end sits on the board's outer edge, and its tip points toward the middle.",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 10,
+      "text": "   - The tips reach most of the way to the middle but never touch the tip across from them: about a quarter of half the board's height stays open between them.",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 11,
+      "text": "   - They use two colours that alternate side by side, each triangle faces one of the other colour across the middle, and both colours stand out clearly from the board.",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 12,
+      "text": "2) The off tray isn't drawn right. Here's what I expect:",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 13,
+      "text": "   - It sits on the board at the right-hand end, beside points 1 and 24.",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 14,
+      "text": "   - It runs the full height of the board.",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 15,
+      "text": "   - It's at least as wide as a piece and no wider than one and a half points, so a borne-off piece fits in it lying on its side.",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 16,
+      "text": "   - It stands out from the board — its own fill, or a clear edge on the side facing the points — and no triangle runs into it.",
+      "finding_key": null,
+      "declared_class": "general-part-lines"
+    },
+    {
+      "index": 17,
+      "text": "While you fix these, keep what the team's software depends on exactly as it is — don't rename or remove any of it:",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 18,
+      "text": "- the data-testid tags: scoreWhite, scoreBlack, difficulty, newGameBtn, board, playfield, checkerLayer, pointHints, turnIndicator, pipWhite, pipBlack, cube, cubeVal, cubeOwner, dice, rollBtn, doubleBtn, undoBtn, endTurnBtn, message, modalOverlay, modalTitle, modalBody, modalBtns; and on the dynamic elements point, die, bar, off-tray, off-you",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 19,
+      "text": "- the ids of the static elements above, each the same string as its tag",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 20,
+      "text": "- the routes: POST /api/state, /api/new, /api/roll, /api/move, /api/undo, /api/endturn, /api/double, /api/double/respond, /api/ai, and GET /health; and, with DEBUG_API=1, POST /api/debug/state and POST /api/debug/roll",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 21,
+      "text": "- the fields every response returns: points, bar, off, turn, phase, dice, remainingDice, cube, difficulty, score, winner, winType, pointsWon, doubleOfferedBy, message, turnOver, gamesPlayed, pip, legalMoves, canDouble",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    }
+  ]
+}

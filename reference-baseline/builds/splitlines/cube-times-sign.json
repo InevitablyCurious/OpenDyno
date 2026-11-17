@@ -1,0 +1,19 @@
+{
+  "id": "splitlines/cube-times-sign",
+  "source": {
+    "kind": "matrix",
+    "matrix": "splitlines",
+    "row": "cube-times-sign"
+  },
+  "input": {
+    "path": "matrix/splitlines/cube-times-sign-report.json",
+    "sha256": "5bf10dc669c66e7f216511eaf204feea1adb9d2c728d315c37d20871ec8b1fa4"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 3,
+  "verdict": "PASS",
+  "render_blocked": null,
+  "failed_gates": [],
+  "findings": [],
+  "told": []
+}

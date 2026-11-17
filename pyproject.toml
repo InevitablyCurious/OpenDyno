@@ -1,0 +1,6 @@
+# Ruff configuration only — this repo ships no Python package and installs nothing.
+# CI (.github/workflows/ci.yml) runs `ruff format --check .` then `ruff check .`.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

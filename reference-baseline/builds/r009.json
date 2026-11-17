@@ -1,0 +1,136 @@
+{
+  "id": "r009",
+  "source": {
+    "kind": "testset",
+    "matrix": null,
+    "row": null
+  },
+  "input": {
+    "path": "testset/r009/report.json",
+    "sha256": "9bb09b9d6ee5e3062ae1de8497e7d72f96a734cd25360ba72079aa6162c54a5b"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 1,
+  "verdict": "FAIL",
+  "render_blocked": null,
+  "failed_gates": [
+    "F29",
+    "F32",
+    "F30",
+    "F70",
+    "F91",
+    "F37"
+  ],
+  "findings": [
+    {
+      "gate": "F29",
+      "aspect": "overlap",
+      "problem_index": 0,
+      "told": false
+    },
+    {
+      "gate": "F32",
+      "aspect": "offboard",
+      "problem_index": 1,
+      "told": false
+    },
+    {
+      "gate": "F30",
+      "aspect": null,
+      "problem_index": 2,
+      "told": false
+    },
+    {
+      "gate": "F70",
+      "aspect": "toowide",
+      "problem_index": 3,
+      "told": false
+    },
+    {
+      "gate": "F91",
+      "aspect": null,
+      "problem_index": 4,
+      "told": false
+    },
+    {
+      "gate": "F37",
+      "aspect": "shape",
+      "problem_index": 5,
+      "told": true
+    }
+  ],
+  "told": [
+    {
+      "index": 1,
+      "text": "GOAL: We are building a fully functioning backgammon game using Node.js and TypeScript, served and played in the browser — a complete, playable game from the opening position through rolling dice, moving checkers around the board, bearing off, and winning.",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 2,
+      "text": "PROBLEM: The game is not fully functional yet and requires work.",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 3,
+      "text": "TASK: Here are the problems that require attention:",
+      "finding_key": null,
+      "declared_class": "first-message-preamble"
+    },
+    {
+      "index": 4,
+      "text": "Before the list: every time I check, I run your latest code from scratch and start a brand-new game. I play it on an ordinary laptop screen — 1280×800, and 1440×900. I play white: my checkers travel anticlockwise, from point 24 around to point 1, and black's travel the opposite way round, from point 1 up to point 24.",
+      "finding_key": null,
+      "declared_class": "excuse-eliminator"
+    },
+    {
+      "index": 5,
+      "text": "My software team ran your app through their own checks — on the code underneath it and on exact measurements of the page — and found these problems:",
+      "finding_key": null,
+      "declared_class": "section-headers"
+    },
+    {
+      "index": 6,
+      "text": "1) Their measurements of the page: at 1280×800 the board is 1.33 times as wide as it is tall, not 1.4. The brief keeps the whole board — its points, the bar and the off tray — 1.4 times as wide as it is tall, sized to the window.",
+      "finding_key": "F37.shape",
+      "declared_class": null
+    },
+    {
+      "index": 7,
+      "text": "They work from the written spec for this app, against the code exactly as it is right now, on a clean checkout — so if they can't find something, it isn't there to find.",
+      "finding_key": null,
+      "declared_class": "team-excuse-eliminator"
+    },
+    {
+      "index": 8,
+      "text": "While you fix these, keep what the team's software depends on exactly as it is — don't rename or remove any of it:",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 9,
+      "text": "- the data-testid tags: scoreWhite, scoreBlack, difficulty, newGameBtn, board, playfield, checkerLayer, pointHints, turnIndicator, pipWhite, pipBlack, cube, cubeVal, cubeOwner, dice, rollBtn, doubleBtn, undoBtn, endTurnBtn, message, modalOverlay, modalTitle, modalBody, modalBtns; and on the dynamic elements point, die, bar, off-tray, off-you",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 10,
+      "text": "- the ids of the static elements above, each the same string as its tag",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 11,
+      "text": "- the routes: POST /api/state, /api/new, /api/roll, /api/move, /api/undo, /api/endturn, /api/double, /api/double/respond, /api/ai, and GET /health; and, with DEBUG_API=1, POST /api/debug/state and POST /api/debug/roll",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    },
+    {
+      "index": 12,
+      "text": "- the fields every response returns: points, bar, off, turn, phase, dice, remainingDice, cube, difficulty, score, winner, winType, pointsWon, doubleOfferedBy, message, turnOver, gamesPlayed, pip, legalMoves, canDouble",
+      "finding_key": null,
+      "declared_class": "constraint-block"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "id": "legit/buttons-stacked",
+  "source": {
+    "kind": "matrix",
+    "matrix": "legit",
+    "row": "buttons-stacked"
+  },
+  "input": {
+    "path": "matrix/legit/buttons-stacked-report.json",
+    "sha256": "138a785d903451314e2aa0d008fc5e9f0d74439a4ccd70b98c5eced481c4986b"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 3,
+  "verdict": "PASS",
+  "render_blocked": null,
+  "failed_gates": [],
+  "findings": [],
+  "told": []
+}

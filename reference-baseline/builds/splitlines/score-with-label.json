@@ -1,0 +1,19 @@
+{
+  "id": "splitlines/score-with-label",
+  "source": {
+    "kind": "matrix",
+    "matrix": "splitlines",
+    "row": "score-with-label"
+  },
+  "input": {
+    "path": "matrix/splitlines/score-with-label-report.json",
+    "sha256": "53dfa26bb6a1d1c60df9d1bf99861a77323a9a4b7fdc9c9b84fccd99198f1a3e"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 3,
+  "verdict": "PASS",
+  "render_blocked": null,
+  "failed_gates": [],
+  "findings": [],
+  "told": []
+}

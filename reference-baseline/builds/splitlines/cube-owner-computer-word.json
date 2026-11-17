@@ -1,0 +1,19 @@
+{
+  "id": "splitlines/cube-owner-computer-word",
+  "source": {
+    "kind": "matrix",
+    "matrix": "splitlines",
+    "row": "cube-owner-computer-word"
+  },
+  "input": {
+    "path": "matrix/splitlines/cube-owner-computer-word-report.json",
+    "sha256": "f76b113e842d77b4965c848affca5d6a6045f21622e39e0108a48433a7df8837"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 3,
+  "verdict": "PASS",
+  "render_blocked": null,
+  "failed_gates": [],
+  "findings": [],
+  "told": []
+}

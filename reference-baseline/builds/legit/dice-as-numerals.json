@@ -1,0 +1,19 @@
+{
+  "id": "legit/dice-as-numerals",
+  "source": {
+    "kind": "matrix",
+    "matrix": "legit",
+    "row": "dice-as-numerals"
+  },
+  "input": {
+    "path": "matrix/legit/dice-as-numerals-report.json",
+    "sha256": "f7cd49fe8559fa870a972dc6ba137060a379a3eb895f32aca9ba8a6249980c8f"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 3,
+  "verdict": "PASS",
+  "render_blocked": null,
+  "failed_gates": [],
+  "findings": [],
+  "told": []
+}

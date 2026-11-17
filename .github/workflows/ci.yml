@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff==0.16.5
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests
+
+      - name: Reference proof
+        run: python3 tools/prove.py

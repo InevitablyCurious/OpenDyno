@@ -1,0 +1,19 @@
+{
+  "id": "legit/cream-and-red-points",
+  "source": {
+    "kind": "matrix",
+    "matrix": "legit",
+    "row": "cream-and-red-points"
+  },
+  "input": {
+    "path": "matrix/legit/cream-and-red-points-report.json",
+    "sha256": "5bffc9a3b5aa89e9fb200ee1a9841170d62cc1fc8598db651fd7343b4378d15a"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 3,
+  "verdict": "PASS",
+  "render_blocked": null,
+  "failed_gates": [],
+  "findings": [],
+  "told": []
+}

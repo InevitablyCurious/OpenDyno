@@ -1,0 +1,19 @@
+{
+  "id": "legit/plain-button-words",
+  "source": {
+    "kind": "matrix",
+    "matrix": "legit",
+    "row": "plain-button-words"
+  },
+  "input": {
+    "path": "matrix/legit/plain-button-words-report.json",
+    "sha256": "3c653a4686f3aedebec62d3bc5a2ae13644ce24eed897f828089ec3e24c37f1d"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 3,
+  "verdict": "PASS",
+  "render_blocked": null,
+  "failed_gates": [],
+  "findings": [],
+  "told": []
+}

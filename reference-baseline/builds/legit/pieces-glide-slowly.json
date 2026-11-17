@@ -1,0 +1,19 @@
+{
+  "id": "legit/pieces-glide-slowly",
+  "source": {
+    "kind": "matrix",
+    "matrix": "legit",
+    "row": "pieces-glide-slowly"
+  },
+  "input": {
+    "path": "matrix/legit/pieces-glide-slowly-report.json",
+    "sha256": "fcea7907b225e237bf4ad7360edf9fa4247ecfd5d37d5e2eb3fc0680e4324db8"
+  },
+  "reference_commit": "bfb2d10391cae310414c48905459014cf7140e20",
+  "layer": 3,
+  "verdict": "PASS",
+  "render_blocked": null,
+  "failed_gates": [],
+  "findings": [],
+  "told": []
+}

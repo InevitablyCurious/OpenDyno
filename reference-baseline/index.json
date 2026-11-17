@@ -1,0 +1,390 @@
+{
+  "pairs": [
+    {
+      "key": "F01",
+      "gate": "F01",
+      "aspect": null,
+      "wording": "When I open the game, the board doesn't show up — I expect to see the board with the pieces set out, ready to play.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "t16"
+      ]
+    },
+    {
+      "key": "F07.owner",
+      "gate": "F07",
+      "aspect": "owner",
+      "wording": "After I doubled and the computer took it, the cube doesn't show that it's the computer's now.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/cube-owner-never-moves"
+      ]
+    },
+    {
+      "key": "F07.value",
+      "gate": "F07",
+      "aspect": "value",
+      "wording": "After I doubled and the computer took it, the cube on screen doesn't read 2.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/cube-value-stuck-at-1"
+      ]
+    },
+    {
+      "key": "F12",
+      "gate": "F12",
+      "aspect": null,
+      "wording": "When the game ends, it doesn't tell me I won — there's no win message or victory popup.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/banner-says-nothing"
+      ]
+    },
+    {
+      "key": "F12.banner",
+      "gate": "F12",
+      "aspect": "banner",
+      "wording": "Their checks of the page: the win banner (message) reads \"White wins!\", not \"You win\". The brief has the win banner say \"You win\" when the player wins.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/banner-white-wins"
+      ]
+    },
+    {
+      "key": "F17.zero",
+      "gate": "F17",
+      "aspect": "zero",
+      "wording": "I refreshed the page between games and the score at the top went back to zero-zero even though we'd already played a couple of games.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/score-wiped-on-screen"
+      ]
+    },
+    {
+      "key": "F22.hiddenclass",
+      "gate": "F22",
+      "aspect": "hiddenclass",
+      "wording": "Their checks of the page: after New Game the end pop-up is out of sight but modalOverlay does not carry the hidden class. The brief has the end pop-up shown and hidden by toggling the hidden class on modalOverlay, and their software reads that class.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/popup-hidden-by-style"
+      ]
+    },
+    {
+      "key": "F27",
+      "gate": "F27",
+      "aspect": null,
+      "wording": "Their monitoring shows your page logging errors in the browser console when it loads.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "t16"
+      ]
+    },
+    {
+      "key": "F29.overlap",
+      "gate": "F29",
+      "aspect": "overlap",
+      "wording": "The bar cuts across some of the points.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "t17"
+      ]
+    },
+    {
+      "key": "F29.thin",
+      "gate": "F29",
+      "aspect": "thin",
+      "wording": "The bar down the middle is just a thin line — I expect it wide enough for a piece I've hit to sit on it.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "r067"
+      ]
+    },
+    {
+      "key": "F29.wide",
+      "gate": "F29",
+      "aspect": "wide",
+      "wording": "Their measurements of the page: the bar is 127 px wide; a piece is 51 px. The brief has the bar about as wide as a piece, with only a few pixels to spare on each side.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "X-bar-too-wide"
+      ]
+    },
+    {
+      "key": "F30.faint",
+      "gate": "F30",
+      "aspect": "faint",
+      "wording": "Their measurements of the page: the triangles on points 14, 16, 18, 19, 21, 23, 12, 10, 8, 5, 3, 1 are only faintly apart from the board — ΔE 5.0 at the faintest, colour 40,97,67 against the board's 20,86,58. The brief has each point drawn as a triangle that stands out from the board.",
+      "wording_variants": 4,
+      "occurrences": 4,
+      "builds": [
+        "visibility/flat-light-de5",
+        "visibility/flat-light-de7",
+        "visibility/shaded-light-de5",
+        "visibility/tan-light-de5"
+      ]
+    },
+    {
+      "key": "F32.narrow",
+      "gate": "F32",
+      "aspect": "narrow",
+      "wording": "Their measurements of the page: the off tray is 30 px wide; a checker lying on its side needs 63 px. The brief has the off tray at least as wide as a piece, so a borne-off piece fits lying on its side.",
+      "wording_variants": 4,
+      "occurrences": 1,
+      "builds": [
+        "r067"
+      ]
+    },
+    {
+      "key": "F32.overlap",
+      "gate": "F32",
+      "aspect": "overlap",
+      "wording": "The off tray cuts across some of the points.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "t17"
+      ]
+    },
+    {
+      "key": "F35",
+      "gate": "F35",
+      "aspect": null,
+      "wording": "The board isn't on the left with all the buttons and game info on the right, like I asked.",
+      "wording_variants": 1,
+      "occurrences": 5,
+      "builds": [
+        "M45-board-right",
+        "r004",
+        "r008",
+        "r039",
+        "t18"
+      ]
+    },
+    {
+      "key": "F35.controls",
+      "gate": "F35",
+      "aspect": "controls",
+      "wording": "Some of the buttons and game info aren't on the right of the board, like I asked.",
+      "wording_variants": 1,
+      "occurrences": 5,
+      "builds": [
+        "M38-controls-below",
+        "M39-board-too-wide",
+        "X-centred-buttons-under",
+        "r057",
+        "r065"
+      ]
+    },
+    {
+      "key": "F35.leftedge",
+      "gate": "F35",
+      "aspect": "leftedge",
+      "wording": "Their measurements of the page: at 1440×900 the board starts at x=159, too far in from the left edge. The brief puts the board at the left of the window, with all the buttons and game info on its right.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "r005"
+      ]
+    },
+    {
+      "key": "F37.shape",
+      "gate": "F37",
+      "aspect": "shape",
+      "wording": "Their measurements of the page: at 1280×800 the board is 0.93 times as wide as it is tall, not 1.4. The brief keeps the whole board — its points, the bar and the off tray — 1.4 times as wide as it is tall, sized to the window.",
+      "wording_variants": 12,
+      "occurrences": 43,
+      "builds": [
+        "M40-board-too-narrow",
+        "X-tray-missing",
+        "r006",
+        "r007",
+        "r009",
+        "r010",
+        "r012",
+        "r013",
+        "r014",
+        "r015",
+        "r016",
+        "r018",
+        "r019",
+        "r020",
+        "r021",
+        "r022",
+        "r023",
+        "r024",
+        "r026",
+        "r027",
+        "r033",
+        "r035",
+        "r037",
+        "r038",
+        "r042",
+        "r043",
+        "r044",
+        "r064",
+        "r069",
+        "r070",
+        "r072",
+        "r075",
+        "r078",
+        "r080",
+        "r082",
+        "r084",
+        "r086",
+        "r088",
+        "r089",
+        "r090",
+        "r104",
+        "r107",
+        "r108"
+      ]
+    },
+    {
+      "key": "F37.space",
+      "gate": "F37",
+      "aspect": "space",
+      "wording": "The board doesn't fill the screen — there's a lot of empty space around it.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "M43-board-short"
+      ]
+    },
+    {
+      "key": "F38.small",
+      "gate": "F38",
+      "aspect": "small",
+      "wording": "Their measurements of the page: at 1280×800 rollBtn is 99×22 px. The brief has every button at least 60 px wide and 24 px tall.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/button-too-short"
+      ]
+    },
+    {
+      "key": "F38.squished",
+      "gate": "F38",
+      "aspect": "squished",
+      "wording": "Some of the buttons' labels are cut off — the words don't fit on the button.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/button-label-cut"
+      ]
+    },
+    {
+      "key": "F48.dim",
+      "gate": "F48",
+      "aspect": "dim",
+      "wording": "Their measurements of a roll with no move: the dice of a roll with no move stand out 0.75 against 0.86 for a live roll. The brief dims the dice of a roll that can't be played, then passes the turn after about a second.",
+      "wording_variants": 2,
+      "occurrences": 2,
+      "builds": [
+        "splitlines/die-used-barely-dimmed",
+        "splitlines/die-used-not-dimmed"
+      ]
+    },
+    {
+      "key": "F78.grey",
+      "gate": "F78",
+      "aspect": "grey",
+      "wording": "After I move a piece, the die I used looks the same as the one I haven't played yet. I expect it greyed out slightly so I can see it's been played.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/die-used-not-dimmed"
+      ]
+    },
+    {
+      "key": "F78.slight",
+      "gate": "F78",
+      "aspect": "slight",
+      "wording": "Their measurements of the page: after a move the faintest die stands out 0.75 against 0.86 before it. The brief has a played die greyed out — visibly fainter than a die not yet played.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/die-used-barely-dimmed"
+      ]
+    },
+    {
+      "key": "F82",
+      "gate": "F82",
+      "aspect": null,
+      "wording": "Their measurements of the page: the buttons are different sizes: rollBtn 57×46, doubleBtn 67×46, undoBtn 57×46, endTurnBtn 67×46. The brief has all five buttons the same size as each other.",
+      "wording_variants": 10,
+      "occurrences": 1,
+      "builds": [
+        "splitlines/roll-spans-both-columns"
+      ]
+    },
+    {
+      "key": "F83",
+      "gate": "F83",
+      "aspect": null,
+      "wording": "The triangles facing each other across the board are the same colour — I expect light to face dark.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "r067"
+      ]
+    },
+    {
+      "key": "F91",
+      "gate": "F91",
+      "aspect": null,
+      "wording": "I see pieces on the board already — I asked for just the board and the buttons first, with no pieces yet.",
+      "wording_variants": 1,
+      "occurrences": 11,
+      "builds": [
+        "X-pieces-in-first-layer",
+        "r000",
+        "r001",
+        "r002",
+        "visibility/flat-dark-de8_6",
+        "visibility/flat-light-de12",
+        "visibility/flat-light-de8_6",
+        "visibility/golden",
+        "visibility/shaded-light-de12",
+        "visibility/shaded-light-de8_6",
+        "visibility/tan-light-de8_6"
+      ]
+    },
+    {
+      "key": "REQ-RENDER/blank-board",
+      "gate": "REQ-RENDER/blank-board",
+      "aspect": null,
+      "wording": "When I open the game, the board comes up blank — the points and triangles don't draw, so there's nothing to play on.",
+      "wording_variants": 1,
+      "occurrences": 1,
+      "builds": [
+        "X-blank-board"
+      ]
+    },
+    {
+      "key": "REQ-RENDER/geometry-not-drawn",
+      "gate": "REQ-RENDER/geometry-not-drawn",
+      "aspect": null,
+      "wording": "When I open the game, I can see the pieces, but the board itself never draws — there are no points or triangles, so there's nothing to play on.",
+      "wording_variants": 1,
+      "occurrences": 4,
+      "builds": [
+        "r011",
+        "r102",
+        "visibility/flat-blank",
+        "visibility/shaded-blank"
+      ]
+    }
+  ]
+}
