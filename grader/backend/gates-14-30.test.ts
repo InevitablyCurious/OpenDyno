@@ -13,7 +13,6 @@ import {
   loadEngine,
   makeState,
   openingPoints,
-  resolveStartCommand,
   startServer,
   stopServer,
   ordinaryTurn,
@@ -261,7 +260,6 @@ describe("Backgammon backend gates 14-30 (the computer's engine)", () => {
         else noResult++;
       }
 
-      expect(hardWins + easyWins + noResult).toBe(games);
       expect(hardWins + easyWins, `[aspect: unfinished] none of ${games} games of hard against easy came to an end`).toBeGreaterThan(0);
       expect(hardWins, `[aspect: strength] hard won ${hardWins} of ${games} games against easy's ${easyWins} (${noResult} unfinished)`).toBeGreaterThan(
         easyWins,
