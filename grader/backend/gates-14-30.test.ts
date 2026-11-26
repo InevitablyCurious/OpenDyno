@@ -218,7 +218,7 @@ describe("Backgammon backend gates 14-30 (the computer's engine)", () => {
           const result = choose(board, player, dice, difficulty);
 
           const replayed = replayAndAssertLegal(start, player, [...dice], result.moves);
-          expect(result.board).toEqual(replayed);
+          expect(result.board, "[aspect: board]").toEqual(replayed);
         }
       }
     });

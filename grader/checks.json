@@ -66,7 +66,7 @@
     "G10": {
       "name": "Single, gammon or backgammon",
       "what": "A finished game is classed correctly as a single win, a gammon or a backgammon.",
-      "how": "White has all 15 off in each case. Black with 2 already off → single. Black with none off, none on the bar and none in white's home → gammon. A black checker in white's home, or on the bar → backgammon. White with only 14 off → not won.",
+      "how": "White has all 15 off in each case. Black with 2 already off → single. Black with none off, none on the bar and none in white's home → gammon. A black checker in white's home, or on the bar → backgammon. White with only 14 off → not won. Through the API, bearing off the last white checker must set the winner to white ([aspect: winner]).",
       "looks": "code"
     },
     "G11": {
@@ -90,19 +90,19 @@
     "G13": {
       "name": "Turn flow",
       "what": "A die can't be used twice, turns go white → black → white, and a player with no move passes with a clear message.",
-      "how": "Through the running server with the roll fixed to 1 and 3: after playing the 3, playing it again must leave the remaining dice unchanged. Playing out white's turn, ending it and advancing the computer must hand the turn back to white. With white on the bar and both entry points blocked, rolling 2 and 4 must end the turn with no legal moves and a message reading exactly 'No moves available'.",
+      "how": "Through the running server with the roll fixed to 1 and 3: the move list must include a move that plays the 3 ([aspect: missingmove]), and after playing the 3, playing it again must leave the remaining dice unchanged. Playing out white's turn, ending it and advancing the computer must hand the turn back to white. With white on the bar and both entry points blocked, rolling 2 and 4 must end the turn with no legal moves and a message reading exactly 'No moves available'.",
       "looks": "code"
     },
     "G14": {
       "name": "Legal computer moves, and hard beats easy",
       "what": "Every move the computer makes is legal, and hard really is stronger than easy.",
-      "how": "200 random positions and rolls at each difficulty: every chosen move is replayed through the engine and must be legal and produce the board the computer claims. Then 25 full games with fixed dice, hard as black against easy as white: some must finish ([aspect: unfinished]) and hard must win more ([aspect: strength]). Told by the software team: a player cannot see either.",
+      "how": "200 random positions and rolls at each difficulty: every chosen move is replayed through the engine and must be legal and produce the board the computer claims ([aspect: board]). Then 25 full games with fixed dice, hard as black against easy as white: some must finish ([aspect: unfinished]) and hard must win more ([aspect: strength]). Told by the software team: a player cannot see either.",
       "looks": "code"
     },
     "G15": {
       "name": "A full game reaches a winner",
       "what": "A complete game, driven only through the public API with fixed dice, finishes with a winner and no crash partway.",
-      "how": "Starts a game at a fixed difficulty, fixes the opening roll and every later roll through the debug dice, plays white's legal moves one at a time and lets the computer play black, and requires the game to reach a winner (single, gammon or backgammon) with no server error, failing immediately if it stalls without a move.",
+      "how": "Starts a game at a fixed difficulty, fixes the opening roll and every later roll through the debug dice, plays white's legal moves one at a time and lets the computer play black, and requires the game to reach a winner and report a win type of single, gammon or backgammon ([aspect: wintype]) with no server error, failing immediately if it stalls without a move.",
       "looks": "code"
     },
     "G16": {
@@ -186,7 +186,7 @@
     "G25": {
       "name": "The computer takes its turn",
       "what": "After the player ends a turn, the computer takes its turn and control returns to the player.",
-      "how": "Rolls, completes white's moves, ends the turn, drives the AI turn through the API, and asserts the turn comes back to white.",
+      "how": "Rolls, completes white's moves, ends the turn, drives the AI turn through the API, and asserts the turn comes back to white. Right after the player's roll the turn must be white's ([aspect: afterroll]), and every step of playing the roll out must still have a legal move ([aspect: stuckroll]).",
       "looks": "code"
     },
     "G27": {
@@ -348,7 +348,7 @@
     "F10": {
       "name": "Re-entering shown on the board",
       "what": "Coming back in from the bar is shown on the board.",
-      "how": "White on the bar with the roll fixed to 3-5. After Roll, clicking the bar checker shows the two entry hints, one per playable entry die; the white checker must be drawn on the bar first ([aspect: onbar], waits on F09) and the dice must hold still (waits on F93); clicking one must take the checker off the bar ([aspect: reentry]), the server must agree (waits on G06), and a white checker must appear on point 20 or 22 (waits on G06).",
+      "how": "After the page is reloaded with the dice queued, a Roll button must be on screen ([aspect: rollbutton]). White on the bar with the roll fixed to 3-5. After Roll, clicking the bar checker shows the two entry hints, one per playable entry die; the white checker must be drawn on the bar first ([aspect: onbar], waits on F09) and the dice must hold still (waits on F93); clicking one must take the checker off the bar ([aspect: reentry]), the server must agree (waits on G06), and a white checker must appear on point 20 or 22 (waits on G06).",
       "looks": "page"
     },
     "F11": {
@@ -612,13 +612,13 @@
     "F58": {
       "name": "The top piece slides away",
       "what": "When a checker leaves a stack, the piece farthest from the board's edge is the one that slides away, and the rest stay put.",
-      "how": "Opening position, 2-1: the pieces on 13 are held in the page, the top one is picked up and played to 11. When a held piece is the one now on 11 it must be the top one; a page that draws every piece afresh leaves none to follow and is not judged.",
+      "how": "Opening position, 2-1: the pieces on 13 are held in the page, the top one is tapped to pick it up ([aspect: pickup]) and played to 11. When a held piece is the one now on 11 it must be the top one; a page that draws every piece afresh leaves none to follow and is not judged.",
       "looks": "page"
     },
     "F59": {
       "name": "A piece lands at the far end",
       "what": "When a checker lands on a point that already holds checkers, it joins at the far end of the stack, farthest from the edge.",
-      "how": "White to move with a 2 left, one piece on 13 and one on 11: both are held in the page, and the piece on 13 is played onto 11. When both held pieces are the ones on 11, the arrival must be farther from the edge; a page that draws them afresh is not judged.",
+      "how": "White to move with a 2 left, one piece on 13 and one on 11: both are held in the page, and the piece on 13 is tapped to pick it up ([aspect: pickup]) and played onto 11. When both held pieces are the ones on 11, the arrival must be farther from the edge; a page that draws them afresh is not judged.",
       "looks": "page"
     },
     "F60": {
@@ -834,7 +834,7 @@
     "G36": {
       "name": "A second roll through the API changes nothing",
       "what": "Once the dice are down, a roll asked for through the API is ignored or refused.",
-      "how": "Wins the opening 5-3 through the API, plays both dice, calls /api/roll, and requires the same dice and nothing left to play (a refusal counts as ignoring it).",
+      "how": "Wins the opening 5-3 through the API: throwing higher must give the player the first move ([aspect: won]); plays both dice and requires nothing left to play ([aspect: dice]); then calls /api/roll, and requires the same dice and nothing left to play (a refusal counts as ignoring it).",
       "looks": "code"
     }
   },

@@ -175,7 +175,11 @@ test("[F58] REQ-GEOMETRY — the top piece slides away", async ({ page }) => {
   const hints = page.getByTestId("hint");
   const back = page.locator('[data-testid="checker"][data-color="white"][data-loc="13"]');
   const backCount = await back.count();
-  await playerClickUntilShown(back.last(), hints);
+  try {
+    await playerClickUntilShown(back.last(), hints);
+  } catch (err) {
+    throw new Error(`[aspect: pickup] ${(err as Error).message}`);
+  }
   await expect.poll(async () => hints.count(), "[needs: REQ-HINT/hint F60]").toBeGreaterThan(0);
 
   // Click where the piece will sit — F45's own click: point 11's spot in the
@@ -268,7 +272,11 @@ test("[F59] REQ-GEOMETRY — a piece lands at the far end", async ({ page }) => 
 
   const hints = page.getByTestId("hint");
   const piece = page.locator('[data-testid="checker"][data-color="white"][data-loc="13"]');
-  await playerClickUntilShown(piece.last(), hints);
+  try {
+    await playerClickUntilShown(piece.last(), hints);
+  } catch (err) {
+    throw new Error(`[aspect: pickup] ${(err as Error).message}`);
+  }
   await expect.poll(async () => hints.count(), "[needs: REQ-HINT/hint F60]").toBeGreaterThan(0);
 
   // Play 13→11 by clicking the hint drawn over point 11. The point already

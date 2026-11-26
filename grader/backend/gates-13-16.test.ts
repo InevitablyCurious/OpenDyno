@@ -121,7 +121,7 @@ describe("Backgammon backend gates 13-16", () => {
       expect(sortedDice(state.remainingDice)).toEqual([1, 3]);
 
       const moveUsingThree = (state.legalMoves as Move[]).find((m) => m.die === 3);
-      expect(moveUsingThree).toBeTruthy();
+      expect(moveUsingThree, "[aspect: missingmove] the move list includes no move that plays the 3").toBeTruthy();
       if (!moveUsingThree) return;
 
       state = await api("/api/move", {
@@ -148,7 +148,7 @@ describe("Backgammon backend gates 13-16", () => {
       // movable-checker gate reports it when an ordinary roll gives none either
       // (a needs marker, harness/adapters/challenge/stages.py).
       const noMove = "[aspect: nomove] [needs: REQ-HINT/hint F03 F25]";
-      expect(state.turn).toBe("white");
+      expect(state.turn, "[aspect: afterroll] after the roll the turn was not white's").toBe("white");
       expect(state.phase, noMove).toBe("move");
 
       // A player plays a move the game shows, and tries the next one when a
@@ -170,7 +170,7 @@ describe("Backgammon backend gates 13-16", () => {
       let moveSteps = 0;
       while (!playedOut(state) && moveSteps < 16) {
         const legalMoves = (state.legalMoves ?? []) as Move[];
-        expect(legalMoves.length, moveSteps === 0 ? noMove : undefined).toBeGreaterThan(0);
+        expect(legalMoves.length, moveSteps === 0 ? noMove : "[aspect: stuckroll] the turn is mid-roll with no legal move left").toBeGreaterThan(0);
         const before = JSON.stringify(state.remainingDice);
         let taken = false;
         for (const m of legalMoves) {
@@ -371,7 +371,7 @@ describe("Backgammon backend gates 13-16", () => {
         state.winner,
         `Expected a winner within ${MAX_ITERATIONS} iterations, but the loop stopped at ${iterations} without one.`,
       ).toBeTruthy();
-      expect(["single", "gammon", "backgammon"]).toContain(state.winType);
+      expect(["single", "gammon", "backgammon"], "[aspect: wintype] the game reached a winner but reported a win type that is none of single/gammon/backgammon").toContain(state.winType);
     });
   });
 

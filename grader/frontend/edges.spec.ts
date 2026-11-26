@@ -126,7 +126,7 @@ test("[F10] REQ-BAR — bar re-entry visual", async ({ page }) => {
 
   await page.reload();
   const rollBtn = page.locator('[data-testid="rollBtn"]');
-  await expect(rollBtn).toBeVisible();
+  await expect(rollBtn, "[aspect: rollbutton] the Roll button is not on screen after the page is reloaded with the dice queued").toBeVisible();
   await rollAndCheck(page, [3, 5], () => rollBtn.click());
 
   const whiteBarChecker = page.locator(

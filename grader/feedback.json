@@ -139,6 +139,10 @@
       "first": "Their checks of your server: {measured}. On a turn with no move left the state says so: turnOver true and an empty legalMoves.",
       "repeat": "Their checks again: {measured} — a stuck turn's state still doesn't say turnOver true with an empty legalMoves."
     },
+    "G13.missingmove": {
+      "first": "They rolled a 3 and a 1, and the moves your server listed had none that plays the 3.",
+      "repeat": "They rolled a 3 and a 1 again, and the moves listed still had none that plays the 3."
+    },
     "G14": {
       "first": "They ask your computer's move-chooser for its moves in hundreds of positions and rolls, at every setting, and some of the moves it picks aren't legal.",
       "repeat": "They asked your computer's move-chooser again, and some of the moves it picks still aren't legal."
@@ -146,6 +150,10 @@
     "G15": {
       "first": "They play a whole game through your server with fixed dice, taking the computer's doubles, and it stops partway — stuck, or failing — before anyone wins.",
       "repeat": "Their scripted game through your server still stops before anyone wins."
+    },
+    "G15.wintype": {
+      "first": "The game reached a winner, and the win your server reported was none of single, gammon, or backgammon.",
+      "repeat": "The game reached a winner again, and the win reported was still none of single, gammon, or backgammon."
     },
     "G16": {
       "first": "They start a second copy of your server while one is already running, and it doesn't stop with an error saying the port is in use.",
@@ -294,6 +302,14 @@
     "G25.nomove": {
       "first": "They roll through your server and it offers white no move to play.",
       "repeat": "They rolled through your server again and it still offers white no move."
+    },
+    "G25.afterroll": {
+      "first": "They rolled for the player, and the turn came back as the computer's.",
+      "repeat": "They rolled for the player again, and the turn still came back as the computer's."
+    },
+    "G25.stuckroll": {
+      "first": "They played part of the player's roll, and the moves ran out before the turn was over.",
+      "repeat": "They played part of the player's roll again, and the moves still ran out before the turn was over."
     },
     "E01": {
       "first": "They ask your engine how many moves a roll allows from the opening position, and the count is wrong.",
@@ -1235,6 +1251,10 @@
       "first": "One of my pieces was on the bar and I couldn't see it there.",
       "repeat": "A piece of mine on the bar still isn't drawn there."
     },
+    "F10.rollbutton": {
+      "first": "I opened the game and there was no Roll button anywhere on the page to press.",
+      "repeat": "I opened the game again and there was still no Roll button to press."
+    },
     "F09.extra": {
       "first": "When I hit one of the computer's pieces, more than one of its pieces shows up on the bar.",
       "repeat": "Hit one of theirs again, and the bar still shows more of their pieces than I hit."
@@ -1282,6 +1302,10 @@
     "G10.early": {
       "first": "They ask your engine whether white has won with one checker still to bear off, and it says yes.",
       "repeat": "Your engine still says white has won with a checker left to bear off."
+    },
+    "G10.winner": {
+      "first": "They bear off the last white checker through your app's API and the game doesn't say white has won.",
+      "repeat": "They bear off the last white checker again through your API and the game still doesn't say white has won."
     },
     "G20.value": {
       "first": "The player doubles and your computer takes it, but your app's state doesn't make the cube worth two.",
@@ -1691,9 +1715,17 @@
       "first": "When I move a piece off a stack, it isn't the top piece that slides away — I expected the top one to leave and the rest to stay put.",
       "repeat": "Moving a piece off a stack still slides away one that isn't on top."
     },
+    "F58.pickup": {
+      "first": "I tried to pick up the piece on my back point and nothing came up — I tapped it over and over and the board never offered me a spot to move it to.",
+      "repeat": "I still can't pick up the piece on my back point — tapping it does nothing, and no spots to move it to appear."
+    },
     "F59": {
       "first": "When I move a piece onto a point that already has one of mine, it lands at the edge and pushes the other one along — I expected it to join at the far end.",
       "repeat": "A piece I move onto one of my stacks still lands at the edge and pushes the others along."
+    },
+    "F59.pickup": {
+      "first": "I tapped the piece I wanted to move and nothing appeared to show me where it could go — however many times I tapped it, the board stayed quiet.",
+      "repeat": "I still can't pick up the piece I want to move — the board shows me no spots for it."
     },
     "F60": {
       "first": "On point 13, where five of my pieces are stacked, I clicked at the end of the stack toward the middle of the board, still inside that point's column, and no hints came up — I expect a click anywhere in a point's column to pick up its top piece and show where it can move.",
@@ -2287,6 +2319,14 @@
       "first": "They roll again through your app's API after the dice are already rolled, and it gives them a new roll instead of ignoring it.",
       "repeat": "They roll again through your app's API after the dice are already rolled, and it still gives them a new roll instead of ignoring it."
     },
+    "G36.won": {
+      "first": "They throw higher than the computer in the opening roll through your app's API, and the first move isn't theirs.",
+      "repeat": "They throw higher than the computer in the opening roll through your API again, and the first move still isn't theirs."
+    },
+    "G36.dice": {
+      "first": "They play their roll through your app's API and are left holding dice they can't play, so the turn never finishes.",
+      "repeat": "They play their roll through your app's API again and are still left holding dice they can't play."
+    },
     "F88.twice": {
       "first": "When the computer won the opening roll, it moved its checkers twice as far as the dice allow — it played the 3 and the 5, then played them again.",
       "repeat": "When the computer won the opening roll, it still moved its checkers twice as far as the dice allow — it played the 3 and the 5, then played them again."
@@ -2358,6 +2398,10 @@
     "G14.unfinished": {
       "first": "They play your computer against itself — hard against easy — and none of the games ever comes to an end.",
       "repeat": "They played hard against easy again, and still none of the games came to an end."
+    },
+    "G14.board": {
+      "first": "They ask your computer's move-chooser for moves in hundreds of positions and rolls; when they replay exactly the moves it gave, the position it hands back isn't the one those moves reach.",
+      "repeat": "They asked your computer's move-chooser again for moves in many positions and rolls; replaying exactly the moves it gave, the position it hands back still isn't the one those moves reach."
     },
     "F38.cutoff": {
       "first": "Some of the buttons or game info on the right are cut off by the edge of the window.",

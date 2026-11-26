@@ -160,7 +160,7 @@ describe("Backgammon backend server-path integrity", () => {
     expect(winMove, "[needs: G08]").toBeTruthy();
     await api("/api/move", { from: winMove!.from, to: winMove!.to, die: winMove!.die });
     const state = await getState();
-    expect(state.winner).toBe("white");
+    expect(state.winner, "[aspect: winner]").toBe("white");
     // A gammon named as something else is the classification's finding (G10's
     // own line); only a gammon that scores wrong is told as the points.
     expect(state.winType, "[aspect: gammon]").toBe("gammon");
@@ -659,12 +659,12 @@ describe("Backgammon backend server-path integrity", () => {
   it("[G36] REQ-ROLL-ONCE — a roll asked for after the dice are down changes nothing", async () => {
     await api("/api/new", {});
     let state = await debugRollVerified([5, 3]);
-    expect(state.turn).toBe("white");
+    expect(state.turn, "[aspect: won]").toBe("white");
     for (let guard = 0; guard < 6 && state.remainingDice.length > 0 && (state.legalMoves ?? []).length > 0; guard++) {
       const m = state.legalMoves[0];
       state = await api("/api/move", { from: m.from, to: m.to, die: m.die });
     }
-    expect(state.remainingDice.length, "the opening roll could not be played out through the API").toBe(0);
+    expect(state.remainingDice.length, "[aspect: dice] the opening roll could not be played out through the API").toBe(0);
     // No decoy roll is queued: a correct build never takes it, and a dice queue
     // left behind would be the next check's roll. A second roll shows anyway —
     // new dice to play.
