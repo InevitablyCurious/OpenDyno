@@ -53,7 +53,7 @@ def test_real_session_runner_forwards_proxy_creds_to_backgammon_runner(
     runner._runs_dir = tmp_path / "runs"
     runner._task_dir = tmp_path / "task"
     runner._task = "backgammon"
-    runner._org_id = "okp-org-0"
+    runner._org_id = "opendyno-org-0"
     runner._proxy_base_url = "http://127.0.0.1:11434/v1"
     runner._proxy_token = "proxy-token-value"
     runner._runner_cls = _FakeRunner
@@ -75,7 +75,7 @@ def test_real_session_runner_forwards_proxy_creds_to_backgammon_runner(
     assert captured["model"] == "openrouter/tencent/hy3"
     # WO-STRIP-2b: org_id is plumbed through so the runner can title the
     # cell's OpenCode session deterministically.
-    assert captured["org_id"] == "okp-org-0"
+    assert captured["org_id"] == "opendyno-org-0"
     assert result.session_id == "sid-1"
 
 
@@ -126,7 +126,7 @@ def test_error_cap_per_type_aborts_the_whole_benchmark(tmp_path: Path) -> None:
     runner._runs_dir = tmp_path / "runs"
     runner._task_dir = tmp_path / "task"
     runner._task = "backgammon"
-    runner._org_id = "okp-org-0"
+    runner._org_id = "opendyno-org-0"
     runner._proxy_base_url = "http://127.0.0.1:11434/v1"
     runner._proxy_token = "proxy-token-value"
     runner._runner_cls = _CapRunner

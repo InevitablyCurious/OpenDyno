@@ -28,7 +28,7 @@ PROXY_BENCH_ROWS = [
     {
         "id": "okp-bench-worker",
         "name": "Local LLM Proxy (auto-resident)",
-        "purpose": "okp-bench",
+        "purpose": "opendyno-bench",
         "upstream_model": "auto",
         "context_length": 262_144,
         "max_output_tokens": 32_768,
@@ -37,7 +37,7 @@ PROXY_BENCH_ROWS = [
     {
         "id": "qwen3.6-35b-a3b-bench",
         "name": "Qwen3.6 35B-A3B 8bit via Proxy (bench)",
-        "purpose": "okp-bench",
+        "purpose": "opendyno-bench",
         "upstream_model": "Qwen3.6-35B-A3B-MLX-8bit",
         "context_length": 262_144,
         "max_output_tokens": 32_768,
@@ -46,7 +46,7 @@ PROXY_BENCH_ROWS = [
     {
         "id": "deepseek-v4-flash-bench",
         "name": "DeepSeek V4 Flash 0731 MXFP4 via Proxy (bench)",
-        "purpose": "okp-bench",
+        "purpose": "opendyno-bench",
         "upstream_model": "Vontra--DeepSeek-V4-Flash-0731-MXFP4-MLX",
         "context_length": 256_512,
         "max_output_tokens": 32_768,
@@ -55,7 +55,7 @@ PROXY_BENCH_ROWS = [
     {
         "id": "nemotron-3-nano-30b-bench",
         "name": "Nemotron-3 Nano 30B-A3B 4bit via Proxy (bench)",
-        "purpose": "okp-bench",
+        "purpose": "opendyno-bench",
         "upstream_model": "NVIDIA-Nemotron-3-Nano-30B-A3B-MLX-4bit",
         "context_length": 262_144,
         "max_output_tokens": 32_768,
@@ -64,7 +64,7 @@ PROXY_BENCH_ROWS = [
     {
         "id": "gemma-4-26b-a4b-bench",
         "name": "Gemma 4 26B-A4B QAT 4bit VLM via Proxy (bench)",
-        "purpose": "okp-bench",
+        "purpose": "opendyno-bench",
         "upstream_model": "gemma-4-26B-A4B-it-QAT-MLX-4bit",
         "context_length": 262_144,
         "max_output_tokens": 32_768,
@@ -89,7 +89,7 @@ def _fake_model_proxy(monkeypatch):
     `harness.model_catalog.fetch_proxy_models` itself."""
     from harness import model_catalog
 
-    monkeypatch.setenv("BENCH_PROXY_PURPOSE", "okp-bench")
+    monkeypatch.setenv("BENCH_PROXY_PURPOSE", "opendyno-bench")
     monkeypatch.setattr(
         model_catalog,
         "fetch_proxy_models",

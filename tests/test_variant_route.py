@@ -90,11 +90,11 @@ def test_a_name_that_decides_what_the_cell_is_is_refused(name: str) -> None:
 @pytest.mark.parametrize(
     "name",
     [
-        "OKP_IDENTITY_SEED_HEX",
-        "OKP_KEYSTORE_PATH",
-        "OKP_CORPUS_PATH",
-        "OKP_CORPUS_FILE",
-        "OKP_SEED",
+        "OPENDYNO_IDENTITY_SEED_HEX",
+        "OPENDYNO_KEYSTORE_PATH",
+        "OPENDYNO_CORPUS_PATH",
+        "OPENDYNO_CORPUS_FILE",
+        "OPENDYNO_SEED",
         "EXAMPLE_SEED",
         "MY_MNEMONIC",
         "PRIVATE_KEY",
@@ -149,8 +149,12 @@ def test_secret_looking_values_are_never_recorded() -> None:
         "SOME_TOKEN": "***",
     }
     assert redacted(
-        {"OKP_SEED": SECRET, "EXAMPLE_SEED": "abc", "OKP_KEYSTORE_PATH": "/k"}
-    ) == {"OKP_SEED": "***", "EXAMPLE_SEED": "***", "OKP_KEYSTORE_PATH": "***"}
+        {"OPENDYNO_SEED": SECRET, "EXAMPLE_SEED": "abc", "OPENDYNO_KEYSTORE_PATH": "/k"}
+    ) == {
+        "OPENDYNO_SEED": "***",
+        "EXAMPLE_SEED": "***",
+        "OPENDYNO_KEYSTORE_PATH": "***",
+    }
 
 
 # --- the docker invocation -----------------------------------------------------

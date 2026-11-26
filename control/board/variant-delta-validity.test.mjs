@@ -56,7 +56,7 @@ function attempt({
     sequence_index: seq,
     attempt: n,
     variant: mode,
-    org_id: "okp-org-0",
+    org_id: "opendyno-org-0",
     verdict,
     terminal_outcome: false,
     terminal_reason: terminalReason,
@@ -282,7 +282,7 @@ test("ACTIVE RUN: a fresh manifest-only run outranks an older run WITH a status 
     );
     await writeFile(
       join(dead, "manifest.json"),
-      JSON.stringify({ org_id: "okp-org-0", created_at: "2026-08-12T07:04:09Z" }),
+      JSON.stringify({ org_id: "opendyno-org-0", created_at: "2026-08-12T07:04:09Z" }),
       "utf8",
     );
 
@@ -292,7 +292,7 @@ test("ACTIVE RUN: a fresh manifest-only run outranks an older run WITH a status 
     await mkdir(live, { recursive: true });
     await writeFile(
       join(live, "manifest.json"),
-      JSON.stringify({ org_id: "okp-org-0", created_at: "2026-08-13T05:13:49Z" }),
+      JSON.stringify({ org_id: "opendyno-org-0", created_at: "2026-08-13T05:13:49Z" }),
       "utf8",
     );
 

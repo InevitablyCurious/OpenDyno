@@ -71,7 +71,7 @@ def test_no_chunk_prompt_asks_the_worker_for_discovery_capture() -> None:
 
 def test_the_orphaned_sxe_candidate_pair_stays_deleted() -> None:
     """Deleted 2026-08-26. Extraction belongs outside the benchmark; the
-    canonical strategy body lives in okp-mcp/prompts/memory-extraction/."""
+    canonical strategy body lives in wevibe-mcp/prompts/memory-extraction/."""
     assert not (TASK.parents[1] / "scaffold" / "sxe-candidate").exists()
 
 

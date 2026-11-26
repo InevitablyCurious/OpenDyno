@@ -124,7 +124,7 @@ def test_docker_residue_never_looks_beyond_this_cells_two_names(monkeypatch) -> 
     # Every query is anchored to the exact cell name; no wildcard enumeration.
     assert "name=^bench-cell-x$" in flat
     assert "name=^bench-cell-x-session-db$" in flat
-    for forbidden in ("okp-server", "postgres", "qdrant", "hub", "mcp"):
+    for forbidden in ("opendyno-server", "postgres", "qdrant", "hub", "mcp"):
         assert forbidden not in flat
     # And every call is READ-ONLY: `docker ps` / `docker volume ls`, never a
     # verb that mutates. Checked on the argv tokens, not as a substring —

@@ -34,11 +34,11 @@ WORKER_IMAGE = "bench-worker:v1"
 # because PID 1 was `sleep infinity`, which never reaps an orphan.
 #
 # These bounds exist for MEASUREMENT INTEGRITY, not just tidiness. Docker's VM
-# holds ~7.7 GiB for EVERY container including the okp stack (~1.2 GiB in
-# steady state). An unbounded worker that runs away does not merely fail its
-# own cell — it can starve postgres/qdrant/chain and corrupt the run around it.
-# Bounding the cell keeps the blast radius inside the cell, where a failure is
-# recorded honestly instead of silently damaging its neighbours.
+# is shared: an unbounded worker that runs away does not merely fail its own
+# cell — it can starve the co-resident spend-proxy Postgres and the model
+# proxies, and corrupt the run around it. Bounding the cell keeps the blast
+# radius inside the cell, where a failure is recorded honestly instead of
+# silently damaging its neighbours.
 #
 # Sized against observation, not taste: the cell peaked at ~30 processes, so
 # 512 PIDs is ~17x headroom and only a genuine runaway reaches it.
@@ -166,12 +166,12 @@ PLUGIN_PRESENT_LABEL = "bench.worker.plugin_present"
 def image_plugin_present(tag: str = WORKER_IMAGE) -> bool:
     """True when the image's ``bench.worker.plugin_present`` label is exactly "1".
 
-    The worker Dockerfile bakes this label when the OKP opencode plugin is
-    injected into the image (dev build); a vanilla image carries "0" or no
-    label at all. Missing docker CLI, a failed probe, or an absent label all
-    read as False: a per-cell config that omits the plugin paths is a healthy
-    vanilla outcome, while one pointing at plugin files the image never baked
-    kills the worker at opencode boot.
+    The worker Dockerfile bakes this label when the variant plugin package
+    (BENCH_PLUGIN_DIR) is injected into the image (dev build); a vanilla image
+    carries "0" or no label at all. Missing docker CLI, a failed probe, or an
+    absent label all read as False: a per-cell config that omits the plugin
+    paths is a healthy vanilla outcome, while one pointing at plugin files the
+    image never baked kills the worker at opencode boot.
     """
 
     cmd = [

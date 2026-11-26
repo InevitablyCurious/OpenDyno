@@ -172,7 +172,7 @@ test("NOTICE: `notice` is a core kind, and external services are not sources", (
   const src = readFileSync(join(BENCH, "harness", "live_stream.py"), "utf8");
   assert.match(src, /"notice",\s*#/, "notice must be declared a core kind");
 
-  for (const forbidden of ["relay", "proxy", "opencode", "okp", "hub", "mcp"]) {
+  for (const forbidden of ["relay", "proxy", "opencode", "opendyno", "hub", "mcp"]) {
     assert.ok(
       !NOTICE_SOURCES.includes(forbidden),
       `'${forbidden}' is outside this repo and cannot be a notice source — the control plane observes it`,

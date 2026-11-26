@@ -9,7 +9,7 @@ from tests.conftest import PROXY_BENCH_ROWS
 
 def test_registry_is_the_proxy_bench_rows() -> None:
     registry = model_catalog.worker_model_registry()
-    bench_ids = {r["id"] for r in PROXY_BENCH_ROWS if r["purpose"] == "okp-bench"}
+    bench_ids = {r["id"] for r in PROXY_BENCH_ROWS if r["purpose"] == "opendyno-bench"}
     assert set(registry) == bench_ids, "interactive aliases are never worker models"
     block = registry["deepseek-v4-flash-bench"]
     assert block["name"] == "DeepSeek V4 Flash 0731 MXFP4 via Proxy (bench)"
@@ -43,4 +43,4 @@ def test_proxy_down_is_a_hard_error(monkeypatch) -> None:
 
 def test_row_without_limits_is_refused() -> None:
     with pytest.raises(model_catalog.ModelCatalogUnavailable):
-        model_catalog.build_registry([{"id": "x-bench", "purpose": "okp-bench"}])
+        model_catalog.build_registry([{"id": "x-bench", "purpose": "opendyno-bench"}])

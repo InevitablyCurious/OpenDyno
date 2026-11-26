@@ -24,7 +24,7 @@ def _build_real_session_runner(module: Any, tmp_path: Path) -> Any:
 
     return module.RealSessionRunner(
         task="backgammon",
-        org_id="okp-org-0",
+        org_id="opendyno-org-0",
         runs_dir=tmp_path / "runs",
         repo_root=repo_root,
     )

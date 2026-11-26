@@ -39,7 +39,7 @@ def test_external_services_are_never_notice_sources() -> None:
     accurate its number is, and this is what stops the convenient chip being
     added later.
     """
-    for outside in ("relay", "proxy", "opencode", "okp", "hub", "mcp"):
+    for outside in ("relay", "proxy", "opencode", "opendyno", "hub", "mcp"):
         assert outside not in NOTICE_SOURCES
 
 

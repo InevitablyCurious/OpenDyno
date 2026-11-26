@@ -86,7 +86,7 @@ def sha256_hex(data: bytes) -> str:
 # --- walk-v1 ---------------------------------------------------------------
 #
 # Byte-compatible with the TypeScript walk-v1 in
-# okp-mcp/src/gstv/walk.ts, so a state hash computed here means the same
+# wevibe-mcp/src/gstv/walk.ts, so a state hash computed here means the same
 # thing as one computed by the plugin. The TypeScript cross-check is gone;
 # it is exercised by the emitter's own tests, tests/test_predicate_emitter.py.
 #

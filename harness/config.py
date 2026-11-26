@@ -216,8 +216,8 @@ class RunConfig:
     # Per DECISIONS.md D-BENCH-CONTRACT §b, primary scored B path must not rely on
     # hidden test-mode auto-accept. Primary path runs recall in prod mode.
     primary_recall_mode: str = "prod"
-    org_id: str = ""  # D5a: org MUST be pinned explicitly by the run driver; okp-org-0 is never a valid variant target.
-    # orchestrator._resolve_owned_org handles empty/None gracefully; do NOT make this required (tests build RunConfig() bare).
+    org_id: str = ""  # Descriptive label only, never validated or enforced: empty on a bare RunConfig, defaulted by the run driver, recorded per cell on B and nulled on A.
+    # Empty is fine — tests build RunConfig() bare — so do NOT make this required.
     mc_version: int = 1  # MC-1
     # Live-view topology: ONE persistent `opencode serve` per cell, published on a fixed
     # host port bound to the container-side serve port. The founder attaches a TUI via

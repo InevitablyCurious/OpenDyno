@@ -47,12 +47,13 @@ _RESERVED = re.compile(
 #: Settings whose values are never recorded or printed.
 _SECRET = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH", re.IGNORECASE)
 
-#: Names that carry identity or secret material — a seed phrase, a keystore, a
-#: corpus of a member's own writing — rather than a setting a plugin reads. The
-#: refusal is by shape, not by brand, so whatever a project names its secrets:
-#: none of them may arrive as a variant setting. Bare KEY, TOKEN and AUTH are
-#: left out on purpose: the forwarded proxy and model keys are settings, and
-#: refusing them would forbid what a variant legitimately needs.
+#: Names whose shape marks them as carrying identity or secret material — a
+#: keystore, seed, mnemonic, private key or corpus — rather than a setting a
+#: plugin reads. The refusal is by shape, not by brand, so whatever a project
+#: names its secrets: none of them may arrive as a variant setting. Bare KEY,
+#: TOKEN and AUTH are left out on purpose: the forwarded proxy and model keys
+#: are settings, and refusing them would forbid what a variant legitimately
+#: needs.
 _SECRET_NAME = re.compile(
     r"KEYSTORE|SEED|MNEMONIC|PASSPHRASE|PASSWORD|CORPUS|IDENTITY|PRIVATE_KEY"
     r"|CREDENTIAL|SECRET",

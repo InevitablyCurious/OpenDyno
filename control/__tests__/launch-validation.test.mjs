@@ -11,12 +11,12 @@ import { COMPACT_DEFAULT_CEILING, CONTEXT_ADVISORY_FLOOR } from "../cloud.mjs";
 
 import { HERE, BENCH } from "./_shared.mjs";
 
-// The proxy in this repo's fixtures tags its bench aliases `okp-bench`, and the
+// The proxy in this repo's fixtures tags its bench aliases `opendyno-bench`, and the
 // roster reads the purpose setting lazily per call — so the environment is set
 // here, at module load, before any test builds a roster. (These fixtures are the
 // REASON the neutral default is not asserted here: the setting is what makes a
 // differently-tagged proxy usable at all.)
-process.env.BENCH_PROXY_PURPOSE = "okp-bench";
+process.env.BENCH_PROXY_PURPOSE = "opendyno-bench";
 
 test("ROSTER: declared context comes from the proxy, never a local table", async () => {
   // The bench used to keep its own copy of each alias's window, and that copy
@@ -25,9 +25,9 @@ test("ROSTER: declared context comes from the proxy, never a local table", async
   const proxy = {
     object: "list",
     data: [
-      { id: "qwen3.6-35b-a3b-bench", upstream_model: "Qwen3.6-35B-A3B-MLX-8bit", purpose: "okp-bench", context_length: 262144, max_output_tokens: 32768 },
-      { id: "deepseek-v4-flash-bench", upstream_model: "Vontra--DeepSeek-V4-Flash-0731-MXFP4-MLX", purpose: "okp-bench", context_length: 256512, max_output_tokens: 32768 },
-      { id: "no-window", upstream_model: "x", purpose: "okp-bench" },
+      { id: "qwen3.6-35b-a3b-bench", upstream_model: "Qwen3.6-35B-A3B-MLX-8bit", purpose: "opendyno-bench", context_length: 262144, max_output_tokens: 32768 },
+      { id: "deepseek-v4-flash-bench", upstream_model: "Vontra--DeepSeek-V4-Flash-0731-MXFP4-MLX", purpose: "opendyno-bench", context_length: 256512, max_output_tokens: 32768 },
+      { id: "no-window", upstream_model: "x", purpose: "opendyno-bench" },
     ],
   };
   const realFetch = globalThis.fetch;
@@ -51,13 +51,13 @@ test("ROSTER: a retired alias is refused bench eligibility even when the proxy b
   // `okp-bench-worker` maps upstream to `auto` — a cell run on it measures
   // whichever model happened to be resident and records no identity. The design
   // is retired, but the PROXY still advertises the alias with purpose
-  // 'okp-bench' (its roster lives in another service). Eligibility computed
+  // 'opendyno-bench' (its roster lives in another service). Eligibility computed
   // from purpose alone therefore kept offering it a [+ baseline] button.
   const proxy = {
     object: "list",
     data: [
-      { id: "okp-bench-worker", upstream_model: "auto", purpose: "okp-bench" },
-      { id: "qwen3.6-35b-a3b-bench", upstream_model: "Qwen3.6-35B-A3B-MLX-8bit", purpose: "okp-bench" },
+      { id: "okp-bench-worker", upstream_model: "auto", purpose: "opendyno-bench" },
+      { id: "qwen3.6-35b-a3b-bench", upstream_model: "Qwen3.6-35B-A3B-MLX-8bit", purpose: "opendyno-bench" },
     ],
   };
   const realFetch = globalThis.fetch;
@@ -74,7 +74,7 @@ test("ROSTER: a retired alias is refused bench eligibility even when the proxy b
     assert.match(byId["okp-bench-worker"].retired_reason, /resident behind the proxy/);
     // It is still LISTED — vanishing without explanation looks like the proxy
     // lost it, which is a different and false diagnosis.
-    assert.equal(byId["okp-bench-worker"].purpose, "okp-bench");
+    assert.equal(byId["okp-bench-worker"].purpose, "opendyno-bench");
     assert.equal(byId["qwen3.6-35b-a3b-bench"].bench_eligible, true);
     assert.equal(byId["qwen3.6-35b-a3b-bench"].retired_reason, null);
     assert.deepEqual(roster.bench_models.map((m) => m.id), ["qwen3.6-35b-a3b-bench"]);
