@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 
 /**
  * The registry. `env_var` is what the harness reads; `shared_config_key` is
- * where the wider Open Knowledge install may already hold the key.
+ * where a shared settings file on the machine may already hold the key.
  */
 export const ROUTERS = [
   {

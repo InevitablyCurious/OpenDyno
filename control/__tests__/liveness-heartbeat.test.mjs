@@ -155,7 +155,7 @@ test("LIVENESS: cellHeartbeatAge reads the cell's real stream through the per-ce
       { v: 1, ts: now - 40000, kind: "heartbeat", phase: "initial-chunk-1", since_ms: 19000 },
       { v: 1, ts: now - 30000, kind: "gate.result", id: "CONF", status: "fail" },
       { v: 1, ts: now - 5000, kind: "heartbeat", phase: "initial-chunk-2", since_ms: 54000 },
-      { v: 1, ts: now - 1000, kind: "ext", ns: "okp.plugin", type: "capture" },
+      { v: 1, ts: now - 1000, kind: "ext", ns: "acme.plugin", type: "capture" },
     ]);
 
     const age = await cellHeartbeatAge({ runsRoot: runs, runDir: dir, sequenceIndex: 0, now });

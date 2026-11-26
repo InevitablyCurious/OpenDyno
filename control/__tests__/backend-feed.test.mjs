@@ -23,7 +23,7 @@ test("BACKEND FEED: two streams merge into one ordered view", async () => {
     J({ v: 1, ts: 1000, kind: "cell.start" }) +
       J({ v: 1, ts: 1100, kind: "heartbeat", phase: "initial" }) +
       J({ v: 1, ts: 1500, kind: "notice", source: "gates", event: "worker_died_mid_file", level: "error" }) +
-      J({ v: 1, ts: 1600, kind: "ext", ns: "okp.plugin", type: "insession.capture" }) +
+      J({ v: 1, ts: 1600, kind: "ext", ns: "acme.plugin", type: "insession.capture" }) +
       "{ sliced mid-record",
   );
   writeFileSync(
@@ -39,7 +39,7 @@ test("BACKEND FEED: two streams merge into one ordered view", async () => {
     // 900 precedes the cell's own first record.
     assert.deepEqual(
       feed.rows.map((r) => r.source),
-      ["control", "harness", "gates", "okp.plugin", "sequencer"],
+      ["control", "harness", "gates", "acme.plugin", "sequencer"],
     );
 
     // THE HEARTBEAT IS NOT ACTIVITY. It fires every 15s for the life of a cell —
@@ -88,13 +88,13 @@ test("BACKEND FEED: a gate.result row surfaces the runner's own per-gate facts",
 });
 
 test("BACKEND FEED: an external namespace keeps its own name, never a native source", async () => {
-  // Folding `okp.plugin` into `harness` would file a BACKEND's telemetry under
+  // Folding `acme.plugin` into `harness` would file a BACKEND's telemetry under
   // the benchmark's name. In a merged list the source is the only thing telling
   // a benchmark fact from a contributor's own surroundings, so it must survive
   // intact — and this is what lets an `ext` lane appear later without reworking
   // the chip row.
   const { rowSource, rowLevel } = await import("../backend-feed.mjs");
-  assert.equal(rowSource({ kind: "ext", ns: "okp.plugin" }), "okp.plugin");
+  assert.equal(rowSource({ kind: "ext", ns: "acme.plugin" }), "acme.plugin");
   assert.equal(rowSource({ kind: "notice", source: "gates" }), "gates");
   // A core kind carries neither field: it is the harness's own record of the run.
   assert.equal(rowSource({ kind: "gate.result" }), "harness");

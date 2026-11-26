@@ -134,9 +134,9 @@ def test_absent_env_means_no_telemetry_wanted_not_an_error(tmp_path):
 
 def test_env_export_carries_path_and_namespace(tmp_path):
     s = LiveStream.for_run(tmp_path, run_id="r1")
-    env = s.env("okp.plugin")
+    env = s.env("acme.plugin")
     assert env[ENV_PATH] == str(tmp_path / STREAM_FILENAME)
-    assert env[ENV_NS] == "okp.plugin"
+    assert env[ENV_NS] == "acme.plugin"
     assert LiveStream.from_env(env) is not None
 
 

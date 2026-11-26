@@ -137,12 +137,12 @@ Three rules for a reader:
 ## Extension records — anyone owns these
 
 ```json
-{"v":1,"ts":1787938355696,"kind":"ext","ns":"okp.plugin",
+{"v":1,"ts":1787938355696,"kind":"ext","ns":"acme.plugin",
  "type":"insession.capture","session_id":"ses_abc",
  "data":{"marks":3,"trajectories":1}}
 ```
 
-- `ns` — your namespace. Use a dotted name you control (`okp.plugin`,
+- `ns` — your namespace. Use a dotted name you control (`acme.plugin`,
   `acme.recall`). Two backends can run side by side without collision.
 - `type` — your event name, scoped inside your `ns`.
 - `data` — **opaque**. The harness does not read, validate, or promise anything

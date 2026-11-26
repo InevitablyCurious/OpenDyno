@@ -26,7 +26,7 @@ kinds describing what the HARNESS did -- a cell started, a gate produced a
 verdict, an attempt closed -- and every backend-specific fact travels as an
 ``ext`` record under a namespace the backend owns:
 
-    {"v":1,"ts":...,"kind":"ext","ns":"okp.plugin",
+    {"v":1,"ts":...,"kind":"ext","ns":"acme.plugin",
      "type":"insession.capture","data":{ ...anything the backend likes... }}
 
 The harness never parses ``data``. The board renders namespaces it recognises
