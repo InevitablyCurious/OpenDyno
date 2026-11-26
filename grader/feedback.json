@@ -1000,8 +1000,8 @@
       "repeat": "Their checks again: {measured} — modalOverlay still doesn't take the hidden class back."
     },
     "F23": {
-      "first": "When the game ends i can't start a fresh game unless i reload the page",
-      "repeat": "Game ended again and I still had to reload the whole page before I could play another."
+      "first": "When the game ended I pressed New Game, and the whole page reloaded to start the next one.",
+      "repeat": "Game ended again, and New Game reloaded the whole page again."
     },
     "F24": {
       "first": "When I have no moves, the game doesn't finish my turn — it keeps me stuck or still shows me places to click.",

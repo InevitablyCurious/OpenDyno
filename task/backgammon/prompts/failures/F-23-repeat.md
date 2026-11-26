@@ -1,1 +1,1 @@
-Game ended again and I still had to reload the whole page before I could play another.
+Game ended again, and New Game reloaded the whole page again.
