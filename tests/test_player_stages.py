@@ -676,6 +676,457 @@ def test_a_key_shared_by_different_failures_has_a_line_true_for_each() -> None:
     )
 
 
+# ── C21: every told failure point must carry its own claim ───────────────────
+#
+# A failure point is a place a check can fail and produce a message the model
+# hears: an `expect(...)` / `expect.poll(...)` / `throw new Error(...)` in a test
+# block, the same inside a shared helper reached through a call site, or a
+# conformance pre-gate `add(...)` emit. A point that carries no marker of its own
+# — no `[aspect: …]`, no `[setup]`, no `[needs: …]`-only, no interceptor marker
+# (`ROLL DEAD`, `BOARD RESTLESS`, `SETUP REFUSED`, the HTTP form, `NO ANSWER`,
+# `CLICK MISSED`, the boot form `SERVER NOT UP`) — is told its check's general
+# line. This guard refuses any such point unless its check is allowlisted below,
+# with the reason its general line is true for every unmarked point on that
+# check. The reasons come from the WO-C21-CENSUS verdict-`a` records (one per
+# point, condensed here per check): general-line-is-true points only — never a
+# verdict-`b` (misleading) or `c` (interceptor) point.
+
+_ALLOWLIST: dict[str, str] = {
+    "E03": "the only failure is refusing the exact-distance bear-off the general line names",
+    "E05": "the only failure is an offered move not starting on the bar, verbatim the general line",
+    "E08": "a duplicate end position is the general line's own fault",
+    "E09": "the copy-changes-the-original aliasing fault is exactly the general line",
+    "F02": "missing or wrong point and piece counts are the general line's own wording",
+    "F05": "with no moves the game showing nothing is the general line exactly",
+    "F08": "the difficulty changed on the control but the game didn't is the general line exactly",
+    "F09": "a hit piece not visible on the bar is the general line's own observation",
+    "F11": "fewer than three pieces in the off tray is exactly 'doesn't show up in the off tray'",
+    "F12": "nothing announcing the win is byte-for-byte the general line",
+    "F16": "the turn not surviving the reload is the general line exactly",
+    "F17": "the score not coming back as it was is the general line exactly",
+    "F18": "the dice not coming back as rolled is the general line exactly",
+    "F19": "hard not surviving the reload is the general line exactly",
+    "F20": "the cube resetting after a refresh is the general line exactly",
+    "F21": "the remaining dice not surviving the reload is the general line exactly",
+    "F23": "starting a fresh game by reloading the page is the general line's subject",
+    "F25": "a hint click that never lands is 'clicked where it could go and it didn't move'",
+    "F27": "console errors on load are the general line exactly",
+    "F28": "top/bottom row numbers in the wrong order are the general line's two clauses verbatim",
+    "F30": "the outward branch spanning both rows carries no aspect and the general line states it exactly",
+    "F32": "a tray that is not showing (no box, or nothing drawn in it) is the general line's own words",
+    "F33": "four UI moves leaving the dice unspent is the general line exactly",
+    "F35": "a wholesale orientation failure is verbatim the general line",
+    "F40": "a top point with no bottom point straight across is the general line verbatim",
+    "F41": "non-circular pieces or off-square boxes are the general line verbatim",
+    "F44": "a button label lacking its name is precisely the general line's subject",
+    "F51": "the pop-up's 'Match score' line is the general line exactly",
+    "F54": "the control no longer showing Hard after reload is the general line exactly",
+    "F58": "the non-top stack piece moving to 11 is the same fact the general line reports",
+    "F59": "the arriving piece landing at the edge is the same edge placement the general line describes",
+    "F67": "the Fast Forward button carrying on is the general line's last bullet exactly",
+    "F85": "a tied opening freezing with Roll doing nothing is the general line exactly",
+    "F90": "accepting leaving the game frozen is the general line exactly",
+    "F91": "pieces drawn before the board-only stage is the general line exactly",
+    "F92": "pressing Roll letting the player roll again is the general line exactly",
+    "F95": "clicking the off tray not bearing the piece off is the general line exactly",
+    "G02": "a side's pip count missing 167 is exactly the general line",
+    "G03": "a double not giving four moves is exactly the general line",
+    "G04": "offering the blocked move is exactly 'a point held by two or more is closed'",
+    "G05": "the game letting the player play the 3 is the general line exactly",
+    "G07": "each of the four hit clauses is present and true in the general line",
+    "G08": "the nearer-checker overshoot failure is the general line word for word",
+    "G09": "bearing off while a checker is outside home is the general line exactly",
+    "G11": "the player's-turn double being refused is the general line exactly",
+    "G12": "each win-probability threshold is the general line's own number (several are dead reference checks)",
+    "G13": "turn-flow and die-spending deviations are covered by the general line",
+    "G14": "an illegal move returned by the chooser, or a die spent outside the roll, is the general line's fault",
+    "G15": "a stuck or failing game is the general line's 'stops partway — stuck, or failing'",
+    "G16": "a second copy hanging, exiting clean, or missing the port message is the general line",
+    "G17": "the only legal move being the one offered means 'no hit on offer' is exactly the line",
+    "G18": "which checkers can move six, and onto-board-only, are the general line's clauses",
+    "G19": "bearing off while a checker is on the bar is the general line exactly",
+    "G21": "accepting the double and changing the cube after a roll is the general line exactly",
+    "G22": "the win probability not rising as the computer pulls ahead is the general line exactly",
+    "G23": "wrong points, bar, or borne-off counts are each named in the general line",
+    "G25": "the turn not coming back to white is the general line exactly",
+    "G26": "a new game not starting with the cube at one in the middle is the general line exactly",
+    "G29": "a 404 or empty page is the general line's 'no page at all'",
+    "G35": "the seeded turn not doubling is the general line exactly",
+    "G36": "rolling again and getting a new roll is literally the general line",
+    "G37": "the board or bar not coming back exactly is the general line",
+    "G39": "the {measured} pip slot is filled from this very message, so the team hears its own measurement",
+    "REQ-API/health.body": "fires only on a JSON parse throw, which the general line names exactly",
+    "REQ-API/health.body.status": "fires only when the body status is not 'ok', which the general line names",
+    "REQ-API/health.status": "fires only when a response was obtained but status is not 200, which the general line names",
+    "REQ-BIND/boot": "boot failure is exactly 'server never started', and bootObserved carries no interceptor",
+    "REQ-BIND/health": "a bare fetch throws only on a network failure, exactly 'can't reach it at all'",
+    "REQ-DEBUG/debug.roll": "fires only when the roll succeeds but the dice mismatch, which the general line names",
+    "REQ-RENDER/${label}": "each label's drawn-count fault is named by its own matching line",
+    "REQ-STATE/state.${key}": "each of the field templates is true for the missing-field fault",
+    "REQ-STATE/state.canDouble": "fires only when present but not boolean, which the general line covers",
+    "REQ-STATE/state.legalMoves": "fires only when present but not an array, which the general line covers",
+    "REQ-STATE/state.off.white": "fires only when the echoed off count is not 7, exactly the general line",
+    "REQ-STATE/state.pip": "fires only when pip is present but malformed, which the general line covers",
+    "REQ-STATE/state.points.length": "the wrong-length or wrong-shape fault is named by the general line directly",
+    "REQ-TESTID/${label}": "the drawn-but-untagged fault is the general line exactly",
+    "REQ-TESTID/dom": "fires only on a Playwright or DOM error, exactly 'automation fell over'",
+    "REQ-TESTID/id.${id}": "each of the id templates is true for the missing-id fault",
+    "REQ-TESTID/point-column": "the overlap fault is named by the general line exactly",
+    "REQ-TESTID/pregate": "fires only on an outer browser-launch error, exactly 'the whole run fell over'",
+    "REQ-TESTID/testid.${testId}": "each of the tag templates is true for the missing-tag fault",
+}
+
+
+def _strip_comments(src: str) -> str:
+    """Blank `//` and `/* */` comments while PRESERVING newlines (line numbers stay exact)."""
+    out, i, n = list(src), 0, len(src)
+    while i < n:
+        c = src[i]
+        if c in "\"'`":
+            i = _string_end(src, i)
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+        elif src.startswith("/*", i):
+            j = src.find("*/", i)
+            j = n if j < 0 else j + 2
+            for k in range(i, j):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+        else:
+            i += 1
+    return "".join(out)
+
+
+def _brace_end(code: str, i: int) -> int:
+    depth, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        if c in "\"'`":
+            i = _string_end(code, i)
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    raise AssertionError("unbalanced brace")
+
+
+def _test_spans(code: str) -> list[tuple[str, int, int]]:
+    spans = []
+    for m in _TITLE.finditer(code):
+        op = code.index("(", m.start())
+        end = _call_end(code, op)
+        spans.append((m.group(1), m.start(), end))
+    return spans
+
+
+def _helper_spans(code: str) -> list[tuple[str, int, int]]:
+    """Named helper functions (function/const-arrow) and their body spans."""
+    spans = []
+    for m in re.finditer(
+        r"\b(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(", code
+    ):
+        name = m.group(1)
+        op = code.index("(", m.end(1))
+        cp = _call_end(code, op)
+        j = cp
+        while j < len(code) and code[j] != "{":
+            j += 1
+        if j < len(code):
+            spans.append((name, m.start(), _brace_end(code, j)))
+    for m in re.finditer(
+        r"\bconst\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\(", code
+    ):
+        name = m.group(1)
+        op = code.index("(", m.end(1))
+        cp = _call_end(code, op)
+        j = cp
+        while j < len(code) and code[j] not in "=>;":
+            j += 1
+        if j < len(code) and code[j : j + 2] == "=>":
+            k = j + 2
+            while k < len(code) and code[k].isspace():
+                k += 1
+            if k < len(code) and code[k] == "{":
+                spans.append((name, m.start(), _brace_end(code, k)))
+    return spans
+
+
+_INTERCEPTOR = re.compile(
+    r"\b(SETUP_REFUSED|ROLL_DEAD|CLICK_MISSED|NO_ANSWER|SERVER_NOT_UP|BOARD_RESTLESS)\b"
+)
+_HTTP_FORM = re.compile(r"failed\s*\(\$\{|answered HTTP \$\{")
+_MARK = re.compile(r"\[(?:aspect|needs|setup|brief)")
+
+
+def _marker_consts(code: str) -> dict[str, str]:
+    """`const NAME = <marker-carrying rhs>` — the one-hop literal resolution."""
+    out: dict[str, str] = {}
+    for m in re.finditer(r"\bconst\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=", code):
+        name = m.group(1)
+        i = m.end()
+        depth, j = 0, i
+        while j < len(code):
+            c = code[j]
+            if c in "\"'`":
+                j = _string_end(code, j)
+                continue
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth < 0:
+                    break
+            elif c == ";" and depth == 0:
+                break
+            j += 1
+        rhs = code[i:j]
+        if _MARK.search(rhs) or _INTERCEPTOR.search(rhs):
+            out[name] = rhs
+    return out
+
+
+def _resolve(args: str, consts: dict[str, str]) -> str:
+    for name, lit in consts.items():
+        args = re.sub(rf"\b{re.escape(name)}\b", lambda m, lit=lit: lit, args)
+    return args
+
+
+_FAILURE_RE = re.compile(
+    r"\bexpect\s*\.\s*poll\s*\(|\bexpect\s*\(|\bthrow\s+new\s+Error\s*\("
+)
+
+
+def _compliant(text: str) -> bool:
+    if re.search(r"\[aspect:", text):
+        return True
+    if "[setup]" in text:
+        return True
+    if re.search(r"\[needs:", text):
+        return True
+    if _INTERCEPTOR.search(text):
+        return True
+    if _HTTP_FORM.search(text):
+        return True
+    return "ASPECT_OF[" in text  # the dynamic aspect map in layout.spec.ts (F38)
+
+
+def _line_of(code: str, off: int) -> int:
+    return code.count("\n", 0, off) + 1
+
+
+def _is_probe(code: str, call_end: int) -> bool:
+    """An expect whose promise is `.then(...)`-handled is a probe, not a told failure."""
+    tail = code[call_end : call_end + 250]
+    semi = tail.find(";")
+    if semi >= 0:
+        tail = tail[:semi]
+    return ".then(" in tail
+
+
+def _swallow_try_spans(code: str) -> list[tuple[int, int]]:
+    """`try { ... }` blocks followed by a `catch` (which swallows or wraps the expect)."""
+    spans = []
+    for m in re.finditer(r"\btry\s*\{", code):
+        ob = code.index("{", m.start())
+        end = _brace_end(code, ob)
+        j = end
+        while j < len(code) and code[j].isspace():
+            j += 1
+        if code[j : j + 5] == "catch":
+            spans.append((ob, end))
+    return spans
+
+
+def _catch_spans(code: str) -> list[tuple[int, int]]:
+    spans = []
+    for m in re.finditer(r"\bcatch\s*(?:\([^)]*\))?\s*\{", code):
+        ob = code.index("{", m.start())
+        spans.append((ob, _brace_end(code, ob)))
+    return spans
+
+
+def _scan_ts(
+    code: str, rel: str
+) -> tuple[list[tuple[str, int, str]], list[tuple[str, int, str, str]]]:
+    """(direct unmarked points, helper-callsite unmarked points) for one graded .ts file.
+
+    Returns points as (check, line, args-text) tuples; the caller decides
+    compliance via _compliant against the helper closure.
+    """
+    consts = _marker_consts(code)
+    tests = _test_spans(code)
+    helpers = _helper_spans(code)
+    trys = _swallow_try_spans(code)
+    catches = _catch_spans(code)
+    helper_names = [n for n, _, _ in helpers]
+
+    fps = []
+    for m in _FAILURE_RE.finditer(code):
+        op = code.index("(", m.start())
+        end = _call_end(code, op)
+        is_throw = code[m.start() : m.start() + 6] == "throw "
+        fps.append((m.start(), end, is_throw))
+
+    def _in(off: int, spans: list[tuple[int, int]]) -> bool:
+        return any(s <= off < e for s, e in spans)
+
+    def _enclosing(off: int) -> tuple[str | None, str | None]:
+        tok = None
+        for t, s, e in tests:
+            if s <= off < e:
+                tok = t
+        hname = None
+        for n, s, e in helpers:
+            if s <= off < e:
+                hname = n
+        return tok, hname
+
+    helper_msgs: dict[str, set[str]] = {}
+    helper_calls: dict[str, set[str]] = {}
+    direct: list[tuple[str, int, str]] = []
+    for s, e, is_throw in fps:
+        tok, hname = _enclosing(s)
+        args = code[code.index("(", s) + 1 : e - 1]
+        args = _resolve(args, consts)
+        if is_throw and _in(s, catches):
+            continue  # a rethrow: it wraps the original error, whose marker survives
+        if not is_throw and (_in(s, trys) or _is_probe(code, e)):
+            continue  # a probe or a swallowed expect is not a told failure
+        if tok:
+            direct.append((tok, _line_of(code, s), args))
+        elif hname:
+            helper_msgs.setdefault(hname, set()).add(args)
+
+    for n, s, e in helpers:
+        body = code[s:e]
+        for h2 in helper_names:
+            if h2 != n and re.search(rf"\b{re.escape(h2)}\s*\(", body):
+                helper_calls.setdefault(n, set()).add(h2)
+
+    closure: dict[str, set[str]] = {}
+    changed = True
+    while changed:
+        changed = False
+        for n in helper_names:
+            cur = set(helper_msgs.get(n, set()))
+            for c in helper_calls.get(n, ()):
+                cur |= closure.get(c, set())
+            if cur != closure.get(n, set()):
+                closure[n] = cur
+                changed = True
+
+    callsites: list[tuple[str, int, str, str]] = []
+    for tok, s, e in tests:
+        body = code[s:e]
+        for n in helper_names:
+            if not closure.get(n):
+                continue
+            for cm in re.finditer(rf"\b{re.escape(n)}\s*\(", body):
+                op = body.index("(", cm.end() - 1)
+                end = _call_end(body, op)
+                callargs = _resolve(body[op + 1 : end - 1], consts)
+                callsites.append((tok, _line_of(code, s + cm.start()), n, callargs))
+    return direct, callsites, closure
+
+
+def _scan_conformance(code: str) -> list[tuple[str, int, str]]:
+    """(check-id, line, args) for every `add(...)` emit-site in pregate.ts."""
+    consts: dict[str, str] = {}
+    for m in re.finditer(r"\bconst\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*([`\"'])", code):
+        consts[m.group(1)] = code[m.start(2) : _string_end(code, m.start(2))]
+    out = []
+    for m in re.finditer(r"(?<![.\w])add\s*\(", code):
+        op = code.index("(", m.start())
+        end = _call_end(code, op)
+        args = code[op + 1 : end - 1]
+        first = args
+        depth, i = 0, 0
+        while i < len(first):
+            c = first[i]
+            if c in "\"'`":
+                i = _string_end(first, i)
+                continue
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+            elif c == "," and depth == 0:
+                break
+            i += 1
+        firstarg = first[:i].strip()
+        m2 = re.fullmatch(r"([A-Za-z_$][A-Za-z0-9_$]*)", firstarg)
+        if m2 and m2.group(1) in consts:
+            firstarg = consts[m2.group(1)]
+        check = firstarg
+        if check[:1] in ('"', "`", "'"):
+            check = check[1:-1]
+        check = check.split("\u2014", 1)[0].strip()
+        out.append((check, _line_of(code, m.start()), args))
+    return out
+
+
+def _conformance_compliant(args: str) -> bool:
+    if _compliant(args):
+        return True
+    if "never evaluated" in args:  # withheld by stages.py, never told the general line
+        return True
+    return (
+        "errorLine(error)" in args and "REQ-DEBUG/" in args
+    )  # HTTP-form / NO ANSWER interceptor
+
+
+def _unmarked_failure_points() -> list[tuple[str, str]]:
+    """(check, "rel:line") for every unmarked failure point across the graded suite."""
+    unmarked: list[tuple[str, str]] = []
+    for directory in ("backend", "frontend"):
+        for path in sorted((_GRADER_DIR / directory).rglob("*.ts")):
+            rel = path.relative_to(_GRADER_DIR).as_posix()
+            code = _strip_comments(path.read_text(encoding="utf-8"))
+            direct, callsites, closure = _scan_ts(code, rel)
+            for tok, line, args in direct:
+                if not _compliant(args):
+                    unmarked.append((tok, f"{rel}:{line}"))
+            for tok, line, hname, callargs in callsites:
+                msgs = closure.get(hname, set())
+                if (not _compliant(callargs)) and not any(_compliant(m) for m in msgs):
+                    unmarked.append((tok, f"{rel}:{line}"))
+    pregate = _strip_comments(
+        (_GRADER_DIR / "conformance" / "pregate.ts").read_text(encoding="utf-8")
+    )
+    for check, line, args in _scan_conformance(pregate):
+        if not _conformance_compliant(args):
+            unmarked.append((check, f"conformance/pregate.ts:{line}"))
+    return unmarked
+
+
+def test_every_told_failure_point_says_what_failed() -> None:
+    # A failure point that carries no marker of its own is told its check's
+    # general line. Every such point must be one the general line is TRUE for —
+    # allowlisted above with its reason — because a point the general line
+    # mis-tells has to get its own [aspect: ...] instead. This guard refuses any
+    # unmarked point whose check is not allowlisted, so a future failure point
+    # added with a message that says nothing cannot silently inherit a line that
+    # does not describe it.
+    unmarked = _unmarked_failure_points()
+    missing = sorted(
+        f"{check} {loc}" for check, loc in unmarked if check not in _ALLOWLIST
+    )
+    assert missing == [], (
+        f"{len(missing)} unmarked failure point(s) inherit their check's general "
+        f"line with no claim of their own — mark them, or allowlist the check:\n"
+        + "\n".join(missing)
+    )
+
+
 # Needs edges that can never apply together with the reverse edge, so they form no
 # real cycle. F30's boardcolours waits on F29 only when the bar is drawn over a
 # point box; F29 fails its overlap aspect in exactly that case, before it reaches
