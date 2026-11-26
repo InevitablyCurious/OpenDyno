@@ -145,8 +145,21 @@ export interface ServerHandle {
  * read-only: grading never changes the model's tree.
  */
 export function freshCheckout(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "candidate-"));
-  fs.cpSync(TARGET_DIR, dir, { recursive: true });
+  let dir: string;
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "candidate-"));
+  } catch (error) {
+    throw new Error(
+      `${HARNESS_INFRA}: could not make a fresh checkout (temp dir): ${(error as Error).message}`,
+    );
+  }
+  try {
+    fs.cpSync(TARGET_DIR, dir, { recursive: true });
+  } catch (error) {
+    throw new Error(
+      `${HARNESS_INFRA}: could not copy the candidate into a fresh checkout: ${(error as Error).message}`,
+    );
+  }
   return dir;
 }
 
@@ -198,6 +211,23 @@ function waitForExit(proc: ChildProcess, timeoutMs: number): Promise<boolean> {
   });
 }
 
+/**
+ * Resolve the artifact's start command for a boot, marking a build that
+ * declares no entrypoint as a SERVER-NOT-UP fault rather than letting the
+ * resolver's raw error reach the model as the calling gate's own line.
+ */
+export function resolveBootCommand(
+  targetDir: string,
+): { entrypoint: string; flags: string[] } {
+  try {
+    return resolveStartCommand(targetDir);
+  } catch (error) {
+    throw new Error(
+      `${SERVER_NOT_UP}: no server entrypoint was declared\n${(error as Error).message}`,
+    );
+  }
+}
+
 export async function startServer(opts?: {
   debug?: boolean;
   env?: Record<string, string>;
@@ -205,7 +235,7 @@ export async function startServer(opts?: {
   // The artifact's OWN start command, flags included. See `lib/entrypoint.mjs`
   // for why discarding them made grading depend on the operator's host Node.
   const checkout = freshCheckout();
-  const { entrypoint, flags } = resolveStartCommand(checkout);
+  const { entrypoint, flags } = resolveBootCommand(checkout);
   const proc = spawn("node", [...flags, entrypoint], {
     cwd: checkout,
     env: {
@@ -238,12 +268,12 @@ export async function startServer(opts?: {
   while (Date.now() < deadline) {
     if (spawnError) {
       throw new Error(
-        `Failed to spawn server process: ${spawnError.message}\nstderr:\n${handle.stderr ?? ""}`,
+        `${HARNESS_INFRA}: could not start the server process: ${spawnError.message}\nstderr:\n${handle.stderr ?? ""}`,
       );
     }
     if (proc.exitCode !== null) {
       throw new Error(
-        `Server exited before becoming healthy (exit=${proc.exitCode}, signal=${proc.signalCode ?? "none"}).\nstderr:\n${handle.stderr ?? ""}`,
+        `${SERVER_NOT_UP}: it exited with code ${proc.exitCode} before it became healthy\nstderr:\n${handle.stderr ?? ""}`,
       );
     }
 
@@ -264,7 +294,7 @@ export async function startServer(opts?: {
   await stopServer(handle);
   const stderr = (handle.stderr ?? "").trim() || "<empty>";
   throw new Error(
-    `Timed out waiting for /health at ${BASE_URL} after 6000ms.\nstderr:\n${stderr}`,
+    `${SERVER_NOT_UP}: no /health came up within 6000ms\nstderr:\n${stderr}`,
   );
 }
 
@@ -380,6 +410,10 @@ export const BOARD_RESTLESS = "BOARD RESTLESS";
 // button and its label) and the cause, and is told as that, in the player's
 // voice, whatever the gate measured next (harness/adapters/challenge/feedback.py).
 export const CLICK_MISSED = "CLICK MISSED";
+
+export const SERVER_NOT_UP = "SERVER NOT UP";
+
+export const HARNESS_INFRA = "HARNESS INFRA";
 
 // Display text the app may legitimately rewrite as the state changes.
 const SETUP_UNCHECKED = new Set(["message"]);

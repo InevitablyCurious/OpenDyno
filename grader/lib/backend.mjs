@@ -187,11 +187,24 @@ export async function runBackendPhase() {
     }
 
     let failuresHere = 0;
+    let machineFaultObserved = "";
     if (report && Array.isArray(report.testResults)) {
       merged.testResults.push(...report.testResults);
       for (const suite of report.testResults) {
         for (const assertion of suite.assertionResults || []) {
           if (assertion.status !== "failed") continue;
+
+          const rawFailure = (assertion.failureMessages || []).join("\n\n");
+          const eo = extractExpectedObserved(rawFailure, "backend gate assertion passes");
+          // A MACHINE FAULT (a temp dir or copy that could not be made, or a
+          // spawn error) fails every test's setup before any of them judged the
+          // candidate. It is the harness's own environment, never the build:
+          // recorded once as a harness-infra abort (backend:runner <file>),
+          // never as a gate failure the model is told.
+          if (eo.observed.includes("HARNESS INFRA")) {
+            if (!machineFaultObserved) machineFaultObserved = eo.observed;
+            continue;
+          }
           failuresHere += 1;
 
           const check =
@@ -199,8 +212,6 @@ export async function runBackendPhase() {
             || String(assertion.fullName || "").match(/(\[[A-Z]\d{2}\][^\n]*)/)?.[1]
             || String(assertion.fullName || "backend:unknown").trim()
             || "backend:unknown";
-          const rawFailure = (assertion.failureMessages || []).join("\n\n");
-          const eo = extractExpectedObserved(rawFailure, "backend gate assertion passes");
           problems.push(safeProblem(check, eo.expected, eo.observed));
           failedGates.push(check);
         }
@@ -278,7 +289,7 @@ export async function runBackendPhase() {
     }
 
     const crashed = isRunnerCrash(run);
-    if (!run.ok && (failuresHere === 0 || crashed)) {
+    if (machineFaultObserved || (!run.ok && (failuresHere === 0 || crashed))) {
       const reported = (report?.testResults ?? []).reduce(
         (n, suite) => n + (suite.assertionResults?.length ?? 0),
         0,
@@ -288,12 +299,14 @@ export async function runBackendPhase() {
         safeProblem(
           gate,
           "backend gates execute and pass",
-          runnerFailureObserved(`backend ${file}`, run, { reported, expected }),
+          machineFaultObserved
+            ? machineFaultObserved
+            : runnerFailureObserved(`backend ${file}`, run, { reported, expected }),
         ),
       );
       failedGates.push(gate);
       abortedFiles.push(file);
-      if (run.timedOut) {
+      if (!machineFaultObserved && run.timedOut) {
         timedOutFiles.push(file);
         // The model-facing half. `backend:runner <file>` stays for the scored
         // artifacts and the operator; this is the sentence a person would say.

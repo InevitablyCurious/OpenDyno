@@ -14,7 +14,7 @@ import {
   loadEngine,
   makeState,
   openingPoints,
-  resolveStartCommand,
+  resolveBootCommand,
   startServer,
   stopServer,
   ordinaryTurn,
@@ -382,7 +382,7 @@ describe("Backgammon backend gates 13-16", () => {
       // read-only mount an app that writes a file would fail for THAT reason,
       // and this gate would pass or fail on EROFS instead of on the port.
       const checkout2 = freshCheckout();
-      const startCmd = resolveStartCommand(checkout2);
+      const startCmd = resolveBootCommand(checkout2);
       const h = await startServer({ debug: true });
 
       let p2: ChildProcessWithoutNullStreams | null = null;

@@ -496,6 +496,33 @@ def roll_dead_line(observed: str, *, pass_kind: str) -> str | None:
     return _ROLL_DEAD_REPEAT if pass_kind == "repeat" else _ROLL_DEAD_FIRST
 
 
+# ── A SERVER THAT NEVER CAME UP ──────────────────────────────────────────────
+# The grader marks a build's server failing to come up (grader/lib/harness.ts
+# SERVER_NOT_UP) — it exited before healthy, the /health timeout expired, or the
+# build declared no entrypoint. The gate's own line would describe a later step
+# the check never reached; what is true is that the team started the server for
+# this check and it never came up.
+SERVER_NOT_UP = "SERVER NOT UP"
+_SERVER_NOT_UP_RE = re.compile(r"SERVER NOT UP:\s*([^\n]+)")
+_SERVER_NOT_UP_FIRST = (
+    "They started your server for this check and it never came up: {what}."
+)
+_SERVER_NOT_UP_REPEAT = (
+    "They started your server again and it still never came up: {what}."
+)
+
+
+def server_not_up_line(observed: str, *, pass_kind: str) -> str | None:
+    """The true line for a server that never came up, or None."""
+    text = finding_message(observed)
+    if SERVER_NOT_UP not in text:
+        return None
+    m = _SERVER_NOT_UP_RE.search(text)
+    what = m.group(1).strip() if m else "the server never became healthy"
+    template = _SERVER_NOT_UP_REPEAT if pass_kind == "repeat" else _SERVER_NOT_UP_FIRST
+    return template.format(what=what)
+
+
 # ── A CLICK THAT NEVER LANDED ───────────────────────────────────────────────
 # The grader marks it (CLICK MISSED) wherever a click cannot reach what it aimed
 # at — something lay over the target, or the target kept moving. The gate's own
@@ -899,6 +926,8 @@ class FeedbackMixin:
             return "restless"
         if CLICK_MISSED in observed:
             return "unclickable"
+        if SERVER_NOT_UP in observed:
+            return "boot"
         m = _ASPECT_RE.search(observed)
         return m.group(1) if m else None
 
@@ -940,9 +969,11 @@ class FeedbackMixin:
         )
         if roll_line:
             return roll_line, "tester"
-        setup_line = setup_refusal_line(
-            observed, pass_kind=pass_kind
-        ) or http_error_line(observed, pass_kind=pass_kind)
+        setup_line = (
+            server_not_up_line(observed, pass_kind=pass_kind)
+            or setup_refusal_line(observed, pass_kind=pass_kind)
+            or http_error_line(observed, pass_kind=pass_kind)
+        )
         if setup_line:
             return setup_line, "team"
         # `among` is this round's problems: a part whose picture is wrong is
@@ -1183,9 +1214,10 @@ class FeedbackMixin:
         def line_of(record: dict[str, Any]) -> tuple[str, str | None]:
             raw = str(record.get("check", "")).strip()
             aspect = cls._complaint_aspect(record)
-            # One Roll-dead, restless or unclickable line however many checks
-            # met them: they share one pass kind, so they render as one sentence.
-            if aspect in ("rolldead", "restless", "unclickable"):
+            # One Roll-dead, restless, unclickable or boot line however many
+            # checks met them: they share one pass kind, so they render as one
+            # sentence.
+            if aspect in ("rolldead", "restless", "unclickable", "boot"):
                 return (aspect, None)
             return (check_id(raw) or raw, aspect)
 

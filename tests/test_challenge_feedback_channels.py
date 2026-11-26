@@ -844,3 +844,27 @@ def test_a_click_that_never_landed_is_told_as_that_in_any_gate() -> None:
         == "I tried to click the Accept button, but it kept moving, so my click never landed on it."
     )
     assert voice == "tester"
+
+
+def test_a_server_that_never_came_up_is_told_as_that_in_any_gate() -> None:
+    # WO-C21-ITEM2: the boot sites (startServer/freshCheckout/resolveStartCommand)
+    # used to let a server that never came up fall through to each gate's own
+    # unrelated line. Now the SERVER NOT UP marker is told as that, in the
+    # team's voice, whatever gate met it.
+    from harness.adapters.challenge import ChallengeRunner as R
+
+    record = {
+        "check": "[G03] REQ-DOUBLES — a double plays as four moves",
+        "observed": "Error: SERVER NOT UP: it exited with code 1 before it became healthy",
+    }
+    first, voice = R._told_label(record, pass_kind="first")
+    assert (
+        first
+        == "They started your server for this check and it never came up: it exited with code 1 before it became healthy."
+    )
+    assert voice == "team"
+    repeat, _ = R._told_label(record, pass_kind="repeat")
+    assert (
+        repeat
+        == "They started your server again and it still never came up: it exited with code 1 before it became healthy."
+    )
