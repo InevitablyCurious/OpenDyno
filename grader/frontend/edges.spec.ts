@@ -1,6 +1,6 @@
 import { type Page } from "@playwright/test";
 import { expect, pickUpAPiece, playerClick, playerClickUntilShown, rollAndCheck, settledHintPositions, setupState, test } from "./fixtures.ts";
-import { BASE_URL } from "../lib/harness.ts";
+import { BASE_URL, SETUP_REFUSED } from "../lib/harness.ts";
 import { isPainted, readPointBoxes } from "./board-geometry.ts";
 
 function emptyPts() {
@@ -49,12 +49,14 @@ async function postDebugRoll(page: Page, dice: number[]) {
   const response = await page.request.post("/api/debug/roll", {
     data: { dice },
   });
-  expect(response.ok()).toBe(true);
+  if (!response.ok()) {
+    throw new Error(`${SETUP_REFUSED}: /api/debug/roll answered HTTP ${response.status()}`);
+  }
 }
 
 async function fetchState(page: Page) {
   const response = await page.request.post("/api/state", { data: {} });
-  expect(response.ok()).toBe(true);
+  expect(response.ok(), `POST /api/state failed (${response.status()})`).toBe(true);
   return response.json();
 }
 
@@ -515,7 +517,7 @@ test("[F15] REQ-SAME-ORIGIN — the app works on either host name", async ({
   page,
 }) => {
   const origins = [BASE_URL, BASE_URL.replace("localhost", "127.0.0.1")];
-  expect(new Set(origins).size, "the two origins must differ").toBe(2);
+  expect(new Set(origins).size, "[setup] [needs: F01] the two origins must differ").toBe(2);
 
   // Console errors at either address are F27's (the team's): a player never
   // sees the console. This check is the board a player sees at each address.
