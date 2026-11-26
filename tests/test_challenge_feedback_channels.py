@@ -812,3 +812,35 @@ def test_a_board_that_never_settles_is_told_as_that_once_whatever_gates_met_it()
     msg = R._build_feedback_prompt(problems=problems)
     assert msg.count("The board never stops moving") == 1
     assert "right order" not in msg
+
+
+def test_a_click_that_never_landed_is_told_as_that_in_any_gate() -> None:
+    # The two-sided contract: the grader throws `CLICK MISSED: <kind>: <cause>`
+    # when a click cannot reach what it aimed at, and the feedback system claims
+    # it, so the player hears that and never the gate's own later-step line.
+    from harness.adapters.challenge import ChallengeRunner as R
+
+    record = {
+        "check": "[F03] REQ-HINT — clicking a piece shows its moves",
+        "observed": "Error: CLICK MISSED: piece: covered",
+    }
+    first, voice = R._told_label(record, pass_kind="first")
+    assert (
+        first
+        == "I tried to click my piece, but something on screen lay over it, so my click never reached it."
+    )
+    assert voice == "tester"
+    repeat, _ = R._told_label(record, pass_kind="repeat")
+    assert repeat == "I tried to click my piece again and something still lies over it."
+
+    # A button names itself, and a target that kept moving is a different line.
+    button = {
+        "check": "[F50] REQ-DOUBLE-ANSWER — the computer's answer to a double is plain",
+        "observed": "Error: CLICK MISSED: button: Accept: moving",
+    }
+    first, voice = R._told_label(button, pass_kind="first")
+    assert (
+        first
+        == "I tried to click the Accept button, but it kept moving, so my click never landed on it."
+    )
+    assert voice == "tester"

@@ -372,6 +372,15 @@ export const ROLL_DEAD = "ROLL DEAD";
 // (harness/adapters/challenge/feedback.py).
 export const BOARD_RESTLESS = "BOARD RESTLESS";
 
+// A CLICK THAT NEVER REACHED WHAT THE CHECK MEANT TO PRESS (WO-LI-CLICK-MISSED).
+// `playerClick` throws this from any gate when the thing it was told to click
+// could not take a click at all: either it was still moving (its centre never
+// held still through 20 tries), or it stood still and every part of it was
+// covered by something else drawn over it. It names the thing (piece, hint,
+// button and its label) and the cause, and is told as that, in the player's
+// voice, whatever the gate measured next (harness/adapters/challenge/feedback.py).
+export const CLICK_MISSED = "CLICK MISSED";
+
 // Display text the app may legitimately rewrite as the state changes.
 const SETUP_UNCHECKED = new Set(["message"]);
 

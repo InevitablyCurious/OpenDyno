@@ -496,6 +496,72 @@ def roll_dead_line(observed: str, *, pass_kind: str) -> str | None:
     return _ROLL_DEAD_REPEAT if pass_kind == "repeat" else _ROLL_DEAD_FIRST
 
 
+# ── A CLICK THAT NEVER LANDED ───────────────────────────────────────────────
+# The grader marks it (CLICK MISSED) wherever a click cannot reach what it aimed
+# at — something lay over the target, or the target kept moving. The gate's own
+# line would describe a later step the player never reached.
+CLICK_MISSED = "CLICK MISSED"
+_CLICK_COVERED_FIRST = "I tried to click {thing}, but something on screen lay over it, so my click never reached it."
+_CLICK_COVERED_REPEAT = (
+    "I tried to click {thing} again and something still lies over it."
+)
+_CLICK_MOVING_FIRST = (
+    "I tried to click {thing}, but it kept moving, so my click never landed on it."
+)
+_CLICK_MOVING_REPEAT = (
+    "I tried to click {thing} again and it still wouldn't hold still."
+)
+
+
+def _click_missed_parts(observed: str) -> tuple[str, str, str] | None:
+    """`(kind, label, cause)` read off a CLICK MISSED finding, or None.
+
+    The marker is thrown as `CLICK MISSED: <kind>: <cause>`, and a button names
+    itself in the middle: `CLICK MISSED: button: <label>: <cause>`. The kind is
+    the first field, the cause the last, so a label carrying a colon of its own
+    stays whole. Anything that does not read as one of the kinds and causes the
+    marker is defined for is declined: a player line invented from a shape this
+    module does not understand would be a false report.
+    """
+    text = finding_message(observed)
+    if CLICK_MISSED not in text:
+        return None
+    fields = [f.strip() for f in text.split(CLICK_MISSED, 1)[1].split(":") if f.strip()]
+    if len(fields) < 2:
+        return None
+    kind, cause = fields[0], fields[-1]
+    if kind not in ("piece", "hint", "button") or cause not in ("covered", "moving"):
+        return None
+    label = ": ".join(fields[1:-1]) if kind == "button" else ""
+    return kind, label, cause
+
+
+def _click_missed_thing(kind: str, label: str) -> str:
+    """What the player says they tried to click."""
+    if kind == "piece":
+        return "my piece"
+    if kind == "hint":
+        return "a move hint"
+    return f"the {label} button" if label else "the button"
+
+
+def click_missed_line(observed: str, *, pass_kind: str) -> str | None:
+    """The true line for a click that never landed on what it aimed at, or None."""
+    parts = _click_missed_parts(observed)
+    if parts is None:
+        return None
+    kind, label, cause = parts
+    if cause == "covered":
+        template = (
+            _CLICK_COVERED_REPEAT if pass_kind == "repeat" else _CLICK_COVERED_FIRST
+        )
+    else:
+        template = (
+            _CLICK_MOVING_REPEAT if pass_kind == "repeat" else _CLICK_MOVING_FIRST
+        )
+    return template.format(thing=_click_missed_thing(kind, label))
+
+
 def setup_refusal_line(observed: str, *, pass_kind: str) -> str | None:
     """The true line for a refused setup, or None when the gate's setup took."""
     text = str(observed or "")
@@ -819,17 +885,20 @@ class FeedbackMixin:
     def _complaint_aspect(cls, record: dict[str, Any]) -> str | None:
         """The aspect a problem names, or None (the check's general line).
 
-        A press of Roll that rolled nothing and a board that never settles are
-        complaints of their own whatever check met them (roll_dead_line,
-        restless_line): a check told its own line last round and Roll-dead now
-        is a NEW complaint, never "I pressed Roll again" (run 1793897465 round
-        10 told the repeat beside the first sighting in one message).
+        A press of Roll that rolled nothing, a board that never settles and a
+        click that never landed are complaints of their own whatever check met
+        them (roll_dead_line, restless_line, click_missed_line): a check told
+        its own line last round and Roll-dead now is a NEW complaint, never "I
+        pressed Roll again" (run 1793897465 round 10 told the repeat beside the
+        first sighting in one message).
         """
         observed = finding_message(record.get("observed", ""))
         if ROLL_DEAD in observed:
             return "rolldead"
         if BOARD_RESTLESS in observed:
             return "restless"
+        if CLICK_MISSED in observed:
+            return "unclickable"
         m = _ASPECT_RE.search(observed)
         return m.group(1) if m else None
 
@@ -864,8 +933,10 @@ class FeedbackMixin:
         """
         raw_check = str(record.get("check", "")).strip()
         observed = str(record.get("observed", "") or "")
-        roll_line = roll_dead_line(observed, pass_kind=pass_kind) or restless_line(
-            observed, pass_kind=pass_kind
+        roll_line = (
+            roll_dead_line(observed, pass_kind=pass_kind)
+            or restless_line(observed, pass_kind=pass_kind)
+            or click_missed_line(observed, pass_kind=pass_kind)
         )
         if roll_line:
             return roll_line, "tester"
@@ -1112,9 +1183,9 @@ class FeedbackMixin:
         def line_of(record: dict[str, Any]) -> tuple[str, str | None]:
             raw = str(record.get("check", "")).strip()
             aspect = cls._complaint_aspect(record)
-            # One Roll-dead line and one restless line however many checks met
-            # them: they share one pass kind, so they render as one sentence.
-            if aspect in ("rolldead", "restless"):
+            # One Roll-dead, restless or unclickable line however many checks
+            # met them: they share one pass kind, so they render as one sentence.
+            if aspect in ("rolldead", "restless", "unclickable"):
                 return (aspect, None)
             return (check_id(raw) or raw, aspect)
 

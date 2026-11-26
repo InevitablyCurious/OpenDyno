@@ -36,7 +36,7 @@
 
 import { test as base, expect, type Locator, type Page } from "@playwright/test";
 
-import { BASE_URL, PORT, ROLL_DEAD, SETUP_REFUSED, assertRollTook, assertSetupTook, startServer, stopServer, type ServerHandle } from "../lib/harness.ts";
+import { BASE_URL, CLICK_MISSED, PORT, ROLL_DEAD, SETUP_REFUSED, assertRollTook, assertSetupTook, startServer, stopServer, type ServerHandle } from "../lib/harness.ts";
 import { boardGeometryDrawn, waitForBoardSettled } from "./board-geometry.ts";
 
 export const test = base.extend<{ gameServer: ServerHandle }>({
@@ -265,50 +265,101 @@ export async function playerClick(target: Locator): Promise<void> {
   // stack can have the stack's last checker over its centre — the reference at
   // 1280x800 with checkers a few px wider (FIX-17: M59, M63, M66) — and a click
   // aimed at the centre went to the checker, told as "could make only one
-  // move". When no part of it shows, the click lands on whatever covers it, as
-  // a player's would.
+  // move". So the centre is tried first, then a grid across the box, and the
+  // first point that receives the click is the one clicked.
+  //
+  // ── WHEN THE CLICK CANNOT REACH IT AT ALL ─────────────────────────────────
+  //
+  // Two different things stop a click, and both used to be told as one: "the
+  // element never held still on screen long enough to click" — after which the
+  // caller's own assertion reported whatever it measured next, so the census's
+  // 21 points across 13 checks heard a line about a different fault. Falling
+  // back to the centre when EVERY point of the box was covered was worse: the
+  // click landed on the cover and the failure surfaced later as the check's own.
+  //
+  // Each now fails here with one marker naming WHAT could not be clicked and
+  // WHY (lib/harness.ts CLICK_MISSED, harness/adapters/challenge/feedback.py):
+  //   CLICK MISSED: piece: moving
+  //   CLICK MISSED: hint: covered
+  //   CLICK MISSED: button: Accept: covered
+  // MOVING is the centre never matching on two frames running, through every
+  // try; COVERED is a box that held still while something else took the pointer
+  // at the centre and at all 25 grid points. The thing is read off the element —
+  // its test id, else its visible label — never from the caller, which already
+  // knows what it asked for and would only repeat it back.
+  //
+  // COVERED IS ONLY SOMETHING IN THE WAY. An element the page made click-through
+  // (`pointer-events: none`, the reference solution's checkers, handled by the
+  // point beneath) takes no pointer anywhere, so `elementFromPoint` answering
+  // the point is that page working as designed, not a cover — and a click at its
+  // centre is the click the page wanted. Measured: `elementsFromPoint` leaves
+  // such an element out altogether, so its own computed pointer-events is the one
+  // signal that tells the page's routing from an obstruction.
+  let thing = "button";
   let point: { x: number; y: number } | null = null;
   for (let tries = 0; tries < 20 && !point; tries++) {
+    let probe: { thing: string; point?: { x: number; y: number }; cause?: "covered" } | null = null;
     try {
-      point = await target.evaluate(
-        async (el) => {
+      probe = await target.evaluate(
+        async (el): Promise<{ thing: string; point?: { x: number; y: number }; cause?: "covered" }> => {
+          // A naming read that fails must not take the click down with it: it
+          // names no more than the default.
+          let named = "button";
+          try {
+            const testid = el.getAttribute("data-testid");
+            const label =
+              ((el instanceof HTMLElement ? el.innerText : "") ?? "").trim() ||
+              (el.getAttribute("aria-label") ?? "").trim();
+            named = testid === "checker" ? "piece" : testid === "hint" ? "hint" : label ? `button: ${label}` : "button";
+          } catch {
+            // keep the default
+          }
           el.scrollIntoView({ block: "center", inline: "center" });
           const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
           let prev = "";
           let box: DOMRect | null = null;
           for (let i = 0; i < 120 && !box; i++) {
             await frame();
-            if (!el.isConnected) return null;
+            if (!el.isConnected) return { thing: named, cause: "moving" };
             const r = el.getBoundingClientRect();
             const cur = [r.x + r.width / 2, r.y + r.height / 2].map((v) => v.toFixed(1)).join(",");
             if (cur === prev && r.width > 0 && r.height > 0) box = r;
             prev = cur;
           }
-          if (!box) return null;
+          // It never held still: another try, and MOVING once every try is spent.
+          if (!box) return { thing: named, cause: "moving" };
+          const clickThrough = getComputedStyle(el).pointerEvents === "none";
           const shows = (x: number, y: number) => {
             const hit = document.elementFromPoint(x, y);
             return !!hit && (hit === el || el.contains(hit));
           };
           const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-          if (shows(centre.x, centre.y)) return centre;
+          if (clickThrough || shows(centre.x, centre.y)) return { thing: named, point: centre };
           for (const fy of [0.5, 0.3, 0.7, 0.2, 0.8]) {
             for (const fx of [0.5, 0.3, 0.7, 0.2, 0.8]) {
               const x = box.x + box.width * fx;
               const y = box.y + box.height * fy;
-              if (shows(x, y)) return { x, y };
+              if (shows(x, y)) return { thing: named, point: { x, y } };
             }
           }
-          return centre;
+          // It held still, it takes the pointer itself, and none of it shows:
+          // the click would land on whatever covers it.
+          return { thing: named, cause: "covered" };
         },
         undefined,
         { timeout: 5000 },
       );
     } catch {
-      point = null;
+      probe = null;
+    }
+    if (probe) {
+      thing = probe.thing;
+      if (probe.cause === "covered") throw new Error(`${CLICK_MISSED}: ${probe.thing}: covered`);
+      point = probe.point ?? null;
     }
     if (!point) await target.page().waitForTimeout(100);
   }
-  if (!point) throw new Error("the element never held still on screen long enough to click");
+  if (!point) throw new Error(`${CLICK_MISSED}: ${thing}: moving`);
   await target.page().mouse.click(point.x, point.y);
 }
 
