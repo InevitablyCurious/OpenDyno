@@ -868,3 +868,24 @@ def test_a_server_that_never_came_up_is_told_as_that_in_any_gate() -> None:
         repeat
         == "They started your server again and it still never came up: it exited with code 1 before it became healthy."
     )
+
+
+def test_a_call_that_got_no_answer_is_told_as_that_in_any_gate() -> None:
+    # The sibling of the HTTP-status line: when a call got NO answer at all —
+    # connection refused, socket reset — there is no status to report. The
+    # grader marks it (NO ANSWER: <METHOD> <PATH>) so the team hears that and
+    # never the gate's own later-step line.
+    from harness.adapters.challenge import ChallengeRunner as R
+
+    record = {
+        "check": "[G03] REQ-DOUBLES — a double plays as four moves",
+        "observed": "Error: NO ANSWER: POST /api/state — connect ECONNREFUSED 127.0.0.1:8002",
+    }
+    first, voice = R._told_label(record, pass_kind="first")
+    assert (
+        first
+        == "When they called POST /api/state on your app, nothing answered — the connection failed."
+    )
+    assert voice == "team"
+    repeat, _ = R._told_label(record, pass_kind="repeat")
+    assert repeat == "They called POST /api/state again and still nothing answered."

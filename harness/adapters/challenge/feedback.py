@@ -469,6 +469,31 @@ def http_error_line(observed: str, *, pass_kind: str) -> str | None:
     return None
 
 
+# ── A CALL THAT GOT NO ANSWER AT ALL ────────────────────────────────────────
+#
+# The sibling of the block above, for the other half of a failed call: the app
+# never answered — the connection was refused, the socket reset — so there is no
+# status to report. The grader marks it (grader/lib/harness.ts NO_ANSWER) with
+# the call's method and path; without this, the finding fell through to the
+# check's own line, which describes something downstream that never happened.
+NO_ANSWER = "NO ANSWER"
+_NO_ANSWER_RES = re.compile(r"NO ANSWER:\s*(?P<method>GET|POST)\s+(?P<path>/\S+)")
+_NO_ANSWER_FIRST = "When they called {method} {path} on your app, nothing answered — the connection failed."
+_NO_ANSWER_REPEAT = "They called {method} {path} again and still nothing answered."
+
+
+def no_answer_line(observed: str, *, pass_kind: str) -> str | None:
+    """The true line for a call that got no answer at all, or None."""
+    text = finding_message(observed)
+    if NO_ANSWER not in text:
+        return None
+    m = _NO_ANSWER_RES.search(text)
+    if not m:
+        return None
+    template = _NO_ANSWER_REPEAT if pass_kind == "repeat" else _NO_ANSWER_FIRST
+    return template.format(method=m.group("method"), path=m.group("path"))
+
+
 # ── A PRESS OF ROLL THAT ROLLED NOTHING ─────────────────────────────────────
 # The grader marks it (grader/lib/harness.ts ROLL_DEAD) wherever it happens; the
 # gate's own line would describe a later step the player never reached.
@@ -973,6 +998,7 @@ class FeedbackMixin:
             server_not_up_line(observed, pass_kind=pass_kind)
             or setup_refusal_line(observed, pass_kind=pass_kind)
             or http_error_line(observed, pass_kind=pass_kind)
+            or no_answer_line(observed, pass_kind=pass_kind)
         )
         if setup_line:
             return setup_line, "team"

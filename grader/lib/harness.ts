@@ -337,14 +337,27 @@ async function stopProcess(h: ServerHandle): Promise<void> {
 }
 
 export async function api(pathname: string, body?: any): Promise<any> {
-  const response = await fetch(`${BASE_URL}${normalizePath(pathname)}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(body ?? {}),
-    signal: AbortSignal.timeout(30_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}${normalizePath(pathname)}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body ?? {}),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    // A timeout is the request hanging, not the connection failing: it is a
+    // stall and reaches the model as harness infrastructure, unchanged.
+    const name = (error as Error)?.name;
+    if (name === "TimeoutError" || name === "AbortError") {
+      throw error;
+    }
+    throw new Error(
+      `${NO_ANSWER}: POST ${normalizePath(pathname)} — ${(error as Error).message}`,
+    );
+  }
 
   // A non-2xx is never a success: surface it (status + the server's error
   // detail) instead of letting an error body pass as a parsed response.
@@ -414,6 +427,14 @@ export const CLICK_MISSED = "CLICK MISSED";
 export const SERVER_NOT_UP = "SERVER NOT UP";
 
 export const HARNESS_INFRA = "HARNESS INFRA";
+
+// A CALL THAT GOT NO ANSWER AT ALL. `api()` marks a fetch that never reached a
+// response — connection refused, socket reset, DNS failure — with this and the
+// call's method and path, so it is told as what an integrating team saw ("nothing
+// answered") instead of falling through to the check's own line. A timeout is a
+// hang/stall, not a failed connection, and keeps its own error for the infra
+// path. Read by feedback.py's `no_answer_line`.
+export const NO_ANSWER = "NO ANSWER";
 
 // Display text the app may legitimately rewrite as the state changes.
 const SETUP_UNCHECKED = new Set(["message"]);
