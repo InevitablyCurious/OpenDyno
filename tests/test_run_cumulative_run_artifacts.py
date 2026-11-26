@@ -1,0 +1,567 @@
+from __future__ import annotations
+
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from harness.cumulative.types import PhaseGroup, SessionRecord
+
+# LI-14: run_cumulative is a package (scripts/run_cumulative/) fronted by a thin
+# scripts/run_cumulative.py entrypoint. Import the PACKAGE, which is what a run
+# executes.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import run_cumulative  # noqa: E402
+
+
+def _cell_result() -> Any:
+    class _R:
+        verdict = "PASS"
+        termination_reason = "gates_green"
+        attempts_to_green = 1
+        conformed = True
+        input_tokens = 100
+        output_tokens = 50
+        turns = 3
+        attempt_reports = [
+            {
+                "attempt": 1,
+                "verdict": "PASS",
+                "conformed": True,
+                "n_problems": 0,
+                "failed_gates": [],
+                # WO-CUTOFF: per-attempt context figures sourced from
+                # attempt_reports; the ledger writer copies them onto the
+                # attempt row only when present (None = not recorded).
+                "context_peak": 1234,
+                "context_window": 200000,
+            }
+        ]
+        session_id = "sid-1"
+        variant = "a"
+        model = "local-llm-proxy/x"
+        tool_calls = 5
+        test_invocations = 2
+        agentic_cycles = 1
+        problems_before = 3
+        problems_after = 0
+        worker_image_fingerprint = None
+
+    return _R()
+
+
+@pytest.fixture(autouse=True)
+def _empty_proxy_runs_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point the relay-proxy run-log source (BENCH_PROXY_RUNS_DIR, read at call
+    time inside _read_proxy_served_identity) at an EMPTY temp dir.
+
+    This makes the spend-DB-fallback / NULL-when-meter-empty behaviour
+    deterministic on every machine regardless of whether a real proxy log
+    exists at DEFAULT_PROXY_RUNS_DIR. Tests that intentionally exercise the
+    proxy-log path override this env (their monkeypatch.setenv runs after the
+    fixture's).
+    """
+    empty = tmp_path / "empty-proxy-runs"
+    empty.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("BENCH_PROXY_RUNS_DIR", str(empty))
+    return empty
+
+
+def _build_runner(module: Any, tmp_path: Path, *, runs_dir: Path | None = None) -> Any:
+    runs_dir = runs_dir or (tmp_path / "runs")
+    runner = module.RealSessionRunner.__new__(module.RealSessionRunner)
+    runner._session_states = {}
+    # WO-ERRDATA-C4: run_session accumulates per-cell error counts into
+    # _error_totals (normally initialized in __init__, which __new__ skips).
+    runner._error_totals = {
+        "guard_aborted_turns": 0,
+        "finalize_timeout_turns": 0,
+        "stalled_turns": 0,
+    }
+    runner._runs_dir = runs_dir
+    runner._task_dir = tmp_path / "task"
+    runner._task = "backgammon"
+    runner._proxy_base_url = "http://127.0.0.1:11434/v1"
+    runner._proxy_token = "proxy-token-value"
+    runner._progress = lambda message: None
+    runner._org_id = "org-test"
+    runner._repo_root = tmp_path
+    runner._run_manifest_base_path = str(runs_dir / "manifest.json")
+    runner._run_manifest_written = False
+    runner._runner_cls = _FakeRunner
+    runner._spend_meter = _FakeSpendMeter()
+    # run_identity contract: _state_for_session reads self._run_identity
+    # (normally initialized in __init__, which __new__ skips).
+    runner._run_identity = "test-run-identity"
+    return runner
+
+
+class _FakeSpendMeter:
+    def __init__(self) -> None:
+        self.identities: list[Any] = []
+        self.raise_on_model_identity = False
+
+    def model_identity(self, session_id: str) -> list[Any]:
+        if self.raise_on_model_identity:
+            raise RuntimeError("spend db unavailable")
+        return self.identities
+
+    def contention_covariates(self, *args: Any, **kwargs: Any) -> Any:
+        from harness.contention import ContentionCovariates
+
+        return ContentionCovariates.empty()
+
+
+class _FakeRunner:
+    def __init__(self, **kwargs: Any) -> None:
+        self._kwargs = kwargs
+
+    def run_cell(
+        self,
+        run_label: str,
+        run_dir: Path,
+        task_id: str = "backgammon",
+        run_identity: str | None = None,
+    ) -> Any:
+        return _cell_result()
+
+
+def _session(sequence_index: int) -> SessionRecord:
+    return SessionRecord(
+        sequence_index=sequence_index,
+        model="local-llm-proxy/x",
+        provider_pin="local",
+        variant="a",
+        phase_group=PhaseGroup.A_BASELINE.value,
+        phase="RUN_SESSION",
+    )
+
+
+def _read_manifest(runs_dir: Path) -> dict[str, Any]:
+    path = runs_dir / "manifest.run-manifest.json"
+    assert path.is_file(), f"run manifest not created at {path}"
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _read_status_records(runs_dir: Path) -> list[dict[str, Any]]:
+    path = runs_dir / "manifest.status.jsonl"
+    assert path.is_file(), f"status stream not created at {path}"
+    records: list[dict[str, Any]] = []
+    with open(path, "r", encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line:
+                continue
+            records.append(json.loads(line))
+    return records
+
+
+def test_run_manifest_and_status_stream_written(tmp_path: Path) -> None:
+    module = run_cumulative
+    runs_dir = tmp_path / "runs"
+    runner = _build_runner(module, tmp_path, runs_dir=runs_dir)
+    runner._runner_cls = _FakeRunner
+
+    session = _session(0)
+    returned = runner.run_session(session)
+
+    # (d) behaviour unchanged: same result object returned.
+    assert returned.verdict == "PASS"
+
+    # (a) run manifest created with correct identity fields.
+    manifest = _read_manifest(runs_dir)
+    assert manifest["variant"] == "a"
+    assert manifest["org_id"] == "org-test"
+    assert manifest["requested_model"] == "local-llm-proxy/x"
+    assert manifest["served_model"] is None  # fake meter returns []
+    assert manifest["run_id"] == runs_dir.name
+
+    # (b) status stream exists with >=1 parseable record, each with required keys.
+    records = _read_status_records(runs_dir)
+    assert len(records) >= 1
+    required_keys = {
+        "type",
+        "sequence_index",
+        "variant",
+        "org_id",
+        "served_model",
+        "verdict",
+        "progress",
+        "work_input_tokens",
+        "work_output_tokens",
+        "work_total_tokens",
+        "injected_block_est_tokens",
+        "injected_count",
+        "injected_block_chars",
+        "consumer_injected_count",
+        "extraction_state",
+        "terminal_outcome",
+        "session_fp",
+        "session_id",
+    }
+    for record in records:
+        assert set(required_keys) <= set(record), f"missing keys in {record}"
+        assert record["type"] == "attempt"
+        assert record["schema_version"] == 1
+        assert record["sequence_index"] == 0
+        assert record["variant"] == "a"
+        assert record["org_id"] == "org-test"
+        assert record["extraction_state"] == "unknown"
+        # WO-TRUNC-1: terminal outcome is recorded, never placeholder-null.
+        assert record["terminal_outcome"] is True  # verdict PASS
+        assert record["terminal_reason"] == "gates_green"
+        assert record["provider_truncations"] == 0
+        assert record["cap_cutoffs"] == 0
+        assert record["cap_cutoffs_nudged"] == 0
+        # WO-CUTOFF: per-attempt context figures flow from attempt_reports.
+        assert record["context_peak"] == 1234
+        assert record["context_window"] == 200000
+        assert record["truncated_turns"] == 0
+        assert record["truncated_turns_retried"] == 0
+        assert record["unmetered_turns"] == 0
+        assert record["unmetered_turn_wall_s"] == 0.0
+        assert record["work_input_tokens"] == 100
+        assert record["work_output_tokens"] == 50
+        assert record["work_total_tokens"] == 150
+
+    # (c) last record's progress equals the cell's final progress mapping
+    # (computed from the actual returned result, contention populated).
+    last = records[-1]
+    final_progress = module.progress_from_cell_result(returned).to_dict()
+    assert last["progress"] == final_progress
+
+
+def test_run_manifest_carries_runner_seed(tmp_path: Path) -> None:
+    module = run_cumulative
+    runs_dir = tmp_path / "runs"
+    runner = _build_runner(module, tmp_path, runs_dir=runs_dir)
+    runner._runner_cls = _FakeRunner
+    runner._seed = 12345
+
+    runner.run_session(_session(0))
+
+    manifest = _read_manifest(runs_dir)
+    assert manifest["seed"] == 12345
+
+
+def test_run_manifest_write_once_and_stream_append_only(tmp_path: Path) -> None:
+    module = run_cumulative
+    runs_dir = tmp_path / "runs"
+    runner = _build_runner(module, tmp_path, runs_dir=runs_dir)
+    runner._runner_cls = _FakeRunner
+
+    runner.run_session(_session(0))
+    manifest_path = runs_dir / "manifest.run-manifest.json"
+    first_content = manifest_path.read_bytes()
+
+    runner.run_session(_session(1))
+
+    # Run manifest written only once, same content, no error.
+    assert manifest_path.read_bytes() == first_content
+    assert manifest_path.read_bytes().count(b"schema_version") == 1
+
+    # Status stream has records from both sessions, order preserved.
+    records = _read_status_records(runs_dir)
+    assert len(records) == 2
+    assert [r["sequence_index"] for r in records] == [0, 1]
+
+
+def test_turn_terminal_records_appended_for_truncated_turns(tmp_path: Path) -> None:
+    """WO-TRUNC-1: a truncated turn lands in the status stream as turn_terminal."""
+    module = run_cumulative
+    runs_dir = tmp_path / "runs"
+
+    result = _cell_result()
+    result.verdict = "FAIL"
+    result.termination_reason = "transport_incomplete"
+    result.provider_truncations = 1
+    result.cap_cutoffs = 2
+    result.cap_cutoffs_nudged = 1
+    result.truncated_turns = 1
+    result.truncated_turns_retried = 1
+    result.unmetered_turns = 1
+    result.unmetered_turn_wall_s = 60.0
+    result.turn_anomalies = [
+        {
+            "phase": "initial",
+            "turn_index": 7,
+            "terminal": "truncated_no_signal",
+            "reason": "unknown",
+            "tool_uses": 0,
+            "file_writes": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "cost_usd": 0.0,
+            "tokens_unmetered": True,
+            "wall_seconds": 60.0,
+            "retried": True,
+            "retry_kind": "client_auto",
+            "session_id": "sid-1",
+        }
+    ]
+
+    class _TruncRunner:
+        def __init__(self, **kwargs: Any) -> None:
+            self._kwargs = kwargs
+
+        def run_cell(
+            self,
+            run_label: str,
+            run_dir: Path,
+            task_id: str = "backgammon",
+            run_identity: str | None = None,
+        ) -> Any:
+            return result
+
+    runner = _build_runner(module, tmp_path, runs_dir=runs_dir)
+    runner._runner_cls = _TruncRunner
+    runner.run_session(_session(0))
+
+    records = _read_status_records(runs_dir)
+    attempt_records = [r for r in records if r["type"] == "attempt"]
+    turn_records = [r for r in records if r["type"] == "turn_terminal"]
+
+    assert len(attempt_records) == 1
+    attempt = attempt_records[0]
+    assert attempt["terminal_outcome"] is False  # FAIL, not a placeholder null
+    assert attempt["terminal_reason"] == "transport_incomplete"
+    assert attempt["provider_truncations"] == 1
+    assert attempt["cap_cutoffs"] == 2
+    assert attempt["cap_cutoffs_nudged"] == 1
+    assert attempt["truncated_turns"] == 1
+    assert attempt["truncated_turns_retried"] == 1
+    assert attempt["unmetered_turns"] == 1
+    assert attempt["unmetered_turn_wall_s"] == 60.0
+
+    assert len(turn_records) == 1
+    turn = turn_records[0]
+    assert turn["schema_version"] == 1
+    assert turn["sequence_index"] == 0
+    assert turn["variant"] == "a"
+    assert turn["org_id"] == "org-test"
+    assert turn["terminal"] == "truncated_no_signal"
+    assert turn["reason"] == "unknown"
+    assert turn["turn_index"] == 7
+    assert turn["phase"] == "initial"
+    assert turn["tokens_unmetered"] is True
+    assert turn["wall_seconds"] == 60.0
+    assert turn["retried"] is True
+    assert turn["retry_kind"] == "client_auto"
+    assert turn["session_id"] == "sid-1"
+
+
+def test_scoring_turn_exclusions_reach_the_status_stream(tmp_path: Path) -> None:
+    """WO-NUDGE-INF-1: the status stream must carry BOTH scoring-turn subtrahends.
+
+    Scoring turns are `turns - guard_aborted_turns - finalize_timeout_turns`.
+    RC-5 makes the manifest plus this status stream the ONLY sources a scorecard
+    may read, so a subtrahend that lives solely on a PROGRESS log line makes the
+    measurement unreconstructable from the authoritative artifacts. This pins
+    both fields into the attempt record.
+    """
+    module = run_cumulative
+    runs_dir = tmp_path / "runs"
+
+    result = _cell_result()
+    result.verdict = "FAIL"
+    result.termination_reason = "gates_failed"
+    result.guard_aborted_turns = 2
+    result.finalize_timeout_turns = 3
+    # WO-ERRDATA-C4: stalled turns are not a scoring subtrahend, but the
+    # attempt record is the only durable source for them — pin the plumbing.
+    result.stalled_turns = 1
+
+    class _ExclusionRunner:
+        def __init__(self, **kwargs: Any) -> None:
+            self._kwargs = kwargs
+
+        def run_cell(
+            self,
+            run_label: str,
+            run_dir: Path,
+            task_id: str = "backgammon",
+            run_identity: str | None = None,
+        ) -> Any:
+            return result
+
+    runner = _build_runner(module, tmp_path, runs_dir=runs_dir)
+    runner._runner_cls = _ExclusionRunner
+    runner.run_session(_session(0))
+
+    attempts = [r for r in _read_status_records(runs_dir) if r["type"] == "attempt"]
+    assert len(attempts) == 1
+    attempt = attempts[0]
+
+    assert attempt["guard_aborted_turns"] == 2
+    assert attempt["finalize_timeout_turns"] == 3
+    assert attempt["stalled_turns"] == 1
+
+    # `recovery_nudges` is deliberately absent: it never reaches
+    # ChallengeCellResult, so emitting it would write a constant 0 and
+    # fabricate the appearance of a measurement.
+    assert "recovery_nudges" not in attempt
+
+
+def test_served_model_capture_and_failure_tolerance(tmp_path: Path) -> None:
+    module = run_cumulative
+    runs_dir = tmp_path / "runs"
+
+    class _Identity:
+        model = "x"
+        upstream_model = "served-y"
+        calls = 1
+
+    runner = _build_runner(module, tmp_path, runs_dir=runs_dir)
+    runner._runner_cls = _FakeRunner
+    runner._spend_meter.identities = [_Identity()]
+    runner.run_session(_session(0))
+
+    records = _read_status_records(runs_dir)
+    served_model = records[0]["served_model"]
+    assert served_model["upstream_model"] == "served-y"
+    assert served_model["model"] == "local-llm-proxy/x"
+
+    # Failure path: model_identity raises -> served_model None, run succeeds.
+    runner2 = _build_runner(module, tmp_path, runs_dir=tmp_path / "runs2")
+    runner2._runner_cls = _FakeRunner
+    runner2._spend_meter.raise_on_model_identity = True
+    result = runner2.run_session(_session(0))
+    assert result.verdict == "PASS"
+    records2 = _read_status_records(tmp_path / "runs2")
+    assert records2[0]["served_model"] is None
+
+
+def test_local_proxy_log_served_identity_lands_in_manifest_and_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WO-NIGHT2-1d: the relay proxy's API-reported served identity (genuine
+    upstreamModel) lands in BOTH the run manifest and the attempt status
+    records, while alias-echo rows and non-request rows are rejected. The spend
+    DB stays empty here, so the proxy log is the sole source of identity."""
+    module = run_cumulative
+    runs_dir = tmp_path / "runs"
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    proxy_dir = tmp_path / "proxy-runs"
+    proxy_dir.mkdir(parents=True, exist_ok=True)
+    log_path = proxy_dir / f"{today}.jsonl"
+    rows = [
+        # Alias-echo row: upstream == requested -> must be REJECTED.
+        {
+            "type": "request",
+            "ts": f"{today}T00:00:01Z",
+            "requestedModel": "auto (Local LLM Proxy - oMLX)",
+            "upstreamModel": "auto (Local LLM Proxy - oMLX)",
+        },
+        # Non-request row: skipped by type.
+        {
+            "type": "heartbeat",
+            "ts": f"{today}T00:00:03Z",
+            "requestedModel": "auto (Local LLM Proxy - oMLX)",
+        },
+        # Genuine row, latest by ts -> selected.
+        {
+            "type": "request",
+            "ts": f"{today}T00:00:05Z",
+            "requestedModel": "auto (Local LLM Proxy - oMLX)",
+            "upstreamModel": "Vontra--DeepSeek-V4-Flash-0731-MXFP4-MLX",
+        },
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    # Override the autouse empty-dir fixture: this test exercises the real
+    # proxy-log path.
+    monkeypatch.setenv("BENCH_PROXY_RUNS_DIR", str(proxy_dir))
+
+    runner = _build_runner(module, tmp_path, runs_dir=runs_dir)
+    runner._runner_cls = _FakeRunner
+    # Empty spend meter (no identities) so the proxy log is the sole source.
+    runner._spend_meter.identities = []
+    runner.run_session(_session(0))
+
+    # Manifest carries the genuine served identity (NON-NULL).
+    manifest = _read_manifest(runs_dir)
+    assert manifest["served_model"] == "Vontra--DeepSeek-V4-Flash-0731-MXFP4-MLX"
+
+    # Status records carry the served-model dict with the genuine upstream.
+    records = _read_status_records(runs_dir)
+    assert len(records) >= 1
+    for record in records:
+        assert record["type"] == "attempt"
+        assert (
+            record["served_model"]["upstream_model"]
+            == "Vontra--DeepSeek-V4-Flash-0731-MXFP4-MLX"
+        )
+        assert record["served_model"]["model"] == "local-llm-proxy/x"
+
+    # Direct reader assertions: genuine identity via the fixture dir, None when
+    # the source dir is empty (fallback degrades).
+    assert (
+        module._read_proxy_served_identity(proxy_dir)
+        == "Vontra--DeepSeek-V4-Flash-0731-MXFP4-MLX"
+    )
+    empty_dir = tmp_path / "empty-proxy-runs"
+    empty_dir.mkdir(parents=True, exist_ok=True)
+    assert module._read_proxy_served_identity(empty_dir) is None
+
+
+def test_absolute_outside_resume_checkpoint_does_not_move_the_cell_run_dir(
+    tmp_path: Path,
+) -> None:
+    """A resume SOURCE outside the runs root never dictates the cell DESTINATION.
+
+    The check-point is read, never written: the cell's run dir is composed from
+    the runs root and the session's VARIANT (``<runs>/variantA/cell-0000``), so
+    a resume whose check-point lives in an unrelated absolute tree still lands
+    under the runs root. A version that derived the destination from the
+    check-point would write its new cell beside — or inside — the archive it is
+    only supposed to read, which is why the check-point's own tree and parent
+    are pinned as unchanged here.
+    """
+    module = run_cumulative
+    runs_dir = tmp_path / "runs"
+
+    # A minimal check-point, ABSOLUTE and outside the runs root.
+    outside_cp = tmp_path / "archive" / "cp-04"
+    (outside_cp / "tree").mkdir(parents=True)
+    captured_tree = outside_cp / "tree" / "a.txt"
+    captured_tree.write_text("model's a\n", encoding="utf-8")
+    cp_json = outside_cp / "cp.json"
+    cp_json.write_text(
+        json.dumps({"attempt": 4, "phase": "feedback-3", "build_phase": 6}),
+        encoding="utf-8",
+    )
+    before_cp_json = cp_json.read_bytes()
+    before_tree = captured_tree.read_bytes()
+    before_cp_entries = sorted(p.name for p in outside_cp.iterdir())
+    before_parent_entries = sorted(p.name for p in outside_cp.parent.iterdir())
+
+    runner = _build_runner(module, tmp_path, runs_dir=runs_dir)
+    runner._runner_cls = _FakeRunner
+    runner._resume_checkpoint = str(outside_cp)
+
+    runner.run_session(_session(0))
+
+    # (a) The destination is composed from the runs root and the variant.
+    expected_run_dir = runs_dir / "variantA" / "cell-0000"
+    assert runner._state_for_session(_session(0)).run_dir == expected_run_dir
+
+    # (b) The cell directory exists on disk (run_session's mkdir).
+    assert expected_run_dir.is_dir()
+
+    # (c) The resume SOURCE was never written into: no cell dir appeared beside
+    # the check-point, and the captured tree + cp.json are byte-identical.
+    assert sorted(p.name for p in outside_cp.iterdir()) == before_cp_entries
+    assert sorted(p.name for p in outside_cp.parent.iterdir()) == before_parent_entries
+    assert cp_json.read_bytes() == before_cp_json
+    assert captured_tree.read_bytes() == before_tree
+    assert not list(outside_cp.glob("cell-*"))
+    assert not list(outside_cp.parent.glob("cell-*"))

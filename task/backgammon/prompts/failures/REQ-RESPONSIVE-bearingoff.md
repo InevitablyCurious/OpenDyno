@@ -1,0 +1,1 @@
+It locked up on me while I was bearing off — nothing responded after that. I gave it {seconds}.

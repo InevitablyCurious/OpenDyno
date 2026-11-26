@@ -1,0 +1,1 @@
+They loaded your page again, and it still logs errors in the browser console.

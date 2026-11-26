@@ -1,0 +1,363 @@
+"""Benchmark run configuration for OpenDyno A/B measurement.
+
+Recall-mode launch behavior is process-scoped on the MCP/plugin side (not request-body
+fields), so benchmark reproducibility requires explicit config for both primary scored
+and diagnostic paths.
+
+Per D-BENCH-CONTRACT-2026-07: the benchmark measures pattern/quantity resilience and
+capability-direction safety across ordered waves; it is NOT a fixed strong→weak
+distillation script. The schedule schema below is the single active path.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import hashlib
+import json
+import os
+from typing import Any
+
+
+# ---------------------------------------------------------------------------
+# Arbitrary schedule schema (replaces old fixed model_ladder)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BenchmarkWave:
+    """One wave of the benchmark schedule.
+
+    A wave groups models that run in parallel (or sequentially within the wave).
+    After a wave completes, extraction/commit happens, then the next wave starts.
+
+    ``tier`` is UNKNOWN/UNORDERED until registry evidence establishes bands;
+    never invent a tier or ordering. ``models`` are the model slugs in this
+    wave (arbitrary interleaving supported). ``variants`` names the A/B
+    variants this wave exercises.
+    """
+
+    wave_id: str
+    models: tuple[str, ...]
+    tier: str = "UNKNOWN"  # UNKNOWN/UNORDERED until registry evidence (D-BENCH-CONTRACT-2026-07 §10)
+    variants: tuple[str, ...] = ("a", "b")
+
+    def validate(self) -> None:
+        """Validate this wave's structure. Raises RuntimeError on violation."""
+        if not str(self.wave_id).strip():
+            raise RuntimeError(f"wave_id must be non-empty: {self.wave_id!r}")
+        if not self.models:
+            raise RuntimeError(f"wave {self.wave_id!r} has no models")
+        for model in self.models:
+            if not str(model).strip():
+                raise RuntimeError(f"wave {self.wave_id!r} has blank model")
+        valid_tiers = {"UNKNOWN", "UNORDERED"} | {
+            "CEILING",
+            "BRACKET",
+            "FLOOR",
+        }  # CEILING/BRACKET/FLOOR from variance policy
+        if str(self.tier) not in valid_tiers:
+            raise RuntimeError(
+                f"wave {self.wave_id!r} tier {self.tier!r} not in "
+                f"{{UNKNOWN, UNORDERED, CEILING, BRACKET, FLOOR}}"
+            )
+        for variant in self.variants:
+            if variant not in ("a", "b"):
+                raise RuntimeError(
+                    f"wave {self.wave_id!r} has unknown variant {variant!r}"
+                )
+
+
+@dataclass(frozen=True)
+class BenchmarkSchedule:
+    """General pattern/quantity-resilience schedule (replaces old fixed model_ladder).
+
+    Supports arbitrary model-capability interleavings and run lengths per
+    D-BENCH-CONTRACT-2026-07. Waves are ordered; within each wave, models
+    may run in any order (interleaving supported).
+
+    ``waves`` is the ordered list of waves. ``schema_version`` bumps on
+    structural changes.
+    """
+
+    waves: tuple[BenchmarkWave, ...] = ()
+    schema_version: int = 1  # bump when structure/interpretation changes
+
+    def validate(self) -> None:
+        """Validate the entire schedule. Raises RuntimeError on violation."""
+        if not self.waves:
+            raise RuntimeError("benchmark schedule has no waves")
+        seen_wave_ids: set[str] = set()
+        for wave in self.waves:
+            wave.validate()
+            if wave.wave_id in seen_wave_ids:
+                raise RuntimeError(f"duplicate wave_id {wave.wave_id!r} in schedule")
+            seen_wave_ids.add(wave.wave_id)
+        # Ensure at least one wave with "a" variant (baseline required)
+        has_a = any("a" in w.variants for w in self.waves)
+        if not has_a:
+            raise RuntimeError(
+                "benchmark schedule must include at least one wave with 'a' variant"
+            )
+
+    def all_models(self) -> tuple[str, ...]:
+        """Return all model slugs across all waves, deduplicated, preserving first-seen order."""
+        seen: set[str] = set()
+        models: list[str] = []
+        for wave in self.waves:
+            for model in wave.models:
+                if model not in seen:
+                    seen.add(model)
+                    models.append(str(model))
+        return tuple(models)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to JSON-serializable dict for manifest."""
+        return {
+            "schema_version": self.schema_version,
+            "waves": [
+                {
+                    "wave_id": w.wave_id,
+                    "models": list(w.models),
+                    "tier": w.tier,
+                    "variants": list(w.variants),
+                }
+                for w in self.waves
+            ],
+        }
+
+
+def parse_benchmark_schedule(payload: dict[str, Any]) -> BenchmarkSchedule:
+    """Parse and validate a benchmark schedule from a dict.
+
+    Accepts the output of BenchmarkSchedule.to_dict() or a manual dict.
+    Raises RuntimeError on validation failure.
+    """
+    waves_raw = payload.get("waves")
+    if not isinstance(waves_raw, list):
+        raise RuntimeError("benchmark schedule 'waves' must be an array")
+
+    waves: list[BenchmarkWave] = []
+    for w_raw in waves_raw:
+        if not isinstance(w_raw, dict):
+            raise RuntimeError("each wave must be an object")
+        wave = BenchmarkWave(
+            wave_id=str(w_raw.get("wave_id", "")).strip(),
+            models=tuple(str(m) for m in w_raw.get("models", [])),
+            tier=str(w_raw.get("tier", "UNKNOWN")) if w_raw.get("tier") else "UNKNOWN",
+            variants=tuple(str(m) for m in w_raw.get("variants", ("a", "b"))),
+        )
+        wave.validate()  # validates in-place
+        waves.append(wave)
+
+    return BenchmarkSchedule(
+        waves=tuple(waves),
+        schema_version=int(payload.get("schema_version", 1)),
+    )
+
+
+def benchmark_schedule_fingerprint(
+    schedule: BenchmarkSchedule | None = None,
+) -> str:
+    """Return a deterministic fingerprint of the schedule.
+
+    Covers wave_ids, model slugs, tiers, and variants.
+    """
+    resolved = schedule if schedule is not None else _default_benchmark_schedule()
+    canonical_payload = [
+        {
+            "wave_id": wave.wave_id,
+            "models": [str(model) for model in wave.models],
+            "tier": wave.tier,
+            "variants": [str(variant) for variant in wave.variants],
+        }
+        for wave in resolved.waves
+    ]
+    canonical = json.dumps(
+        canonical_payload,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _default_benchmark_schedule() -> BenchmarkSchedule:
+    """Return the canonical default benchmark schedule."""
+    from harness.rosters import _DEFAULT_SCHEDULE
+
+    return _DEFAULT_SCHEDULE
+
+
+# ---------------------------------------------------------------------------
+# RunConfig — schedule is the single active path (no model_ladder shim)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RunConfig:
+    """Immutable benchmark manifest enforcing reproducibility and one-org MC-1 symmetry invariants.
+
+    The single active path is ``schedule`` (a BenchmarkSchedule). There is no
+    backward-compat fallback to a fixed model_ladder. New runs must provide an
+    explicit schedule; the default schedule uses the current canon roster with
+    UNKNOWN/UNORDERED tiers (D-BENCH-CONTRACT-2026-07).
+    """
+
+    # Schedule is the single active path (replaces old model_ladder).
+    schedule: BenchmarkSchedule = field(default_factory=_default_benchmark_schedule)
+
+    tau: float = 0.68  # relevance floor on COMBINED score (ratified). Sent as relevance_floor on the wire.
+    rng_seed: int = 20260709  # FIXED — the live D-9.4 sampler seeds from wall-clock; pin it or Recall@k>1 wobbles.
+    surface_budget: int = 3  # prod surface budget / max-k
+    deterministic_topn: bool = True  # client-side reproducible top-N by combined_score
+    deterministic_recall_limit: int = (
+        64  # wire limit when deterministic_topn (hub returns full candidate set)
+    )
+    run_label: str = ""  # threaded for per-cell session ids
+    # Per DECISIONS.md D-BENCH-CONTRACT §b, primary scored B path must not rely on
+    # hidden test-mode auto-accept. Primary path runs recall in prod mode.
+    primary_recall_mode: str = "prod"
+    org_id: str = ""  # D5a: org MUST be pinned explicitly by the run driver; okp-org-0 is never a valid variant target.
+    # orchestrator._resolve_owned_org handles empty/None gracefully; do NOT make this required (tests build RunConfig() bare).
+    mc_version: int = 1  # MC-1
+    # Live-view topology: ONE persistent `opencode serve` per cell, published on a fixed
+    # host port bound to the container-side serve port. The founder attaches a TUI via
+    # `opencode attach http://127.0.0.1:<serve_host_port>`. 8719 is the bench's host port; the container side stays opencode serve's default 4096.
+    serve_host_port: int = field(
+        default_factory=lambda: int(os.environ.get("BENCH_SERVE_HOST_PORT") or "8719")
+    )  # host-published port for the per-cell opencode serve
+    harness_version: str = "0.1.0"
+    cost_limit_usd: float | None = None
+    cost_target_usd: float | None = None
+    max_output_tokens: int | None = None
+    max_steps_per_attempt: int | None = None
+    output_price_per_1m: float | None = None
+    reasoning_effort: str | None = None
+
+    def relevance_floor(self) -> float:
+        """Return the ratified relevance floor sent as `relevance_floor` on the wire."""
+
+        return self.tau
+
+    def to_dict(self) -> dict:
+        """Return all fields as a JSON-serializable manifest for scorecard reproducibility."""
+
+        return {
+            "schedule": self.schedule.to_dict(),
+            "tau": self.tau,
+            "rng_seed": self.rng_seed,
+            "surface_budget": self.surface_budget,
+            "max_attempts": None,  # unbounded by construction (WO-LI-SM-2-CAPS: no round cap)
+            "deterministic_topn": self.deterministic_topn,
+            "deterministic_recall_limit": self.deterministic_recall_limit,
+            "run_label": self.run_label,
+            "primary_recall_mode": self.primary_recall_mode,
+            "org_id": self.org_id,
+            "mc_version": self.mc_version,
+            "serve_host_port": self.serve_host_port,
+            "harness_version": self.harness_version,
+            "cost_limit_usd": self.cost_limit_usd,
+            "cost_target_usd": self.cost_target_usd,
+            "max_output_tokens": self.max_output_tokens,
+            "max_steps_per_attempt": self.max_steps_per_attempt,
+            "output_price_per_1m": self.output_price_per_1m,
+            "reasoning_effort": self.reasoning_effort,
+        }
+
+
+@dataclass(frozen=True)
+class LadderRung:
+    """One rung of the scored model ladder (single source of truth).
+
+    ``role`` is ``"source"`` (knowledge source: session runs feed self-extraction
+    into the org pool; not scored for lift) or ``"measure"`` (scored A/B cells;
+    consumes the accumulated pool, does NOT extract). ``recorded_class`` is the
+    rung's previously recorded CEILING/BRACKET/FLOOR classification used by the
+    variance policy's T4 trigger (None = no prior classification on record).
+    """
+
+    model: str
+    role: str
+    variants: tuple[str, ...]
+    recorded_class: str | None = None
+
+
+# Local worker models are NOT declared here any more. They are read from the
+# model proxy's own list (GET /v1/models, purpose "okp-bench") by
+# harness/model_catalog.py, so alias, name, context window and output budget
+# can never drift from what the proxy actually serves. ``WORKER_MODEL_REGISTRY``
+# below is still importable by name for callers that read it lazily.
+
+
+def scored_ladder_roster() -> tuple[LadderRung, ...]:
+    """Return the canonical ordered scored-ladder roster."""
+    from harness.rosters import BACKGAMMON_SCORED_LADDER_ROSTER
+
+    return BACKGAMMON_SCORED_LADDER_ROSTER
+
+
+def ladder_roster_fingerprint(
+    rungs: tuple[LadderRung, ...] | None = None,
+) -> str:
+    """Return a deterministic fingerprint of the ordered ladder roster.
+
+    The fingerprint covers the resolved model ids, their order, each rung's role,
+    its variants, and its recorded classification, so that a later change to
+    the roster is detectable when validating a run manifest that was frozen
+    before the change.
+    """
+    from harness.rosters import BACKGAMMON_SCORED_LADDER_ROSTER
+
+    resolved = tuple(rungs) if rungs is not None else BACKGAMMON_SCORED_LADDER_ROSTER
+    canonical = json.dumps(
+        [
+            [
+                str(rung.model),
+                str(rung.role),
+                [str(variant) for variant in rung.variants],
+                rung.recorded_class,
+            ]
+            for rung in resolved
+        ],
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# PEP 562 lazy re-export of the roster/catalogue data that now lives in
+# harness/rosters.py.
+#
+# config.py must NOT import rosters at module top level: rosters imports the
+# dataclasses (BenchmarkWave/BenchmarkSchedule/LadderRung) from here, so a
+# top-level import either way would be circular. Instead the moved names are
+# resolved on first attribute access. Both `from harness.config import X` and
+# `config.X` route through this, so the pre-split import surface is unchanged
+# for run_cumulative.py, bench_preflight.py, adapters/challenge.py,
+# sync_cloud_roster.py and the tests.
+# ---------------------------------------------------------------------------
+
+_ROSTER_REEXPORTS = frozenset(
+    {
+        "_DEFAULT_SCHEDULE",
+        "BACKGAMMON_SCORED_LADDER_ROSTER",
+        "BACKGAMMON_LADDER_SCHEMA_VERSION",
+        "DEFAULT_CLOUD_ROUTER",
+        "CLOUD_ORCAROUTER_PROVIDER",
+        "RETIRED_MODEL_ALIASES",
+    }
+)
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily re-export the roster data that moved to harness/rosters.py, and
+    resolve the local worker model registry from the proxy on first use."""
+
+    if name == "WORKER_MODEL_REGISTRY":
+        from harness.model_catalog import worker_model_registry
+
+        return worker_model_registry()
+    if name in _ROSTER_REEXPORTS:
+        from harness import rosters
+
+        return getattr(rosters, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

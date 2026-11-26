@@ -1,0 +1,258 @@
+import { beforeAll, describe, expect, it } from "vitest";
+import {
+  api,
+  debugRoll,
+  debugSetState,
+  emptyPoints,
+  getState,
+  loadEngine,
+  makeState,
+  startServer,
+  stopServer,
+} from "../lib/harness.ts";
+
+type Move = { from: number; to: number; die: number };
+type Board = {
+  points: number[];
+  bar: { white: number; black: number };
+  off: { white: number; black: number };
+};
+
+const STARTING_POINTS_EXPECTED = [
+  0, -2, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0, -5, 5, 0, 0, 0, -3, 0, -5, 0, 0, 0,
+  0, 2, 0,
+];
+
+const norm = (ms: Move[]) => ms.map((m) => `${m.from}-${m.to}-${m.die}`).sort();
+
+const bd = (
+  pts: number[],
+  bar = { white: 0, black: 0 },
+  off = { white: 0, black: 0 },
+): Board => ({ points: pts, bar, off });
+
+// Imported by directive for parity with future gates that exercise debug HTTP routes.
+void { startServer, stopServer, debugSetState, debugRoll, getState, api, makeState };
+
+describe("Backgammon backend gates 01-08", () => {
+  let game: any;
+  let ai: any;
+
+  beforeAll(async () => {
+    ({ game, ai } = await loadEngine());
+    expect(game).toBeTruthy();
+    expect(ai).toBeTruthy();
+  });
+
+  it("[G01] REQ-INIT — initial position", () => {
+    // Each assertion names its aspect, so the model hears which part of a new
+    // game is wrong (harness/adapters/challenge/feedback.py _ASPECT_RE), not a
+    // list of everything this gate happens to check.
+    const PIECES = "[aspect: pieces]";
+    const SETUP = "[aspect: setup]";
+    const points = game.startingPoints();
+
+    expect(points, PIECES).toEqual(STARTING_POINTS_EXPECTED);
+
+    const state = game.createGame("medium");
+    expect(state.turn, SETUP).toBe("white");
+    expect(state.phase, SETUP).toBe("openingRoll");
+    expect(state.cube, SETUP).toEqual({ value: 1, owner: null });
+    expect(state.bar, PIECES).toEqual({ white: 0, black: 0 });
+    expect(state.off, PIECES).toEqual({ white: 0, black: 0 });
+    expect(state.difficulty, SETUP).toBe("medium");
+    expect(state.winner, SETUP).toBeNull();
+    expect(state.points, PIECES).toEqual(game.startingPoints());
+    expect(state.points, PIECES).toEqual(STARTING_POINTS_EXPECTED);
+
+    expect(game.opponent("white"), "[aspect: opponent]").toBe("black");
+    expect(game.opponent("black"), "[aspect: opponent]").toBe("white");
+  });
+
+  it("[G02] REQ-PIP — pip count", () => {
+    // THE OPENING POSITION ONLY. This is a stage-2 check ("a new game looks
+    // right"), and its complaint describes a fresh board. It used to also count
+    // bar positions and a nearly finished game; once the opening was fixed the
+    // model kept being told the fresh board was wrong while the failure was on
+    // the bar (run 1789655638). Bar counts live in [E06], stage 4. The nearly
+    // finished case added nothing: the opening already tests both formulas.
+    // The STANDARD opening, not the build's own: a build that sets up the wrong
+    // position counts its own board right, and the player sees pip counts that
+    // add up for the pieces shown — the setup is G01's complaint, not a second
+    // one here (run 1790349319: 139/178 on a wrong opening, told as "doesn't
+    // add up").
+    const start = bd([...STARTING_POINTS_EXPECTED], { white: 0, black: 0 }, { white: 0, black: 0 });
+    expect(game.pipCount(start, "white")).toBe(167);
+    expect(game.pipCount(start, "black")).toBe(167);
+  });
+
+  it("[G03] REQ-DICE — dice → moves", () => {
+    const start = bd([...game.startingPoints()], { white: 0, black: 0 }, { white: 0, black: 0 });
+
+    // One complaint per fault (the operator, 2026-09-24): a broken double must not be
+    // told as a broken plain roll too, nor the other way round.
+    expect(game.maxPlies(start, "white", [3, 3, 3, 3]), "[aspect: doublemoves]").toBe(4);
+    expect(game.maxPlies(start, "white", [3, 1]), "[aspect: plainmoves]").toBe(2);
+    expect(game.maxPlies(start, "black", [6, 6, 6, 6]), "[aspect: doublemoves]").toBe(4);
+  });
+
+  it("[G04] REQ-MOVES — legal-move generation (blocked points)", () => {
+    const pts = emptyPoints();
+    pts[8] = 1;
+    pts[5] = -2;
+    const board = bd(pts);
+
+    const blocked = game.singleMoves(board, "white", 3) as Move[];
+    expect(norm(blocked)).toEqual(norm([]));
+  });
+
+  it("[G17] REQ-MOVES — legal-move generation (hits)", () => {
+    const pts = emptyPoints();
+    pts[8] = 1;
+    pts[6] = -1;
+    const board = bd(pts);
+
+    const hit = game.singleMoves(board, "white", 2) as Move[];
+    expect(norm(hit)).toEqual(norm([{ from: 8, to: 6, die: 2 }]));
+  });
+
+  it("[G18] REQ-MOVES — legal-move generation (die 6 from the outer points)", () => {
+    // Move-generation for the opening roll's die 6, isolated from the bear-off
+    // precondition: the home board is empty, so a 6 moves only the OUTER
+    // checkers (points 24, 13, 8). "Point 6 must not bear off before all
+    // checkers are home" is G09's rule (stage 5), not this check's — asserting
+    // it here made the bear-off-before-home mutation (M18) fire at stage 3
+    // with the "opening-6 blocked checkers" symptom instead of G09's true one.
+    const pts = emptyPoints();
+    pts[24] = 2;
+    pts[13] = 5;
+    pts[8] = 3;
+    const board = bd(pts);
+    const dieSixMoves = game.singleMoves(board, "white", 6) as Move[];
+    const fromValues = [...new Set(dieSixMoves.map((m) => m.from))].sort((a, b) => a - b);
+
+    expect(fromValues).toEqual([8, 13, 24]);
+    // Every 6 lands on the board — lost by accident in 62b6bbe (2026-09-24) while
+    // checks.json and G18's line still promised it (2026-11-21 audit; the operator 11-23).
+    expect(dieSixMoves.every((m) => m.to >= 1 && m.to <= 24)).toBe(true);
+  });
+
+  it("[G06] REQ-BAR — bar re-entry + blocked pass", () => {
+    const BLOCKED = "[aspect: blocked]";
+    const entryPts = emptyPoints();
+    entryPts[10] = -1;
+    entryPts[8] = 1;
+    const entryBoard = bd(entryPts, { white: 1, black: 0 }, { white: 0, black: 0 });
+
+    // Which fault, told as the player meets it: no way back in at all, or a way
+    // back in on the wrong point. Only the bar piece's own moves are judged
+    // here — whether other pieces may move while one waits on the bar is E05's
+    // alone. Run 1790633807's bar piece came in at the wrong end (a 2 entered
+    // on point 2, not 23) and was told "the game let me play other pieces";
+    // run 1794859708's did the same while its page kept the other pieces still,
+    // and the "other pieces" line, asserted first here, hid the wrong point a
+    // player could see.
+    const barMoves = (game.singleMoves(entryBoard, "white", 2) as Move[]).filter((m) => m.from === 0);
+    expect(barMoves.length, "[aspect: noentry] no way in off the bar onto an open point").toBeGreaterThan(0);
+    expect(norm(barMoves), "[aspect: wrongpoint] the bar piece is offered the wrong point").toEqual(
+      norm([{ from: 0, to: 23, die: 2 }]),
+    );
+
+    const blockedPts = emptyPoints();
+    blockedPts[23] = -2;
+    blockedPts[21] = -2;
+    const blockedBoard = bd(blockedPts, { white: 1, black: 0 }, { white: 0, black: 0 });
+
+    expect(game.legalMovesNow(blockedBoard, "white", [2, 4]), BLOCKED).toEqual([]);
+  });
+
+  it("[G07] REQ-HIT — hitting → bar", () => {
+    const pts = emptyPoints();
+    pts[8] = 1;
+    pts[5] = -1;
+    const board = bd(pts);
+
+    const hit = game.applyMove(board, "white", { from: 8, to: 5, die: 3 });
+    expect(hit).toBe(true);
+    expect(board.points[5]).toBe(1);
+    expect(board.bar.black).toBe(1);
+    expect(board.points[8]).toBe(0);
+  });
+
+  // [G40] THE CONTRACT'S NAMED FUNCTIONS, judged first (stage 1) and told by the
+  // team with each function's name and the brief's rule (the operator, 2026-11-23: "an
+  // untold check should never be untold … these checks should fall under
+  // conformance"). They were [untold] — scored, never told — and an untold
+  // failure left alone blocked sign-off behind "something is still broken" (run
+  // 1795435505 a2). Told as gameplay faults they misled (2026-11-03: G12's "takes
+  // and refuses at the wrong moments"); told as the contract, they name exactly
+  // what to change.
+  it("[G40] REQ-CONTRACT — the brief's named engine and AI functions answer as it writes them", () => {
+    // allInHome: true only when all 15 of the side's pieces are home or off.
+    const allHomePts = emptyPoints();
+    allHomePts[3] = 2;
+    allHomePts[22] = -1;
+    const allHome = bd(allHomePts, { white: 0, black: 0 }, { white: 13, black: 14 });
+    expect(game.allInHome(allHome, "white"), "[aspect: allinhome] allInHome(board, \"white\") answers false with all 15 white pieces home (2 on point 3, 13 off)").toBe(true);
+    const outsidePts = emptyPoints();
+    outsidePts[3] = 1;
+    outsidePts[8] = 1;
+    outsidePts[22] = -1;
+    const outside = bd(outsidePts, { white: 0, black: 0 }, { white: 13, black: 14 });
+    expect(game.allInHome(outside, "white"), "[aspect: allinhome] allInHome(board, \"white\") answers true with a white piece on point 8, outside its home board").toBe(false);
+    const barPts = emptyPoints();
+    barPts[2] = 1;
+    barPts[22] = -1;
+    const onBar = bd(barPts, { white: 1, black: 0 }, { white: 13, black: 14 });
+    expect(game.allInHome(onBar, "white"), "[aspect: allinhome] allInHome(board, \"white\") answers true with a white piece on the bar").toBe(false);
+
+    // The cube functions: the take is (board, player, difficulty), and both answer
+    // in the brief's two words.
+    expect(ai.shouldAiAccept.length, `[aspect: arity] shouldAiAccept is declared with ${ai.shouldAiAccept.length} parameters`).toBe(3);
+    const evenPts = emptyPoints();
+    evenPts[6] = 5;
+    evenPts[19] = -5;
+    const even = bd(evenPts, { white: 0, black: 0 }, { white: 10, black: 10 });
+    const words = ["double", "no-double"];
+    for (const difficulty of ["easy", "medium", "hard"] as const) {
+      const take = String(ai.shouldAiAccept(even, "black", difficulty)?.action);
+      expect(words, `[aspect: words] shouldAiAccept answered "${take}" on ${difficulty}`).toContain(take);
+      const offer = String(ai.shouldAiDouble(even, "black", { value: 1, owner: null }, difficulty)?.action);
+      expect(words, `[aspect: words] shouldAiDouble answered "${offer}" on ${difficulty}`).toContain(offer);
+    }
+  });
+
+  it("[G08] REQ-BEAROFF — bear-off incl overshoot", () => {
+    const overshootAllowedPts = emptyPoints();
+    overshootAllowedPts[3] = 2;
+    // A position a game can reach: black too has all 15 (run 1793573164's
+    // engine answered a black-less board differently from any real game).
+    overshootAllowedPts[22] = -1;
+    const overshootAllowedBoard = bd(overshootAllowedPts, { white: 0, black: 0 }, { white: 13, black: 14 });
+
+    // Two faults, each told as itself. Refusing a number bigger than the
+    // furthest-back piece needs (run 1790650821: pieces only on 3, a 5, no move
+    // at all) was told "the game still lets me bear off from a point closer to
+    // the edge" — the opposite.
+    const OVERSHOOT = "[aspect: overshoot]";
+    // The engine's own all-home answer is the contract's (G40, told by the team);
+    // the moves it offers (below) are what a player meets.
+    // The moves on offer, each once: a list naming 3 -> off once per checker on
+    // 3 offers the same move (run 1793579748's engine did; the player saw one
+    // "5" hint and it bore off — and was told the game "won't let me").
+    expect([...new Set(norm(game.singleMoves(overshootAllowedBoard, "white", 5) as Move[]))], OVERSHOOT).toEqual(
+      norm([{ from: 3, to: 25, die: 5 }]),
+    );
+
+    const overshootRejectedPts = emptyPoints();
+    overshootRejectedPts[5] = 1;
+    overshootRejectedPts[3] = 1;
+    overshootRejectedPts[22] = -1;
+    const overshootRejectedBoard = bd(overshootRejectedPts, { white: 0, black: 0 }, { white: 13, black: 14 });
+
+    const dieFiveMoves = game.singleMoves(overshootRejectedBoard, "white", 5) as Move[];
+    expect(norm(dieFiveMoves)).not.toContain("3-25-5");
+    // The exact 5 not bearing off is the exact-die gate's finding (E03).
+    expect(norm(dieFiveMoves), "[needs: E03]").toEqual(norm([{ from: 5, to: 25, die: 5 }]));
+  });
+});

@@ -1,0 +1,999 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// REQ-GEOMETRY — the board must be DRAWN correctly, not merely completely.
+//
+// The count-only REQ-RENDER checks pass on a board whose bar sits at the far
+// edge, whose rows are swapped, whose checkers float a point away from their
+// own triangles. These four checks measure the rendered boxes
+// (board-geometry.ts) and judge the geometry a player sees. Assertion messages
+// state observed measurements only.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures.ts";
+import {
+  boardMidY,
+  pointWidth,
+  readBarBox,
+  readCheckerBoxes,
+  readCheckerShapes,
+  readCheckerVisibility,
+  typicalWidth,
+  overlaps,
+  readOffTray,
+  readPointBoxes,
+  sampleTriangleOrientation,
+  splitRows,
+  type PointBox,
+  sampleBoardColour,
+  sampleBoxColours,
+  standsOutFromBoard,
+  emptyStripBesideBarOrTray,
+  colourDeltaE,
+  FAINT_FROM,
+  STANDS_OUT_FROM,
+  coveredPoints,
+  trayOnBoard,
+} from "./board-geometry.ts";
+
+// The shared opening: load the app, start a fresh game through the API, reload
+// so the board renders from that state.
+async function openFreshBoard(page: Page): Promise<void> {
+  await page.goto("/");
+  await expect(page.locator('[data-testid="board"]'), "[needs: F01]").toBeVisible();
+  await page.request.post("/api/new", { data: {} });
+  await page.reload();
+  await expect(page.locator('[data-testid="board"]'), "[needs: F01]").toBeVisible();
+  // goto/reload wait for the drawn, settled board (fixtures.ts): run
+  // 1790329339's page drew its points ~100 ms after the frame, and these checks
+  // read an empty board ("found []", an average point height of NaN).
+}
+
+function leftToRight(row: PointBox[]): number[] {
+  return [...row].sort((a, b) => a.x - b.x).map((p) => p.num);
+}
+
+test("[F28] REQ-GEOMETRY — points in board order", async ({ page }) => {
+  await openFreshBoard(page);
+
+  const points = await readPointBoxes(page);
+  expect(points.length, "[needs: REQ-RENDER/point] expected 24 points to read").toBe(24);
+  // Two rows, one above the other, before any order within them (FIX-24: run
+  // 1790407044's rows sat side by side and passed on page order alone).
+  const rows = splitRows(points);
+  // Rows are read from the points' boxes, which the prompt makes each point's
+  // column. Boxes drawn over one another are the tag's own finding: run
+  // 1790788338 made every point the full height of the board, over the point
+  // opposite, and was told "not in two rows" for five runs of a board that
+  // looked like two rows.
+  expect(
+    rows.separated,
+    `[aspect: rows] [needs: REQ-TESTID/point-column] expected the points in two rows, one above the other; the 12 highest and the 12 lowest point centres are ${rows.gap.toFixed(0)} px apart`,
+  ).toBeTruthy();
+  const topRow = leftToRight(rows.top);
+  const bottomRow = leftToRight(rows.bottom);
+
+  expect(
+    topRow,
+    `expected top-row point numbers left-to-right 13,14,15,16,17,18,19,20,21,22,23,24, found ${topRow.join(",")}`,
+  ).toEqual([13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]);
+  expect(
+    bottomRow,
+    `expected bottom-row point numbers left-to-right 12,11,10,9,8,7,6,5,4,3,2,1, found ${bottomRow.join(",")}`,
+  ).toEqual([12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+});
+
+test("[F29] REQ-GEOMETRY — bar between the halves", async ({ page }) => {
+  await openFreshBoard(page);
+
+  const bar = await readBarBox(page);
+  // No bar element at all is the bar render check's complaint (it counts the
+  // tagged elements). One that is there but drawn with no size is this check's:
+  // run 1795196230 (a1) had a zero-size bar, the render check passed, and the
+  // player was told "the bar sits out at the edge of the board" of a board with
+  // no bar on it.
+  expect(bar, "[aspect: undrawn] [needs: REQ-RENDER/bar] a bar element is on the page but no bar is drawn on the board").not.toBeNull();
+
+  const points = await readPointBoxes(page);
+  const LEFT_HALF = new Set([7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+  const RIGHT_HALF = new Set([1, 2, 3, 4, 5, 6, 19, 20, 21, 22, 23, 24]);
+  const leftHalfRightEdge = Math.max(
+    ...points.filter((p) => LEFT_HALF.has(p.num)).map((p) => p.x + p.width),
+  );
+  const rightHalfLeftEdge = Math.min(
+    ...points.filter((p) => RIGHT_HALF.has(p.num)).map((p) => p.x),
+  );
+  const avgPointHeight = points.reduce((sum, p) => sum + p.height, 0) / points.length;
+
+  // Where the bar is NOT is told as what the player sees there: out past the
+  // points, drawn over some of them (run 1790329339: a strip down the middle,
+  // told "at the edge"), or in a gap that is not the middle.
+  const between = bar.x >= leftHalfRightEdge - 3 && bar.x + bar.width <= rightHalfLeftEdge + 3;
+  const pointsLeft = Math.min(...points.map((p) => p.x));
+  const pointsRight = Math.max(...points.map((p) => p.x + p.width));
+  const outside = bar.x + bar.width <= pointsLeft + 1 || bar.x >= pointsRight - 1;
+  const overPoints = points.some((p) => overlaps(bar, p));
+  const where = between ? "" : outside ? "" : overPoints ? "[aspect: overlap] " : "[aspect: place] ";
+  // Where the bar belongs is only defined once the rows form proper halves: on
+  // a board whose rows do not line up it is the rows check's complaint (run
+  // 1790345941: rows squeezed into opposite halves read as "the bar splits the
+  // board in the wrong place" while the bar sat in the middle). And the halves
+  // are found by number, so a board numbered out of order is the order check's
+  // complaint (run 1790370051: a bottom row numbered the wrong way round made
+  // the bar in the middle read as "in the wrong place").
+  expect(
+    between,
+    `${where}[needs: F40 F28] expected the bar between the board halves, found bar x=${bar.x.toFixed(1)}..${(bar.x + bar.width).toFixed(1)} with the left half ending at x=${leftHalfRightEdge.toFixed(1)} and the right half starting at x=${rightHalfLeftEdge.toFixed(1)}`,
+  ).toBeTruthy();
+  // A row's height is a point's column, so points drawn the full height of the
+  // board make a full-height bar read as one row tall (M263: the reference's
+  // bar, told "doesn't run the full height of the board").
+  // Short by its TAG is not short to a player when the bar is DRAWN on down
+  // through the missing span (run 1794302476: the element tagged "bar" covered
+  // the top row only, while the dark bar column ran top to bottom on screen,
+  // and "The bar doesn't run the full height of the board" was told). The
+  // missing span is read from the picture the way the blend check reads a
+  // bar: its own fill or edge, standing out from the board.
+  let drawnShort = bar.height < 1.8 * avgPointHeight;
+  if (drawnShort) {
+    const rowsTop = Math.min(...points.map((pt) => pt.y));
+    const rowsBottom = Math.max(...points.map((pt) => pt.y + pt.height));
+    const above = bar.y - rowsTop;
+    const below = rowsBottom - (bar.y + bar.height);
+    const missing =
+      below >= above
+        ? { x: bar.x, y: bar.y + bar.height + 2, width: bar.width, height: below - 4 }
+        : { x: bar.x, y: rowsTop + 2, width: bar.width, height: above - 4 };
+    if (missing.height > 0.5 * avgPointHeight) {
+      const felt = await sampleBoardColour(page, points);
+      const [rest] = await standsOutFromBoard(page, [missing], felt.colours[0]);
+      if (rest.fill || rest.outline) drawnShort = false;
+    }
+  }
+  expect(
+    !drawnShort,
+    `[aspect: short] [needs: REQ-TESTID/point-column] expected the bar to span both board rows, found bar height=${bar.height.toFixed(1)} vs average point height=${avgPointHeight.toFixed(1)}`,
+  ).toBeTruthy();
+  // And wide enough to hold a piece that has been hit (the build prompt): a
+  // hairline down the middle passed the position and the height above (run
+  // 1791358018: a 2 px bar). The piece it must hold is the build prompt's
+  // piece, "about 80% of the width of the point it sits on", read from the
+  // points — so the band holds on a board with no piece drawn. Not the
+  // reference's own 0.86: run 1794305514's 56 px bar beside 70 px points fits
+  // the 56 px piece the model was told about, and was told "just a thin line".
+  // A point's width means something only once the points are triangles standing
+  // in from the rim (F30): run 1794590432 round 2 drew each point as a flat wedge
+  // 420 px wide, so "a piece" read 338 px and a 60 px bar was told "just a thin
+  // line" and a 112 px tray "too narrow" — both false to a player. Every size
+  // judged against a point (here and the tray's, F32) waits on F30.
+  const pieceForBar = 0.8 * pointWidth(points);
+  // Told by how far off it is (the operator, 2026-11-13): "just a thin line" is true of
+  // a hairline, not of a bar a few pixels short of a piece. Run 1794650186's
+  // 57 px bar beside 60 px pieces was told "just a thin line". Under 60% of a
+  // piece is thin; from there up to the piece it is a little narrow. The band
+  // itself is unchanged.
+  const barShort = bar.width < 0.6 * pieceForBar ? "[aspect: thin]" : "[aspect: narrow]";
+  expect(
+    bar.width,
+    `${barShort} [needs: F30] the bar is ${bar.width.toFixed(0)} px wide; a piece that has been hit needs ${pieceForBar.toFixed(0)} px`,
+  ).toBeGreaterThanOrEqual(pieceForBar - 2);
+  // And no wider than a piece with a few pixels of room each side (the build
+  // prompt; the operator, 2026-11-05: "about as wide as one of the pieces with a bit of
+  // extra space (a few px) allocated on each side"). The reference is 1.07
+  // pieces at both sizes; "far too wide" is true at 2.0 (run 1793908891 round
+  // 4: a 121 px bar beside 60 px pieces) and false at 1.4–1.5: twenty saved
+  // builds draw an 80 px bar beside 70 px points that a player sees as an
+  // ordinary bar, and were all told "far too wide" (test set, 2026-11-11).
+  // The line is told only for the gross case (the operator, 2026-11-11: tell the big
+  // picture, don't make the grader discern fine differences), so the ceiling
+  // sits between the two: 1.75 pieces.
+  // Judged only once the points fill their halves: beside squeezed points "a
+  // piece" is the squeeze's, and the line would send the model to shrink a bar
+  // that is right (run 1794311852). The strip is F80's and F81's to tell.
+  const squeezed =
+    emptyStripBesideBarOrTray(points, bar, await readOffTray(page)) > 0.25 * pointWidth(points);
+  expect(
+    squeezed || bar.width <= 1.75 * pieceForBar + 2,
+    `[aspect: wide] [needs: F30] the bar is ${bar.width.toFixed(0)} px wide; a piece is ${pieceForBar.toFixed(0)} px`,
+  ).toBeTruthy();
+  // And a bar a player can SEE: it stands out from the board by its fill, its
+  // outline or both (how is the builder's choice). A bar that is the colour of the
+  // board with no edge of its own is a gap down the middle, wide enough to pass the
+  // width above and invisible (run 1791368504: #2d1b0e on a #2d1b0e board). The
+  // board's colour is read as the F30 check reads it; a board that is not one colour
+  // is F30's finding.
+  const feltForBar = await sampleBoardColour(page, points);
+  const [barLook] = await standsOutFromBoard(page, [bar], feltForBar.colours[0]);
+  // Faint is not invisible: run 1794883426's bar, 30,58,46 on a 46,74,62 board
+  // (ΔE 7.0), read as a darker band down the middle, and "blends into the board,
+  // so I can't pick it out" was not what a player saw.
+  const barApart = barLook.centre ? colourDeltaE(barLook.centre, feltForBar.colours[0]) : 0;
+  expect(
+    barLook.fill || barLook.outline || barApart < FAINT_FROM,
+    `[aspect: faint] [needs: F30] the bar is only faintly apart from the board — ΔE ${barApart.toFixed(1)}, its middle ${barLook.centre?.join(",")} against the board's ${feltForBar.colours[0].join(",")}`,
+  ).toBeTruthy();
+  expect(
+    barLook.fill || barLook.outline,
+    `[aspect: blend] [needs: F30] the bar does not stand out from the board — its middle is ${barLook.centre?.join(",")} against the board's ${feltForBar.colours[0].join(",")} and it has no edge of its own`,
+  ).toBeTruthy();
+});
+
+test("[F31] REQ-GEOMETRY — checkers over their own points", async ({ page }) => {
+  await openFreshBoard(page);
+
+  const points = await readPointBoxes(page);
+  const checkers = await readCheckerBoxes(page);
+  // [aspect: offboard] FIRST — over every checker, white and black: one whose
+  // centre lies outside the visible board fails. The visible board is the
+  // [data-testid="board"] box clipped to the viewport: a piece drawn below the
+  // screen's edge is not "off to the side or floating", it is off the board
+  // entirely (run 1792066151 drew every bottom-half stack below the board's
+  // bottom edge). This is the first thing a player notices, so it is told
+  // before any side/away/rim guess. A piece past the edge of the WINDOW is
+  // F37's complaint ("run off the bottom of the screen"), so this one waits on
+  // F37: one fault, one line. What reaches the model from here is a piece
+  // outside the board that the player can still see on the page.
+  const board = await page.locator('[data-testid="board"]').first().boundingBox();
+  expect(board, "[needs: F01] expected the board to read").not.toBeNull();
+  const vp = page.viewportSize() ?? { width: 1280, height: 800 };
+  const visX = Math.max(0, board!.x);
+  const visY = Math.max(0, board!.y);
+  const visRight = Math.min(board!.x + board!.width, vp.width);
+  const visBottom = Math.min(board!.y + board!.height, vp.height);
+  const offboard = checkers.filter(
+    (c) =>
+      c.centerX < visX ||
+      c.centerX > visRight ||
+      c.centerY < visY ||
+      c.centerY > visBottom,
+  );
+  expect(
+    offboard.map((c) => c.loc),
+    `[aspect: offboard] [needs: REQ-RENDER/checker F37] checkers drawn off the board: loc ${offboard.map((c) => c.loc).join(", ")} (centre outside the visible board, clipped to the viewport)`,
+  ).toEqual([]);
+
+  // Each checker is found by its point's NUMBER, so this waits on the order
+  // check: with the numbers wrong, a checker drawn where a player expects it
+  // sits over the wrong number (a needs marker; stage 1 since the operator's "first
+  // look", 2026-09-26). A quarter of a point: a checker further off its
+  // point's centre than that is visibly misplaced — when the whole piece shows.
+  // Its box is what is measured, and a piece its point's triangle cuts down
+  // shows only where the triangle is: run 1790425763's boxes sat 20 px off
+  // centre while the slivers that showed sat on the tips, and "still floating
+  // off to the side" was told. A piece that doesn't show whole is the
+  // every-piece-shows check's complaint (F43). At 0.45, run 1790365975's
+  // checkers passed 33 px off centre (0.43 point) — half off their points,
+  // hanging over the frame.
+  //
+  // Two findings, by how far (the operator, 2026-11-12). Half a point or more off is a
+  // piece on the WRONG point (run 1794469703 round 1: 512 px) — the pieces'
+  // picture is wrong, the general line. Anything visibly off centre short of
+  // that is the detail "the pieces do not sit perfectly on center of their
+  // point": the operator, "there should be 0px misalignment off-center". The reference
+  // sits within 0.4 px (sub-pixel rounding); round 2 sat every stack 13.0 px
+  // left and passed the old 0.25-point tolerance (18 px). One pixel is the
+  // floor of what can be off at all.
+  const wrongPoint = 0.5 * pointWidth(points);
+  const offCentre = 1;
+
+  for (const checker of checkers) {
+    const point = points.find((p) => p.num === Number(checker.loc));
+    expect(
+      point,
+      `[needs: F28] expected a [data-testid="point"] matching checker loc=${checker.loc}, found none`,
+    ).not.toBeUndefined();
+
+    const dx = Math.abs(checker.centerX - point.centerX);
+    const found = `checker centerX=${checker.centerX.toFixed(1)} vs point ${point.num} centerX=${point.centerX.toFixed(1)} (off by ${dx.toFixed(1)})`;
+    expect(dx < wrongPoint, `[needs: F28 F43] checker loc=${checker.loc} drawn on another point: ${found}`).toBeTruthy();
+    expect(dx < offCentre, `[aspect: side] [needs: F28 F43] checker loc=${checker.loc} off the centre of its point: ${found}`).toBeTruthy();
+
+    // Outside its point's vertical band, a piece is on one side of it, read from
+    // where it sits — "up or down" was a guess the operator rejected (run 1792089895,
+    // round 2: every bottom-point piece drawn up in the top half, under the top
+    // stacks). Toward the middle is `up` (a bottom point) or `down` (a top
+    // point). Past the board end of its point is `past`: the board's box runs
+    // beyond the points (its frame), so a piece can hang there and still be on
+    // the board — run 1792485561 round 2 hung its bottom stacks past their
+    // points and off the window, and this line used to say "too far up". Past
+    // the window it is F37's complaint, so `past` waits on F37: one fault, one
+    // line.
+    const above = checker.centerY < point.y - 1;
+    const below = checker.centerY > point.y + point.height + 1;
+    const bottomPoint = point.y + point.height / 2 > board!.y + board!.height / 2;
+    const band = `centerY=${checker.centerY.toFixed(1)} vs band ${point.y.toFixed(1)}..${(point.y + point.height).toFixed(1)}`;
+    expect(
+      !(bottomPoint && above),
+      `[aspect: up] [needs: F28] checker loc=${checker.loc} of bottom point ${point.num} drawn above its point: ${band}`,
+    ).toBeTruthy();
+    expect(
+      !(!bottomPoint && below),
+      `[aspect: down] [needs: F28] checker loc=${checker.loc} of top point ${point.num} drawn below its point: ${band}`,
+    ).toBeTruthy();
+    expect(
+      !((bottomPoint && below) || (!bottomPoint && above)),
+      `[aspect: past] [needs: F28 F37] checker loc=${checker.loc} of point ${point.num} hangs past the board end of its point: ${band}`,
+    ).toBeTruthy();
+  }
+
+  // Each stack starts at the edge of the board, at the wide end of its point,
+  // as on every backgammon board — with no gap (the operator, 2026-11-12: "there
+  // should be 0px gap"). One pixel is the floor of what can be off at all
+  // (sub-pixel rounding). It used to allow half a piece: run 1794475141's
+  // layer-2 build hung every top stack 29.4 px off the edge and passed by
+  // 0.05 px. Run 1790414346 hung every stack from its triangle's tip.
+  const pieces = await page.locator('[data-testid="checker"]').evaluateAll((els) =>
+    els.flatMap((el) => {
+      const loc = (el as HTMLElement).dataset.loc;
+      if (loc === undefined || !/^\d+$/.test(loc)) return [];
+      const r = el.getBoundingClientRect();
+      return [{ num: Number(loc), top: r.y, bottom: r.y + r.height }];
+    }),
+  );
+  const offRim = points.flatMap((p) => {
+    const own = pieces.filter((c) => c.num === p.num);
+    if (own.length === 0) return [];
+    const gap =
+      p.num >= 13
+        ? Math.min(...own.map((c) => c.top)) - p.y
+        : p.y + p.height - Math.max(...own.map((c) => c.bottom));
+    return gap > 1 ? [p.num] : [];
+  });
+  expect(
+    offRim,
+    `[aspect: rim] [needs: F28] stacks that do not start at the edge of the board on points: ${offRim.join(", ")}`,
+  ).toEqual([]);
+});
+
+test("[F32] REQ-GEOMETRY — off tray is visible", async ({ page }) => {
+  await openFreshBoard(page);
+
+  const tray = await readOffTray(page);
+  expect(
+    tray.exists,
+    // No tray at all is the render check's complaint and an untagged one the
+    // tag check's: one fault, one line (run 1790448423 was told both "nowhere
+    // for my taken-off pieces" and "the off tray still isn't there").
+    '[needs: REQ-RENDER/off-tray REQ-TESTID/off-tray] expected an [data-testid="off-tray"] element on the board, found none',
+  ).toBeTruthy();
+  expect(
+    tray.visible,
+    `expected the off tray to be visible, found width=${tray.width.toFixed(1)} height=${tray.height.toFixed(1)}`,
+  ).toBeTruthy();
+  // A tray a player can see is drawn: a see-through, outline-less, empty box
+  // passed "visible" while nothing was on screen (run 1790341662). The DOM is
+  // asked first; a tagged box with no paint of its own is then read from the
+  // picture, the way F29 reads a bar: run 1794311852 tagged a see-through click
+  // overlay "off-tray" over a darker "OFF" strip drawn beneath it, and a player
+  // who sees that strip was told "The off tray isn't showing".
+  const points = await readPointBoxes(page);
+  let trayDrawn = tray.painted;
+  if (!trayDrawn && tray.visible && points.length > 0) {
+    const felt = await sampleBoardColour(page, points);
+    const [look] = await standsOutFromBoard(page, [tray], felt.colours[0]);
+    trayDrawn = look.fill || look.outline;
+  }
+  expect(trayDrawn, "expected the off tray to be drawn (a fill, an outline or a label), found an empty see-through box").toBeTruthy();
+  const under = points.filter((p) => overlaps(tray, p));
+  expect(under.map((p) => p.num), "[aspect: overlap] the off tray is drawn over points").toEqual([]);
+  // The tray is part of the board: checkers are borne off into the board's
+  // own tray, inside its frame. Run 1790359593 moved the tray out of the board
+  // into the button panel — clear of the points and past point 1, and so
+  // passing everything below. Outside means most of it is: its centre lies
+  // past the board's edge. A tray hanging a little past the board's box, drawn
+  // over the board's own border so that it reads as the board's end, is on the
+  // board to a player (FIX-25: run 1790410498, 17 of 80 px past the box, told
+  // "The off tray is sitting outside the board").
+  // Drawn flush against the end of the points and lined up with them top to
+  // bottom, a tray is the board's end to a player wherever the element tagged
+  // "board" stops — the prompt says what the board holds, not where its tag's
+  // box ends. Run 1794878920's board box stopped at x 1024 with its tray drawn
+  // at 992..1072, flush against points 1 and 24, and the player was told the
+  // tray "isn't drawn right … it sits on the board". The panel tray of run
+  // 1790359593 stood clear of the points, apart from the board.
+  const board = await page.locator('[data-testid="board"]').first().boundingBox();
+  expect(board, "[needs: F01] expected the board to read").not.toBeNull();
+  // One rule for whether the tray is on the board (board-geometry.ts trayOnBoard): the shape checks
+  // measure the board with the same one.
+  const onBoard = trayOnBoard(tray, board, points);
+  expect(
+    onBoard,
+    `[aspect: offboard] the off tray (x ${tray.x.toFixed(0)}..${(tray.x + tray.width).toFixed(0)}, y ${tray.y.toFixed(0)}..${(tray.y + tray.height).toFixed(0)}) lies outside the board (x ${board!.x.toFixed(0)}..${(board!.x + board!.width).toFixed(0)})`,
+  ).toBeTruthy();
+  // White bears off past point 1 and black past point 24 (the direction of
+  // travel the build prompt gives), so the tray lies beyond the end of the
+  // board those two points share. Run 1790352559 cleared the points by moving
+  // a 10 px tray to the far end, past points 12 and 13, where no checker is
+  // ever borne off. Point 1 is found by its number: a board numbered out of
+  // order is the order check's complaint.
+  const one = points.find((p) => p.num === 1);
+  const twelve = points.find((p) => p.num === 12);
+  expect(one && twelve, "[needs: REQ-RENDER/point] expected points 1 and 12 to read").toBeTruthy();
+  const homeOnRight = one!.centerX > twelve!.centerX;
+  const rowsRight = Math.max(...points.map((p) => p.x + p.width));
+  const rowsLeft = Math.min(...points.map((p) => p.x));
+  const pastPointOne = homeOnRight ? tray.x >= rowsRight - 3 : tray.x + tray.width <= rowsLeft + 3;
+  // A tagged tray at the wrong end is told only when nothing else there reads
+  // as a tray. Run 1790459992 kept a tray at each end — the tagged one, on the
+  // left, took the computer's pieces; another, past point 1, the player's — and
+  // four runs were told "The off tray isn't at the end of the board where I
+  // bear off": a player sees a strip at each end and can't tell which is the
+  // tray. Where each side's taken-off pieces go is bearing off's question
+  // (F11), not the first look's.
+  const otherTrayPastPointOne = await page.evaluate(
+    ({ right, left, onRight }) =>
+      [...document.querySelectorAll<HTMLElement>("[id], [class], [data-testid]")].some((el) => {
+        if (el.getAttribute("data-testid") === "off-tray") return false;
+        const name = `${el.id} ${el.getAttribute("class") ?? ""} ${el.getAttribute("data-testid") ?? ""}`.toLowerCase();
+        if (!/off|tray/.test(name)) return false;
+        const r = el.getBoundingClientRect();
+        if (r.width < 8 || r.height < 0.5 * innerHeight) return false;
+        return onRight ? r.left >= right - 3 : r.right <= left + 3;
+      }),
+    { right: rowsRight, left: rowsLeft, onRight: homeOnRight },
+  );
+  expect(
+    pastPointOne || otherTrayPastPointOne,
+    `[aspect: side] [needs: F28] the off tray (x ${tray.x.toFixed(0)}..${(tray.x + tray.width).toFixed(0)}) is not past points 1 and 24`,
+  ).toBeTruthy();
+  // It runs the full height of the board and holds a piece lying on its side
+  // (the build prompt, chunk-04; the operator 2026-09-25). Run 1790365975's tray was a
+  // 19x106 px slot that passed everything above.
+  const rowsTop = Math.min(...points.map((p) => p.y));
+  const rowsSpan = Math.max(...points.map((p) => p.y + p.height)) - rowsTop;
+  expect(
+    tray.height,
+    `[aspect: short] the off tray is ${tray.height.toFixed(0)} px tall; the rows of points span ${rowsSpan.toFixed(0)} px`,
+  ).toBeGreaterThanOrEqual(0.9 * rowsSpan);
+  // The piece it must hold is the build prompt's piece, about 80% of a point's
+  // width (as the bar's band above; checkers drawn too big are the size check's
+  // complaint, F41, not the tray's). Read from the points, so the band holds on
+  // a board with no piece drawn.
+  const piece = 0.8 * pointWidth(points);
+  expect(
+    tray.width,
+    `[aspect: narrow] [needs: F30] the off tray is ${tray.width.toFixed(0)} px wide; a checker lying on its side needs ${piece.toFixed(0)} px`,
+  ).toBeGreaterThanOrEqual(piece - 2);
+  // And no wider than one and a half points (the build prompt): a tray that wide
+  // takes the board's room (run 1791358018: 124 px beside 76 px points). The
+  // reference's is 1.28 points at both sizes. The same 2 px rounding as the
+  // narrow side: run 1793908891 round 3's tray was 112 px beside 74 px points,
+  // a pixel over 1.5, and was told "far too wide".
+  // Not while the points leave a strip of empty board by the bar or the tray:
+  // "a point" is then the squeeze's (F29's wide, run 1794311852).
+  const traySqueezed =
+    emptyStripBesideBarOrTray(points, await readBarBox(page), tray) > 0.25 * pointWidth(points);
+  expect(
+    traySqueezed || tray.width <= 1.5 * pointWidth(points) + 2,
+    `[aspect: wide] [needs: F30] the off tray is ${tray.width.toFixed(0)} px wide; a point is ${pointWidth(points).toFixed(0)} px`,
+  ).toBeTruthy();
+  // And a tray a player can see: it stands out from the board by its fill, its
+  // outline or both, as the bar does (F29). A tray with the board's colour and no
+  // edge of its own is a strip of nothing at the end.
+  const feltForTray = await sampleBoardColour(page, points);
+  const [trayLook] = await standsOutFromBoard(page, [tray], feltForTray.colours[0]);
+  // Faint is not invisible, as for the bar (F29).
+  const trayApart = trayLook.centre ? colourDeltaE(trayLook.centre, feltForTray.colours[0]) : 0;
+  expect(
+    trayLook.fill || trayLook.outline || trayApart < FAINT_FROM,
+    `[aspect: faint] [needs: F30] the off tray is only faintly apart from the board — ΔE ${trayApart.toFixed(1)}, its middle ${trayLook.centre?.join(",")} against the board's ${feltForTray.colours[0].join(",")}`,
+  ).toBeTruthy();
+  expect(
+    trayLook.fill || trayLook.outline,
+    `[aspect: blend] [needs: F30] the off tray does not stand out from the board — its middle is ${trayLook.centre?.join(",")} against the board's ${feltForTray.colours[0].join(",")} and it has no edge of its own`,
+  ).toBeTruthy();
+});
+
+test("[F41] REQ-GEOMETRY — checkers drawn as circles sized to their points", async ({ page }) => {
+  await openFreshBoard(page);
+
+  const points = await readPointBoxes(page);
+  expect(points.length, "[needs: REQ-RENDER/point] expected 24 points to read").toBe(24);
+  const shapes = await readCheckerShapes(page);
+  expect(shapes.length, "[needs: REQ-RENDER/checker] expected the checkers on the points to read").toBeGreaterThan(0);
+  // Each checker is a perfect circle, sized to about 80% of the width of the
+  // point it sits on (the build prompt, chunk-04; the operator 2026-09-25).
+  const notCircles = shapes.filter((s) => !s.round || Math.abs(s.width - s.height) > Math.max(2, 0.04 * s.width));
+  expect(
+    notCircles.map((s) => `${s.loc}:${s.width.toFixed(0)}x${s.height.toFixed(0)}${s.round ? "" : " square-cornered"}`),
+    `expected every checker drawn as a circle, found ${notCircles.length} of ${shapes.length} that are not`,
+  ).toEqual([]);
+  const pw = pointWidth(points);
+  expect(pw, "[needs: F30] no point is drawn with any width").toBeGreaterThan(0);
+  const share = typicalWidth(shapes) / pw;
+  expect(share, `[aspect: big] checkers are ${Math.round(share * 100)}% of a point's width`).toBeLessThanOrEqual(0.9);
+  expect(share, `[aspect: small] checkers are ${Math.round(share * 100)}% of a point's width`).toBeGreaterThanOrEqual(0.7);
+});
+
+// [F43] REQ-GEOMETRY — every piece shows. A player counts the pieces on a
+// point by looking at them: a stack drawn on one spot shows as a single piece,
+// and a piece cut down by what it is drawn inside shows as a sliver. Run
+// 1790410498 drew every stack on one spot, inside its point's triangle clip;
+// the size and placement checks passed, because they read the pieces' boxes,
+// not what shows.
+test("[F43] REQ-GEOMETRY — every piece shows", async ({ page }) => {
+  await openFreshBoard(page);
+  const pieces = await readCheckerVisibility(page);
+  expect(pieces.length, "[needs: REQ-RENDER/checker] expected the checkers on the points to read").toBeGreaterThan(0);
+  // A piece mostly past the edge of the window is the fit check's complaint.
+  const shown = pieces.filter((c) => c.onScreen >= 0.5);
+  // On one spot: another piece on the same point with its centre closer than
+  // a third of a piece, so the stack shows as one piece.
+  const onOneSpot = [
+    ...new Set(
+      shown
+        .filter((c, i) =>
+          shown.some(
+            (d, j) =>
+              j !== i &&
+              d.loc === c.loc &&
+              Math.hypot(d.centerX - c.centerX, d.centerY - c.centerY) < Math.min(c.width, d.width) / 3,
+          ),
+        )
+        .map((c) => c.loc),
+    ),
+  ];
+  expect(onOneSpot, `[aspect: stacked] pieces drawn on one spot on points: ${onOneSpot.join(", ")}`).toEqual([]);
+  // Cut off: less than three quarters of a piece's on-screen circle shows in
+  // the picture (another piece drawn over it still shows, so a stack drawn
+  // overlapping shows every piece). The reference shows every piece whole.
+  const cut = [...new Set(shown.filter((c) => c.seen < 0.75 * c.onScreen).map((c) => c.loc))];
+  expect(cut, `[aspect: clipped] pieces cut off on points: ${cut.join(", ")}`).toEqual([]);
+});
+
+test("[F30] REQ-GEOMETRY — triangles point inward", async ({ page }) => {
+  await openFreshBoard(page);
+
+  const points = await readPointBoxes(page);
+  expect(points.length, "[needs: REQ-RENDER/point] expected 24 points to read").toBe(24);
+  // The triangles are read from a screenshot of the window, so a board that
+  // runs past it cannot be read: a page that scrolls is the fit check's
+  // complaint (a needs marker, harness/adapters/challenge/stages.py), and a
+  // board cut off without scrolling is this check's own finding. A taller
+  // page once read below-the-fold points as "pointing outward" (FIX-3 M42).
+  const view = page.viewportSize();
+  const offscreen = points.filter(
+    (p) => !view || p.x < -1 || p.y < -1 || p.x + p.width > view.width + 1 || p.y + p.height > view.height + 1,
+  );
+  expect(
+    offscreen.map((p) => p.num),
+    `[aspect: offscreen] [needs: F37] points past the edge of the window: ${offscreen.map((p) => p.num).join(", ")}`,
+  ).toEqual([]);
+  // A point the bar is drawn over shows the bar, not its triangle, so it is
+  // not read here — the bar check tells that (FIX-3 M46: a bar over points 16
+  // and 9 read as two "outward" triangles). Every other point is judged.
+  const bar = await readBarBox(page);
+  const covers = (box: { x: number; y: number; width: number; height: number } | null, p: PointBox) =>
+    box !== null && overlaps(box, p);
+  const underBar = await coveredPoints(page, points);
+  const samples = await sampleTriangleOrientation(page, points);
+
+  expect(samples.length, `[needs: REQ-TESTID/point-column F28] expected 24 triangle samples, found ${samples.length}`).toBe(24);
+  // Which edge is a point's rim depends on its row: with no two rows there is
+  // no rim to read from, and the order check tells that (FIX-24: a top row
+  // drawn beside the bottom one was told "The triangles point outward").
+  const needsRows = splitRows(points).separated ? "" : "[needs: F28] ";
+
+  // A point with no triangle: nothing painted at its rim or its inner end (run
+  // 1790381377: every point a transparent box, told "The triangles point
+  // outward"), or paint right across it at both ends — a block or a band, no
+  // more a triangle to a player (run 1790388597 painted the board area in a
+  // gradient). Every point, or some of them, told as such.
+  const judged = samples.filter((s) => !underBar.has(s.num));
+  const noTriangle = judged.filter((s) => s.shape === "none" || s.shape === "block").map((s) => s.num);
+  // With no two rows a point's box has no rim to read from either: a box the
+  // whole height of the board holds its own triangle and the one opposite, not
+  // "no triangle" — the order check, and the point-column check it waits on,
+  // tell that.
+  // Told where, when it is a whole half: every judged point right of the bar (or
+  // left of it) shows no triangle. A half of dark triangles on a dark board is a
+  // place a player can point at; run 1791314511's model was told "some of the
+  // points" three runs in a row and never found which.
+  const middle = bar ? bar.x + bar.width / 2 : (Math.min(...points.map((p) => p.x)) + Math.max(...points.map((p) => p.x + p.width))) / 2;
+  const half = (side: "left" | "right") =>
+    judged.filter((s) => (points.find((p) => p.num === s.num)?.centerX ?? 0) > middle === (side === "right"));
+  const wholeHalf = (side: "left" | "right") => {
+    const members = half(side);
+    return members.length > 0 && members.every((s) => noTriangle.includes(s.num));
+  };
+  const spread =
+    noTriangle.length === judged.length
+      ? "[aspect: undrawn]"
+      : wholeHalf("right")
+        ? "[aspect: someundrawnright]"
+        : wholeHalf("left")
+          ? "[aspect: someundrawnleft]"
+          : "[aspect: someundrawn]";
+  // Pointing outward: wider further in than at the rim, however short it is.
+  // Asked of the triangles that can be read, BEFORE the faint or missing ones:
+  // which way the points face is the bigger picture (the operator, 2026-11-11). Run
+  // 1794311852's board drew every triangle upside down, half of them dark green
+  // on green; asked second, the faint half answered first and the model was told
+  // only "some of the points don't show a clear triangle" (the 2026-09-30 D3R4
+  // miss, again).
+  const outward = judged.filter((s) => s.shape === "outward").map((s) => s.num);
+  // Told by row when one row alone faces the wrong way (the operator, 2026-11-13: name
+  // the spot). Run 1794592634 drew the bottom row pointing down at its edge for
+  // two rounds and heard "the triangles point outward" — true of half the board.
+  const outwardRow =
+    outward.length && outward.every((n) => n <= 12)
+      ? "[aspect: outwardbottom] "
+      : outward.length && outward.every((n) => n >= 13)
+        ? "[aspect: outwardtop] "
+        : "";
+  expect(
+    outward,
+    `${outwardRow}${needsRows}expected every point's triangle to point inward (wider at the rim than further in), found outward-pointing point numbers: ${outward.join(", ")}`,
+  ).toEqual([]);
+  expect(
+    noTriangle,
+    `${needsRows}${spread} no triangle drawn on points: ${noTriangle.join(", ")}`,
+  ).toEqual([]);
+  // A triangle a player can see that doesn't stand out from the board, by the
+  // bar's and the tray's rule (an RGB distance over 45, or ΔE from 8): how far
+  // apart two colours look near that limit is a measurement, told by the team
+  // with the grader's numbers (grader/voices.json). A fixed 45 alone told a
+  // player "some of the points don't show a clear triangle" about tan triangles
+  // plainly visible on a tan board, ΔE 8.6 (run 1794918036 round 2).
+  const faint = judged
+    .filter((s) => !noTriangle.includes(s.num) && s.peak <= 45)
+    .map((s) => ({ num: s.num, apart: colourDeltaE(s.peakColour, s.felt), colour: s.peakColour, felt: s.felt }))
+    .filter((s) => s.apart < STANDS_OUT_FROM)
+    .sort((a, b) => a.apart - b.apart);
+  const faintest = faint[0];
+  expect(
+    faint.map((s) => s.num),
+    faintest
+      ? `[aspect: faint] ${needsRows}the triangles on points ${faint.map((s) => s.num).join(", ")} are only faintly apart from the board — ΔE ${faintest.apart.toFixed(1)} at the faintest, colour ${faintest.colour.join(",")} against the board's ${faintest.felt.join(",")}`
+      : "",
+  ).toEqual([]);
+
+  // The board is one plain colour with the points drawn on it (the build prompt):
+  // the strips beside the triangles show that one colour. A board whose point
+  // columns are painted in stripes behind black triangles (run 1791318365) shows
+  // two, and its real triangles read as nothing against the felt this check reads.
+  // Read only beside points a player can see as triangles: not under the bar or
+  // the tray (their strips show the bar or tray), and not a point with no
+  // triangle (the check above tells that first). Run 1793876536 cell 1 read the
+  // tray over points 1, 2, 23, 24 as "not one board colour" and hid a whole half
+  // of undrawn triangles behind that line.
+  // When the bar is drawn over point boxes, the boxes run under it while the
+  // triangles are squeezed beside it, so a box's sides land on its neighbour's
+  // triangle (cell 1 round 1: 69%, one colour to the eye). The bar check tells
+  // that layout fault; this one waits on it. Bar only, not the tray: a bar over a
+  // point box is exactly what fails F29's overlap aspect, which F29 asserts before
+  // its [needs: F30] blend aspect — so the two waits can never both apply
+  // (tests/test_player_stages.py).
+  const needsBar = points.some((p) => covers(bar, p)) ? "[needs: F29] " : "";
+  const visible = new Set(judged.filter((s) => !noTriangle.includes(s.num)).map((s) => s.num));
+  const colourPoints = points.filter((p) => visible.has(p.num));
+  if (colourPoints.length > 0) {
+    const boardColour = await sampleBoardColour(page, colourPoints, points);
+    expect(
+      boardColour.share >= 0.9,
+      `${needsRows}${needsBar}[aspect: boardcolours] the colours beside the points are not one board colour (the commonest is ${Math.round(boardColour.share * 100)}% of them)`,
+    ).toBe(true);
+  }
+
+
+  // And it stands out at least half way in from the rim (the reference's run
+  // 88%). Run 1790396722's triangles reached a fifth of the way; run
+  // 1790474431's reached the middle but faded into the felt, so the blue half
+  // of them stopped standing out before half way — told as some, not all, and
+  // never as "too short" (the paint, not the shape, ends there).
+  const short = judged.filter((s) => s.reach < 0.5).map((s) => s.num);
+  expect(
+    short,
+    `${needsRows}${short.length === judged.length ? "[aspect: short]" : "[aspect: someshort]"} triangles standing out less than half way in from the rim on points: ${short.join(", ")}`,
+  ).toEqual([]);
+
+  // And its wide (rim-side) end sits at the edge of the board: `first` is
+  // where that end first shows paint, 5%-quantized in from the rim, so a
+  // flush base reads 0.05 and a base floating off the edge reads deeper than
+  // the 10% step. An undrawn point has no paint to place (`first` null) — the
+  // undrawn check tells that.
+  const floatingPaint = judged.filter((s) => s.first !== null && s.first > 0.10).map((s) => s.num);
+  // `first` reads inside the point's own box, so a point box that stops short of
+  // the board (run 1791445179's bottom row ended 92 px above the bar's end, 30% of
+  // a triangle's height) always reads flush. The bar runs the board's whole inner
+  // height, so a row whose base sits more than 10% of a triangle's height inside
+  // the bar's extent is floating off the edge. A bar shorter than the rows says
+  // nothing here, so only the inside direction counts.
+  const floatingBase: number[] = [];
+  const rows = splitRows(points);
+  if (bar && rows.separated) {
+    for (const p of rows.top) if (p.y - bar.y > 0.10 * p.height) floatingBase.push(p.num);
+    for (const p of rows.bottom) if (bar.y + bar.height - (p.y + p.height) > 0.10 * p.height) floatingBase.push(p.num);
+  }
+  const floating = [...new Set([...floatingPaint, ...floatingBase])].sort((a, b) => a - b);
+  expect(
+    floating,
+    `${needsRows}[aspect: float] triangles whose wide end doesn't sit at the edge of the board on points: ${floating.join(", ")}`,
+  ).toEqual([]);
+});
+
+// [F40] REQ-GEOMETRY — the two rows line up, as on every backgammon board: the
+// top row's points sit straight across from the bottom row's, column for
+// column. Judged on what is drawn — each row sorted left to right — never on
+// the numbers, which F28 judges. Run 1790345941 squeezed each row into half the
+// width, top row right and bottom row left, and every other stage-1 check passed.
+test("[F40] REQ-GEOMETRY — the two rows line up", async ({ page }) => {
+  await openFreshBoard(page);
+  const points = await readPointBoxes(page);
+  expect(points.length, "[needs: REQ-RENDER/point] expected 24 points to read").toBe(24);
+  const mid = boardMidY(points);
+  const top = points.filter((p) => p.centerY < mid).sort((a, b) => a.centerX - b.centerX);
+  const bottom = points.filter((p) => p.centerY >= mid).sort((a, b) => a.centerX - b.centerX);
+  const pw = pointWidth(points);
+  // Rows that are not one above the other are the order check's complaint.
+  const needsRows = splitRows(points).separated ? "" : "[needs: F28] ";
+  const apart = top.flatMap((p, i) =>
+    bottom[i] && Math.abs(p.centerX - bottom[i].centerX) <= 0.5 * pw ? [] : [`${i + 1}`],
+  );
+  expect(
+    top.length === bottom.length && apart.length === 0,
+    `${needsRows}expected ${top.length} top points each straight across from a bottom point, found ${bottom.length} below and columns apart: ${apart.join(", ")}`,
+  ).toBeTruthy();
+});
+
+// [F42] REQ-GEOMETRY — the points alternate in colour, as on every backgammon
+// board: side-by-side neighbours within each quarter differ. Judged on the
+// triangles' own colours against each other, never on which colours they are
+// (the F30 colour trap). Across the bar is not judged (the reference repeats
+// its colour there), wherever the bar is drawn. The point straight across the
+// board is F83's.
+// Run 1790400113 drew every triangle one colour and every other check passed.
+test("[F42] REQ-GEOMETRY — the points alternate in colour", async ({ page }) => {
+  await openFreshBoard(page);
+  const points = await readPointBoxes(page);
+  expect(points.length, "[needs: REQ-RENDER/point] expected 24 points to read").toBe(24);
+  // A point the bar or the tray is drawn over shows their colour, not its
+  // own: it is not judged (FIX-22: M47's bar drawn over points made 21/22 and
+  // 4/3 read as one colour, M54's tray made 24/1). Where they sit is the bar
+  // and tray checks'.
+  const bar = await readBarBox(page);
+  const covered = await coveredPoints(page, points);
+  const samples = await sampleTriangleOrientation(page, points);
+  const colourOf = new Map(samples.map((s) => [s.num, s.colour]));
+  const same = (a: number, b: number) => {
+    const ca = colourOf.get(a);
+    const cb = colourOf.get(b);
+    return !!ca && !!cb && Math.hypot(ca[0] - cb[0], ca[1] - cb[1], ca[2] - cb[2]) < 40;
+  };
+  const quarters = [
+    [13, 14, 15, 16, 17, 18],
+    [19, 20, 21, 22, 23, 24],
+    [12, 11, 10, 9, 8, 7],
+    [6, 5, 4, 3, 2, 1],
+  ];
+  const neighbours = quarters.flatMap((q) => q.slice(1).map((n, i) => [q[i], n] as const));
+  // Two points with the bar drawn between them are not neighbours on screen,
+  // wherever the bar is: the reference repeats its colour across it, and a bar
+  // in the wrong place is the bar check's complaint (FIX-22b: M47's bar between
+  // 21 and 22 made them "neighbours of one colour").
+  const boxOf = new Map(points.map((p) => [p.num, p]));
+  const splitByBar = (a: number, b: number) => {
+    const pa = boxOf.get(a);
+    const pb = boxOf.get(b);
+    if (bar === null || !pa || !pb) return false;
+    const mid = bar.x + bar.width / 2;
+    return (
+      mid > Math.min(pa.centerX, pb.centerX) &&
+      mid < Math.max(pa.centerX, pb.centerX) &&
+      bar.y < pa.y + pa.height &&
+      bar.y + bar.height > pa.y
+    );
+  };
+  const judgedPairs = neighbours.filter(([a, b]) => !covered.has(a) && !covered.has(b) && !splitByBar(a, b));
+  // Two colours, not more: the triangles' own colours fall into at most two groups.
+  const groups: number[][] = [];
+  for (const s of samples) {
+    if (covered.has(s.num) || !s.colour) continue;
+    if (!groups.some((g) => Math.hypot(g[0] - s.colour![0], g[1] - s.colour![1], g[2] - s.colour![2]) < 40)) groups.push(s.colour);
+  }
+  expect(groups.length, `[aspect: morecolours] [needs: F28 F30] the points are drawn in ${groups.length} different colours`).toBeLessThanOrEqual(2);
+  const matching = judgedPairs.filter(([a, b]) => same(a, b));
+  // The quarters are found by number, and the colours are read off the
+  // triangles: an out-of-order board is F28's complaint, a missing or
+  // wrong-way triangle F30's.
+  const oneColour = judgedPairs.length > 0 && matching.length === judgedPairs.length;
+  expect(
+    matching.map(([a, b]) => `${a}/${b}`),
+    `${oneColour ? "[aspect: onecolour] " : ""}[needs: F28 F30] points that should differ in colour and match: ${matching.map(([a, b]) => `${a}/${b}`).join(", ")}`,
+  ).toEqual([]);
+});
+
+// [F70] REQ-GEOMETRY — the points' tips stand clear of the middle. F30 reads
+// the triangles' extent only as a FLOOR (reach at least half way in from the
+// rim): triangles that touch or cross the middle — or stop well short of it —
+// still pass it. On a board a player reads, each top triangle's tip and the
+// tip straight across the middle leave a clear gap between them (the
+// reference draws its tips 88% of the way in from the rim, leaving a gap of
+// about a quarter of a point's height). Measured on the drawn tips
+// (board-geometry.ts tipY, ~1–2 px accurate), never on the 5%-quantized
+// reach, which cannot resolve a band a few percent wide.
+test("[F70] REQ-GEOMETRY — the points' tips stand clear of the middle", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator('[data-testid="board"]'), "[needs: F01]").toBeVisible();
+
+  const points = await readPointBoxes(page);
+  expect(points.length, "[needs: REQ-RENDER/point] expected 24 points to read").toBe(24);
+
+  // The board middle and the two rows drawn across it: each TOP point pairs
+  // with the BOTTOM point whose x-centre matches — the column straight across.
+  const mid = boardMidY(points);
+  const top = points.filter((p) => p.centerY < mid).sort((a, b) => a.centerX - b.centerX);
+  const bottom = points.filter((p) => p.centerY >= mid).sort((a, b) => a.centerX - b.centerX);
+  const pw = pointWidth(points);
+  // Rows that are not one above the other, or columns that do not line up,
+  // leave no "straight across" to measure a gap between — the rows checks tell
+  // that, not this one.
+  const paired =
+    top.length === 12 &&
+    bottom.length === 12 &&
+    top.every((p, i) => Math.abs(p.centerX - bottom[i].centerX) <= 0.5 * pw);
+  expect(
+    paired,
+    `[needs: F28 F40] expected 12 top points each straight across from a bottom point, found ${top.length} above and ${bottom.length} below the middle`,
+  ).toBeTruthy();
+
+  // Checkers and hints hidden, screenshot decoded, felt learned — the F30
+  // pipeline — now read at each point's drawn TIP: the innermost painted row
+  // along its vertical centreline.
+  const samples = await sampleTriangleOrientation(page, points);
+  const tipOf = new Map(samples.map((s) => [s.num, s.tipY]));
+  // A column the bar or the tray is drawn over has no tips to read — the cover is told by its own check.
+  const covered = await coveredPoints(page, points);
+  const columns = top
+    .map((t, i) => ({ t, b: bottom[i] }))
+    .filter(({ t, b }) => !covered.has(t.num) && !covered.has(b.num));
+  // A point whose tip cannot be read has no triangle to measure: F30's
+  // finding (undrawn, or paint the felt cannot be told from), not a gap.
+  const unreadable = columns.flatMap(({ t, b }) =>
+    [t, b].filter((p) => tipOf.get(p.num) == null).map((p) => p.num),
+  );
+  expect(
+    unreadable,
+    `[needs: F30] expected a drawn triangle tip to read on every point, found no tip on points: ${unreadable.join(", ")}`,
+  ).toEqual([]);
+
+  // Per column: the gap from the top tip down to the bottom tip across the
+  // middle, as a share of the point box's height (one board half).
+  const gaps = columns.map(({ t, b }) => {
+    const gap = tipOf.get(b.num)! - tipOf.get(t.num)!;
+    const pointHeight = (t.height + b.height) / 2;
+    return { col: `${t.num}/${b.num}`, gap, fraction: gap / pointHeight };
+  });
+
+  // One fault, one line: the first band that fails is the one told. Tips that
+  // meet or cross leave no gap at all; tips that stop short of the middle (or
+  // stand too far from it) are a gap a player cannot read as the reference's.
+  const touching = gaps.filter((g) => g.fraction <= 0);
+  expect(
+    touching.length === 0,
+    `[needs: F30] [aspect: touching] expected the triangles' tips to stand clear of the middle, found tips meeting or crossing it on columns: ${touching.map((g) => `${g.col} (gap ${g.gap.toFixed(1)} px)`).join(", ")}`,
+  ).toBe(true);
+  const tooclose = gaps.filter((g) => g.fraction < 0.19);
+  expect(
+    tooclose.length === 0,
+    `[needs: F30] [aspect: tooclose] expected a clear gap between the tips across the middle, found them too close on columns: ${tooclose.map((g) => `${g.col} (gap ${g.gap.toFixed(1)} px, ${Math.round(g.fraction * 100)}% of a point's height)`).join(", ")}`,
+  ).toBe(true);
+  const toowide = gaps.filter((g) => g.fraction > 0.29);
+  expect(
+    toowide.length === 0,
+    `[needs: F30] [aspect: toowide] expected the tips to stand off the middle by a readable gap, found the gap too wide on columns: ${toowide.map((g) => `${g.col} (gap ${g.gap.toFixed(1)} px, ${Math.round(g.fraction * 100)}% of a point's height)`).join(", ")}`,
+  ).toBe(true);
+});
+
+// ── THE BOARD IS EVEN (the operator, run 1792248731 round 2: "triangles are bigger on
+// one side of the board than they are on the other… the board looks wonky") ──
+// Every other geometry check reads one part on its own — a point points
+// inward, a piece fits its own point, the bar lies between the halves — so a
+// board whose left half was drawn 25% wider than its right passed them all
+// (points 60 px on the left, 48 px on the right). These compare the parts with
+// each other, as a player's eye does. The build prompt says it too since
+// 2026-10-31 (chunk-04: the halves the same width, all 24 points the same size,
+// the buttons the same size), so no check asks for what the spec never did.
+const EVEN = 1.05; // a part at most 5% bigger than its match
+
+test("[F79] REQ-GEOMETRY — every point is the same size", async ({ page }) => {
+  await openFreshBoard(page);
+  const points = await readPointBoxes(page);
+  expect(points.length, "[needs: REQ-RENDER/point]").toBe(24);
+  // Sizes are compared among the points drawn with one: a point collapsed to
+  // nothing is the triangle check's complaint (F30 undrawn), not a size that
+  // differs. Run 1795196230 (a1) drew every point 0 px long and was told
+  // "point 13 is 0 px long and point 13 0 px" — 0/0 compared as uneven.
+  const compare = (size: (p: (typeof points)[number]) => number) => {
+    const drawn = points.filter((p) => size(p) > 1);
+    if (drawn.length < 2) return { even: true, big: null, small: null };
+    const big = drawn.reduce((a, b) => (size(b) > size(a) ? b : a));
+    const small = drawn.reduce((a, b) => (size(b) < size(a) ? b : a));
+    return { even: size(big) / size(small) <= EVEN, big, small };
+  };
+  const wide = compare((p) => p.width);
+  expect(
+    wide.even,
+    `[aspect: width] [needs: F28 F40] point ${wide.big?.num} is ${wide.big?.width.toFixed(0)} px wide and point ${wide.small?.num} ${wide.small?.width.toFixed(0)} px`,
+  ).toBeTruthy();
+  const long = compare((p) => p.height);
+  expect(
+    long.even,
+    `[aspect: length] [needs: F28 F40] point ${long.big?.num} is ${long.big?.height.toFixed(0)} px long and point ${long.small?.num} ${long.small?.height.toFixed(0)} px`,
+  ).toBeTruthy();
+});
+
+test("[F80] REQ-GEOMETRY — the bar is in the middle", async ({ page }) => {
+  await openFreshBoard(page);
+  const bar = await readBarBox(page);
+  // A bar not drawn at all is F29's (undrawn), at this same stage.
+  expect(bar, "[needs: REQ-RENDER/bar F29]").not.toBeNull();
+  const points = await readPointBoxes(page);
+  expect(points.length, "[needs: REQ-RENDER/point]").toBe(24);
+  // Points that stop short of the bar leave empty board beside it: the bar sits
+  // where it should and the points are what is off (run 1794311852: the left
+  // half's points packed against the outer edge, 207 px of board by the bar —
+  // "the bar isn't in the middle" would be false to a player).
+  const mid = bar!.x + bar!.width / 2;
+  const leftPts = points.filter((p) => p.x + p.width / 2 < mid);
+  const rightPts = points.filter((p) => p.x + p.width / 2 >= mid);
+  const gapLeft = leftPts.length ? bar!.x - Math.max(...leftPts.map((p) => p.x + p.width)) : 0;
+  const gapRight = rightPts.length ? Math.min(...rightPts.map((p) => p.x)) - (bar!.x + bar!.width) : 0;
+  expect(
+    Math.max(gapLeft, gapRight) <= 0.25 * pointWidth(points),
+    `[aspect: bargap] [needs: F29 F28 F40] ${Math.max(gapLeft, gapRight).toFixed(0)} px of empty board between the points and the bar`,
+  ).toBeTruthy();
+  // The two halves as the points span them: the far edge of the outermost
+  // point on each side to the bar's own edge.
+  const left = bar!.x - Math.min(...points.map((p) => p.x));
+  const right = Math.max(...points.map((p) => p.x + p.width)) - (bar!.x + bar!.width);
+  expect(
+    Math.max(left, right) / Math.min(left, right) <= EVEN,
+    `[needs: F29 F28 F40] the half left of the bar is ${left.toFixed(0)} px wide and the half right of it ${right.toFixed(0)} px`,
+  ).toBeTruthy();
+});
+
+test("[F81] REQ-GEOMETRY — the off tray sits right beside points 1 and 24", async ({ page }) => {
+  await openFreshBoard(page);
+  const tray = await readOffTray(page);
+  expect(tray.exists && tray.visible, "[needs: F32]").toBeTruthy();
+  const points = await readPointBoxes(page);
+  expect(points.length, "[needs: REQ-RENDER/point]").toBe(24);
+  // The build prompt puts the tray at the right-hand end, beside points 1 and
+  // 24; a tray elsewhere is F32's finding. Beside means no strip of empty board
+  // between the last points and the tray wider than a quarter of a point (a
+  // thin frame line between them is fine). A half squeezed narrow leaves this
+  // strip as a side effect, so it waits on F79 and F80 (the operator, 2026-10-17:
+  // "isn't this redundant… if the space is all accounted for").
+  const end = Math.max(...points.filter((p) => p.num === 1 || p.num === 24).map((p) => p.x + p.width));
+  const gap = tray.x - end;
+  expect(
+    gap <= 0.25 * pointWidth(points),
+    `[needs: F32 F28 F40 F79 F80] ${gap.toFixed(0)} px of empty board between points 1 and 24 and the off tray`,
+  ).toBeTruthy();
+});
+
+// [F83] REQ-GEOMETRY — facing points differ in colour. The operator, run 1792248731
+// round 3, comparing the golden with the model's board: the colours are "not
+// alternating correctly" — every top triangle was the colour of the one
+// straight across from it (13 light facing 12 light), where the golden pairs
+// light with dark (13 dark facing 12 light). This overturns FIX-22 M61's "a
+// board whose facing triangles match looks right to a player". Judged as F42
+// judges: the triangles' own colours against each other, points the bar or
+// tray is drawn over left out. A board in one colour is F42's.
+test("[F83] REQ-GEOMETRY — facing points differ in colour", async ({ page }) => {
+  await openFreshBoard(page);
+  const points = await readPointBoxes(page);
+  expect(points.length, "[needs: REQ-RENDER/point]").toBe(24);
+  const covered = await coveredPoints(page, points);
+  const samples = await sampleTriangleOrientation(page, points);
+  const colourOf = new Map(samples.map((x) => [x.num, x.colour]));
+  const matching: string[] = [];
+  for (let top = 13; top <= 24; top++) {
+    const across = 25 - top;
+    if (covered.has(top) || covered.has(across)) continue;
+    const a = colourOf.get(top);
+    const b = colourOf.get(across);
+    if (a && b && Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 40) matching.push(`${top}/${across}`);
+  }
+  expect(matching, `[needs: F28 F30 F42] points straight across from each other in the same colour: ${matching.join(", ")}`).toEqual([]);
+});

@@ -1,0 +1,428 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  loadEngine,
+  startServer,
+  stopServer,
+  debugSetState,
+  debugRollVerified,
+  getState,
+  api,
+  emptyPoints,
+  makeState,
+  openingPoints,
+  ordinaryTurn,
+  SETUP_REFUSED,
+} from "../lib/harness.ts";
+import {
+  DOUBLE_WINDOW,
+  TAKE_POINT,
+  expectedOfferAction,
+  isNonDecreasing,
+  withinParityBand,
+} from "../lib/acceptance.ts";
+
+const { game, ai } = await loadEngine();
+
+const bd = (
+  pts: number[],
+  bar = { white: 0, black: 0 },
+  off = { white: 0, black: 0 },
+) => ({ points: pts, bar, off });
+
+const refWp = (myPip: number, oppPip: number): number => {
+  if (myPip === 0 && oppPip === 0) return 0.5;
+  const raw = 1 / (1 + Math.exp(-0.045 * (oppPip - myPip)));
+  return Math.max(0.02, Math.min(0.98, raw));
+};
+
+describe("[G09] REQ-BEAROFF-GATE — bear-off blocked while a checker is outside home / on bar", () => {
+  it("[G09] REQ-BEAROFF-GATE — blocks bear-off when any white checker is outside home", () => {
+    const points = emptyPoints();
+    points[3] = 1;
+    points[8] = 1; // outside white home
+    // A position a game can reach: the rest of each side borne off. Run
+    // 1793573164's engine counted home by its 15 checkers and, on a bare
+    // two-checker board, offered 3 -> off; in any real game it refused it, and
+    // the player was told "the game let me take a piece off" about a game that
+    // never did.
+    points[22] = -1;
+    const board = bd(points, { white: 0, black: 0 }, { white: 13, black: 14 });
+
+    // The engine's own all-home answer is the contract's (G40, told by the team);
+    // the moves it offers are what a player meets.
+    const moves = game.singleMoves(board, "white", 3);
+    expect(moves.every((m: { to: number }) => m.to !== 25)).toBe(true);
+  });
+
+  it("[G19] REQ-BEAROFF-GATE — blocks bear-off when white has any checker on the bar", () => {
+    const points = emptyPoints();
+    points[2] = 1;
+    const board = bd(points, { white: 1, black: 0 });
+
+    const moves = game.singleMoves(board, "white", 2);
+    expect(moves.every((m: { to: number }) => m.to !== 25)).toBe(true);
+  });
+});
+
+describe("[G10] REQ-WINCLASS — win / gammon / backgammon classification", () => {
+  it("[G10] REQ-WINCLASS — classifies single when loser has already borne off at least one", () => {
+    const points = emptyPoints();
+    points[13] = -1;
+    const board = bd(points, { white: 0, black: 0 }, { white: 15, black: 2 });
+
+    expect(game.checkWin(board, "white"), "[brief] [aspect: single]").toEqual({ won: true, type: "single" });
+  });
+
+  it("[G10] REQ-WINCLASS — classifies gammon when loser has no off, no bar, and none in winner home", () => {
+    const points = emptyPoints();
+    points[13] = -3;
+    const board = bd(points, { white: 0, black: 0 }, { white: 15, black: 0 });
+
+    expect(game.checkWin(board, "white"), "[brief] [aspect: gammon]").toEqual({ won: true, type: "gammon" });
+  });
+
+  it("[G10] REQ-WINCLASS — classifies backgammon when loser checker is in winner home board", () => {
+    const points = emptyPoints();
+    points[3] = -1;
+    const board = bd(points, { white: 0, black: 0 }, { white: 15, black: 0 });
+
+    expect(game.checkWin(board, "white"), "[brief] [aspect: backgammon]").toEqual({ won: true, type: "backgammon" });
+  });
+
+  it("[G10] REQ-WINCLASS — classifies backgammon when loser still has a checker on the bar", () => {
+    const points = emptyPoints();
+    points[13] = -1;
+    const board = bd(points, { white: 0, black: 1 }, { white: 15, black: 0 });
+
+    expect(game.checkWin(board, "white"), "[brief] [aspect: backgammon]").toEqual({ won: true, type: "backgammon" });
+  });
+
+  it("[G10] REQ-WINCLASS — reports not-won when off count is below 15", () => {
+    const points = emptyPoints();
+    points[1] = 1;
+    const board = bd(points, { white: 0, black: 0 }, { white: 14, black: 0 });
+
+    expect(game.checkWin(board, "white").won, "[brief] [aspect: early]").toBe(false);
+  });
+});
+
+describe("[G11] REQ-CUBE-STATE — doubling-cube STATE machine (via server)", () => {
+  let serverHandle: Awaited<ReturnType<typeof startServer>> | null = null;
+
+  // A FRESH SERVER FOR EVERY CHECK (operator, 2026-11-17 audit, class 6): what a build
+  // carries between games — finished games, the score, anything it keeps — never
+  // leaks from one check into the next. Run 1794873096's computer never doubled
+  // until a game had been finished on its server; sharing one server across the
+  // file let earlier checks finish games and the cube checks passed.
+  beforeEach(async () => {
+    serverHandle = await startServer({ debug: true });
+  });
+
+  afterEach(async () => {
+    if (serverHandle) {
+      await stopServer(serverHandle);
+    }
+  });
+
+  it("[G11] REQ-CUBE-STATE — the player may double on their turn with a centered cube", async () => {
+    // A fresh game sits in the opening roll, where nobody may double yet
+    // (G31). Reached as a game reaches it: the computer wins the opening (3
+    // against 5), plays, and hands the turn over. A seeded turn read only the
+    // debug route: run 1793713472's server kept a flag only play sets, the
+    // seeded turn read "can't double" while every played turn could, and the
+    // player was told "the game won't let me offer a double".
+    await api("/api/new", {});
+    let played = await debugRollVerified([3, 5]);
+    for (let guard = 0; guard < 12 && played.turn === "black"; guard++) {
+      played = await api("/api/ai", {});
+    }
+    expect(played.turn, "[needs: G31 F88] the computer's opening turn never came back").toBe("white");
+    expect(played.canDouble, "[brief] on the player's first turn after the computer's opening, no double").toBe(true);
+  });
+
+  // A turn set up through the debug route plays like the same turn in a game:
+  // the checks that seed a position and double from it lean on this. Run
+  // 1793713472's server kept a flag only play sets, so a seeded turn could
+  // never double while every played one could. The debug route is the team's.
+  it("[G35] REQ-DEBUG-STATE — a seeded turn can double like a played one", async () => {
+    // THE SEAM, MEASURED ON BOTH SIDES (2026-11-24: the debug route is
+    // conformance, told at the first moment). The seeded turn first, from a fresh
+    // game, as the seeding checks start: a played turn before it would leave the
+    // build's flag set and hide the finding.
+    await api("/api/new", {});
+    await debugSetState(
+      makeState({
+        turn: "white",
+        phase: "roll",
+        cube: { value: 1, owner: null },
+        winner: null,
+        points: game.startingPoints(),
+      }),
+    );
+    const seeded = (await getState()).canDouble;
+    // Then the same turn reached by play, exactly as G11 reaches it: the computer
+    // wins the opening (3 against 5), plays, and hands the turn over. Reaching it —
+    // a crash or a refused roll on the way included (run 1795248400 a2: /api/ai
+    // answered HTTP 500, and G35 was told "a seeded turn can't double") — and that
+    // turn's double are G11's to tell, and the opening and the computer's turn on
+    // the way are G31/F88's and G25's — a build whose computer sometimes skips its
+    // turn passed G11 by chance and set off a grader alarm here (sweep 2026-11-24
+    // sel-c3ffc4d1). One setup step; a refused roll is not one (below).
+    let played: any = null;
+    try {
+      await api("/api/new", {});
+      played = await debugRollVerified([3, 5]);
+      for (let guard = 0; guard < 12 && played.turn === "black"; guard++) {
+        played = await api("/api/ai", {});
+      }
+    } catch (err) {
+      // A route that refused the queued roll is the route's own finding, told
+      // first by the team — never a setup step (sweep 2026-11-24
+      // sel-c3ffc4d1: a queue that took G11's roll and refused this one).
+      if (String((err as Error)?.message ?? err).includes(SETUP_REFUSED)) throw err;
+      played = null;
+    }
+    expect(
+      played?.turn === "white" && played?.canDouble === true,
+      "[setup] [needs: G11 G25 G31 F88] the same turn reached by play (G11's) never came back to the player or could not double",
+    ).toBe(true);
+    expect(seeded, "[brief] the turn set up through the debug route could not double").toBe(true);
+  });
+
+  it("[G26] REQ-CUBE-STATE — a new game starts with a centered cube", async () => {
+    await api("/api/new", { difficulty: "medium" });
+    const state = await getState();
+
+    expect(state.cube).toEqual({ value: 1, owner: null });
+  });
+
+  it("[G20] REQ-CUBE-STATE — accepted human double doubles cube and transfers ownership to the taker", async () => {
+    const VALUE = "[aspect: value]";
+    const OWNER = "[aspect: owner]";
+    // Standard backgammon: when the doubled player TAKES, the taker (here the AI,
+    // black) owns the cube — not the doubler. A fresh game sits in the opening
+    // roll, where a double is refused (G31), so seed a LATER turn: the even
+    // opening board, where the AI's win prob is 0.5 >= its take point, so it
+    // accepts.
+    // Reached by play, as G11 is: the computer wins the opening and plays, and
+    // on the player's turn the race is near even (run 1793713472's server kept a
+    // flag only play sets, so a seeded turn could never double).
+    await api("/api/new", {});
+    let played = await debugRollVerified([3, 5]);
+    for (let guard = 0; guard < 12 && played.turn === "black"; guard++) {
+      played = await api("/api/ai", {});
+    }
+    expect((await getState()).canDouble, "[needs: G11]").toBe(true);
+    const res = await api("/api/double");
+    const state = await getState();
+    // A double the computer passes ends the game with nobody taking the cube:
+    // that is its take decision (G12), not the cube's (run 1793659780's build
+    // passed even doubles, and the player was told the taker wasn't shown).
+    expect(res.winner ?? null, "[needs: G12] the computer passed an even double").toBeNull();
+    // An unanswered double is no take: run 1793709280's server left the
+    // player's double waiting for a reply that never came, and the player was
+    // told the taker wasn't shown as the owner.
+    expect(res.phase, "[needs: F50] the computer never answered the double").not.toBe("doubleOffered");
+
+    expect(res.cube.value, VALUE).toBe(2);
+    expect(res.cube.owner, `${OWNER} after the player doubled and the computer took it, your server says the cube's owner is ${JSON.stringify(res.cube.owner)}`).toBe("black");
+    expect(state.cube.value, VALUE).toBe(2);
+    expect(state.cube.owner, `${OWNER} after the player doubled and the computer took it, your server says the cube's owner is ${JSON.stringify(state.cube.owner)}`).toBe("black");
+  });
+
+  it("[G21] REQ-CUBE-STATE — illegal double in move phase must not mutate cube", async () => {
+    // An ordinary turn from the opening position: a new game starts with the
+    // opening roll (G31), which is not this check's subject.
+    await ordinaryTurn();
+    await debugRollVerified([3, 1]);
+
+    const before = await getState();
+    expect(before.phase, "[needs: G13]").toBe("move");
+    expect(before.canDouble, "[brief] [aspect: offered] after the player rolled, your app's state still says canDouble is true").toBe(false);
+
+    // Refused with an error status or ignored — either way the cube stays.
+    await api("/api/double").catch(() => undefined);
+    const after = await getState();
+
+    expect(after.cube, "[brief]").toEqual(before.cube);
+  });
+});
+
+// The computer's take, as its own game asks it: a take function written with
+// the cube before the difficulty is called that way, and its own words for take
+// and pass count as the prompt's. Whether those words and that shape are the
+// prompt's is the last G12 check's, scored and never told (the operator, 2026-11-03).
+const TAKE_WORDS = new Set(["double", "accept", "take"]);
+const PASS_WORDS = new Set(["no-double", "decline", "pass", "drop"]);
+function takeAnswer(board: unknown, difficulty: "easy" | "medium" | "hard"): string {
+  const answer =
+    ai.shouldAiAccept.length >= 4
+      ? ai.shouldAiAccept(board, "black", { value: 1, owner: null }, difficulty)
+      : ai.shouldAiAccept(board, "black", difficulty);
+  const action = String(answer?.action);
+  return TAKE_WORDS.has(action) ? "double" : PASS_WORDS.has(action) ? "no-double" : action;
+}
+
+// A win chance as the team quotes it. G12's lines carry the grader's own numbers
+// (the operator, 2026-11-21: the model is compacted — "either reference the build spec
+// directly or give the values"); "some of them don't match the thresholds you
+// were given" named neither the decision nor the number.
+const chance = (x: unknown): string => (typeof x === "number" ? String(Math.round(x * 1000) / 1000) : String(x));
+
+describe("[G12] REQ-CUBE-AI — cube AI accept/decline and offer window thresholds", () => {
+  it("[G12] REQ-CUBE-AI — accepts near-even cube offers across all difficulties", () => {
+    const points = emptyPoints();
+    points[6] = 5; // white pip 30
+    points[19] = -5; // black pip 30
+    // Positions a game can reach: the other ten of each side borne off (run
+    // 1793660917's engine counted borne-off checkers, declined this race as five
+    // checkers a side with none off, and took it in every game that reaches it).
+    const board = bd(points, { white: 0, black: 0 }, { white: 10, black: 10 });
+
+    const myPip = game.pipCount(board, "black");
+    const oppPip = game.pipCount(board, "white");
+    const wp = refWp(myPip, oppPip);
+
+    // The test position's pips, read through the engine: a wrong count is the engine's pip count, told
+    // as that, never as a doubling decision (run 1795034166: {myPip: 0} for a 350-pip position).
+    expect({ myPip, oppPip }, `[aspect: pips] [needs: G02] your engine counts their test position as ${myPip} pips for the computer and ${oppPip} for the player, not 30 and 30`).toEqual({ myPip: 30, oppPip: 30 });
+    expect(wp, "[brief]").toBe(0.5);
+    const evenWp = ai.winProbability(board, "black");
+    expect(withinParityBand(evenWp), `[brief] with both sides on 30 pips, your computer's win chance comes out ${chance(evenWp)}, not 0.5`).toBe(true);
+    expect(wp, "[brief]").toBeGreaterThanOrEqual(TAKE_POINT.easy);
+    expect(wp, "[brief]").toBeGreaterThanOrEqual(TAKE_POINT.medium);
+    expect(wp, "[brief]").toBeGreaterThanOrEqual(TAKE_POINT.hard);
+    for (const difficulty of ["easy", "medium", "hard"] as const) {
+      expect(takeAnswer(board, difficulty), `[brief] with both sides on 30 pips (win chance 0.5), your computer turns down the player's double on ${difficulty}`).toBe("double");
+    }
+  });
+
+  it("[G12] REQ-CUBE-AI — declines when black win chance is below hard take point", () => {
+    const points = emptyPoints();
+    points[2] = 1; // white pip 2
+    const board = bd(points, { white: 0, black: 14 }, { white: 14, black: 1 }); // black pip 350 from bar
+
+    const myPip = game.pipCount(board, "black");
+    const oppPip = game.pipCount(board, "white");
+    const wp = refWp(myPip, oppPip);
+
+    expect({ myPip, oppPip }, `[aspect: pips] [needs: G02] your engine counts their test position as ${myPip} pips for the computer and ${oppPip} for the player, not 350 and 2`).toEqual({ myPip: 350, oppPip: 2 });
+    expect(wp, "[brief]").toBe(0.02);
+    const lostWp = ai.winProbability(board, "black");
+    expect(lostWp, `[brief] [needs: G22] at 350 pips against 2, your computer's win chance comes out ${chance(lostWp)}, not under 0.24`).toBeLessThan(TAKE_POINT.hard);
+    expect(wp, "[brief]").toBeLessThan(TAKE_POINT.hard);
+    expect(takeAnswer(board, "hard"), "[brief] at 350 pips against 2 (win chance under 0.24), your computer takes the player's double on hard").toBe("no-double");
+  });
+
+  it("[G12] REQ-CUBE-AI — offers only inside hard window, never when blocked/easy/too-good", () => {
+    const windowPoints = emptyPoints();
+    windowPoints[19] = -5; // black pip 30
+    windowPoints[6] = 10; // white pip 60
+    windowPoints[1] = 1; // white pip +1 => total 61
+    const windowBoard = bd(windowPoints, { white: 0, black: 0 }, { white: 4, black: 10 });
+
+    const windowMyPip = game.pipCount(windowBoard, "black");
+    const windowOppPip = game.pipCount(windowBoard, "white");
+    expect({ windowMyPip, windowOppPip }, `[aspect: pips] [needs: G02] your engine counts their test position as ${windowMyPip} pips for the computer and ${windowOppPip} for the player, not 30 and 61`).toEqual({ windowMyPip: 30, windowOppPip: 61 });
+
+    // REQ-WINPROB is formula-agnostic: on a board near the 0.90 "too good" ceiling, one
+    // conforming monotonic model may rate this position INSIDE the offer window (=> double)
+    // while a steeper conforming model rates it > 0.90 (=> hold, too good). The contract does
+    // NOT fix a single decision here. So grade the candidate's OFFER for internal consistency
+    // with its OWN win-probability estimate under the published REQ-CUBE-AI policy, rather than
+    // forcing the reference formula's decision on this ambiguous board.
+    const windowWpCand = ai.winProbability(windowBoard, "black");
+    const windowHard = ai.shouldAiDouble(windowBoard, "black", { value: 1, owner: null }, "hard").action;
+    expect(
+      windowHard,
+      `[brief] black 30 pips, white 61 with 4 off: at its own win chance of ${chance(windowWpCand)}, your computer ${windowHard === "double" ? "offers" : "holds"} on hard`,
+    ).toBe(expectedOfferAction(windowWpCand, "hard", true));
+    // easy never offers a double, regardless of win probability
+    expect(
+      ai.shouldAiDouble(windowBoard, "black", { value: 1, owner: null }, "easy").action,
+      `[brief] black 30 pips, white 61 with 4 off: at its own win chance of ${chance(windowWpCand)}, your computer offers on easy`,
+    ).toBe(expectedOfferAction(windowWpCand, "easy", true));
+
+    // The same judgement across the races the offer checks play (offerRace in
+    // core.spec.ts, G24's ladder): one board let run 1793751254's build pass
+    // with a hold of its own invention (no double until both sides had six
+    // off), while it held inside its window on one ladder and doubled above
+    // the ceiling on the other — and the player heard only "the offer never
+    // shows up on screen".
+    const races: Board[] = [];
+    let six = 10, one = 1, whiteOff = 4;
+    const rung = () => {
+      const p = emptyPoints();
+      p[6] = six; p[1] = one; p[19] = -5;
+      return bd(p, { white: 0, black: 0 }, { white: whiteOff, black: 10 });
+    };
+    races.push(rung());
+    while (six > 0) { six--; one++; races.push(rung()); }
+    while (one > 1) { one--; whiteOff++; races.push(rung()); }
+    for (let off = 10; off >= 0; off -= 2) {
+      const p = emptyPoints();
+      p[19] = -5; p[6] = 15 - off;
+      races.push(bd(p, { white: 0, black: 0 }, { white: off, black: 10 }));
+    }
+    for (const race of races) {
+      const wp = ai.winProbability(race, "black");
+      const got = ai.shouldAiDouble(race, "black", { value: 1, owner: null }, "hard").action;
+      expect(
+        got,
+        `[brief] black 30 pips, white ${game.pipCount(race, "white")} with ${race.off.white} off: at its own win chance of ${chance(wp)}, your computer ${got === "double" ? "offers" : "holds"} on hard`,
+      ).toBe(expectedOfferAction(wp, "hard", true));
+    }
+
+    // Who holds the cube is judged where a player meets it — G24's server check
+    // ("the computer never doubles on the player's cube"). A function-level
+    // ownership case here (added 2026-11-21, untold) was cut the same week: no
+    // player sees a cube function the server never trusts, the brief states no
+    // ownership rule for the function (the operator 11-21: the model knows the rule; the
+    // game is held to it), and an untold failure can never be fixed — run
+    // 1795435505 (a2) failed only it and heard "something is still broken".
+
+    const tooGoodPoints = emptyPoints();
+    tooGoodPoints[24] = -1; // black pip 1
+    const tooGoodBoard = bd(tooGoodPoints, { white: 14, black: 0 }, { white: 1, black: 14 }); // white pip 350 from bar
+
+    const tooGoodMyPip = game.pipCount(tooGoodBoard, "black");
+    const tooGoodOppPip = game.pipCount(tooGoodBoard, "white");
+    const tooGoodWp = refWp(tooGoodMyPip, tooGoodOppPip);
+
+    expect({ tooGoodMyPip, tooGoodOppPip }, `[aspect: pips] [needs: G02] your engine counts their test position as ${tooGoodMyPip} pips for the computer and ${tooGoodOppPip} for the player, not 1 and 350`).toEqual({ tooGoodMyPip: 1, tooGoodOppPip: 350 });
+    expect(tooGoodWp, "[brief]").toBeGreaterThan(DOUBLE_WINDOW.upper);
+    const sureWp = ai.winProbability(tooGoodBoard, "black");
+    expect(sureWp, `[brief] [needs: G22] at 1 pip against 350, your computer's win chance comes out ${chance(sureWp)}, not over 0.90`).toBeGreaterThan(DOUBLE_WINDOW.upper);
+    expect(
+      ai.shouldAiDouble(tooGoodBoard, "black", { value: 1, owner: null }, "hard").action,
+      "[brief] at 1 pip against 350 (win chance over 0.90), your computer offers on hard",
+    ).toBe("no-double");
+  });
+
+  // The cube functions' shape and words are the contract's (G40, stage 1, told by
+  // the team with the function's name) — they were scored-never-told here until
+  // The operator, 2026-11-23: "an untold check should never be untold".
+
+  it("[G22] REQ-WINPROB — winProbability is monotonically non-decreasing in the player's pip lead", () => {
+    const fbPoints = emptyPoints();
+    fbPoints[2] = 1;
+    const farBehind = bd(fbPoints, { white: 0, black: 14 }); // black 350 vs white 2 (lead -348)
+    const nePoints = emptyPoints();
+    nePoints[6] = 5;
+    nePoints[19] = -5;
+    const nearEven = bd(nePoints); // 30 vs 30 (lead 0)
+    const winPoints = emptyPoints();
+    winPoints[19] = -5;
+    winPoints[6] = 10;
+    winPoints[1] = 1;
+    const windowB = bd(winPoints); // black 30 vs white 61 (lead +31)
+    const faPoints = emptyPoints();
+    faPoints[24] = -1;
+    const farAhead = bd(faPoints, { white: 14, black: 0 }); // black 1 vs white 350 (lead +349)
+    // ordered by INCREASING black pip lead
+    const wps = [farBehind, nearEven, windowB, farAhead].map((b) =>
+      ai.winProbability(b, "black"),
+    );
+    expect(isNonDecreasing(wps)).toBe(true);
+  });
+});

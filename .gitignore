@@ -1,0 +1,91 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# venv
+.venv/
+venv/
+env/
+
+# pytest
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log
+Thumbs.db
+
+# OpenDyno: NEVER commit the corpus, keys, tokens, or run artifacts.
+# The adapter is open-sourced; the corpus/keys/epoch_sk are NOT.
+runs/
+/runs-archive/
+*.catalog.jsonl
+*.review.jsonl
+*.private.json
+
+!data/README.md
+# RESULTS LEDGER — results are data, never committed. The ledger lives
+# HOST-side (outside runs/) and must NEVER be mounted into a cell or proxied
+# by the egress sidecar; in-cell code must never see scored results.
+data/results-ledger.jsonl
+
+# TOOL JOBS — the refresh/custom-tool job records (control/tooljobs.mjs):
+# runtime state, per-installation, never committed.
+data/tool-jobs.json
+
+# --- backgammon task (Phase 2a): never commit installed deps or test artifacts ---
+node_modules/
+task/**/test-results/
+grader/test-results/
+task/**/playwright-report/
+task/**/.last-run.json
+.okp/
+
+# Local orchestration docs (never committed)
+# The repo's OWN agent instructions, root only. A bare `AGENTS.md` here also
+# swallowed every challenge's seeded notes (task/*/prompts/AGENTS.md), which
+# exist on disk and never reached the repo — a fresh clone had a challenge with
+# no notes for the model.
+/AGENTS.md
+!**/prompts/AGENTS.md
+
+# The host-side opencode attach client (scripts/install_attach_client.py).
+/.attach-client/
+
+# Local bench env
+.env
+.env.*.local
+
+# Cloud (OrcaRouter) API key — NEVER commit
+config/cloud.env
+
+# Dev-mode state — operator machine state, not a repo fact. A fresh clone is OFF.
+config/devmode.json
+# The snapshot armed for the next seeded run. Operator machine state, same
+# class as devmode.json above — never committed.
+config/armed-snapshot.json
+# The continuous-mode chain (control/continuous.mjs). Operator machine state.
+config/continuous.json
+
+# Challenge repos cloned in here are their own repos, never this one.
+challenges/*
+!challenges/README.md
+!challenges/TEMPLATE/
+
+# Secret material — never commit
+*.env
+# Exception: the variant-B settings file is a tracked artifact of the kit, not a
+# secret (its values are placeholders). Without this, `git add -A` drops it.
+!variants/honcho/*.env
+*.pem
+*.key

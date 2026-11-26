@@ -1,0 +1,763 @@
+import { type Page } from "@playwright/test";
+import { expect, pictureChange, test } from "./fixtures.ts";
+import { drawnBoardBox, readBoardParts } from "./board-geometry.ts";
+
+// [F35]–[F38] REQ-LAYOUT — the page the build prompt asks for (chunk-04,
+// The operator 2026-09-25): "The board should be on the left and fill the screen,
+// with all the roll, double and other buttons and game info on the right —
+// about 80% of the width for the board and 20% for the buttons. That's on an
+// ordinary laptop screen, 1280×800 or 1440×900, with nothing to scroll."
+//
+// Measured on a fresh game at both sizes. "The board" is what is DRAWN — the
+// span of the points, the bar and the off tray — never the element that holds
+// it: a board keeping its shape inside a wider box leaves margins the player
+// sees as empty space (the reference's box is 86% of a 1920px window while
+// its drawn board is 76%). The reference measures 76%/79% of the width and
+// 88%/89% of the height at the two sizes; the bands below leave it room.
+
+const SIZES = [
+  { width: 1280, height: 800 },
+  { width: 1440, height: 900 },
+];
+// What the prompt puts on the right. The scores may sit anywhere (the
+// reference shows them in its top bar), and the dice are drawn where the page
+// chooses — the same chunk says "visible on the board".
+const RIGHT_SIDE = [
+  "rollBtn", "doubleBtn", "undoBtn", "endTurnBtn", "cube", "pipWhite", "pipBlack",
+  "turnIndicator", "message", "difficulty", "newGameBtn",
+];
+const BUTTONS = ["rollBtn", "doubleBtn", "undoBtn", "endTurnBtn", "newGameBtn", "difficulty"];
+// The marker naming each item on the right, whose line names it when it isn't
+// showing (the operator, 2026-09-26: "name buttons"). Written out in full so the
+// source scan finds each one's lines (tests/test_player_stages.py).
+const ASPECT_OF: Record<string, string> = {
+  rollBtn: "[aspect: roll]",
+  doubleBtn: "[aspect: double]",
+  undoBtn: "[aspect: undo]",
+  endTurnBtn: "[aspect: endturn]",
+  newGameBtn: "[aspect: newgame]",
+  difficulty: "[aspect: difficulty]",
+  cube: "[aspect: cube]",
+  pipWhite: "[aspect: pipwhite]",
+  pipBlack: "[aspect: pipblack]",
+  turnIndicator: "[aspect: turn]",
+  message: "[aspect: message]",
+};
+// The name each button's label carries (the build prompt, chunk-04: "the
+// buttons read Roll, Double, Undo, End Turn and New Game").
+const BUTTON_NAMES: Record<string, string> = {
+  rollBtn: "roll",
+  doubleBtn: "double",
+  undoBtn: "undo",
+  endTurnBtn: "end turn",
+  newGameBtn: "new game",
+};
+const BOARD_SHARE = { min: 0.7, max: 0.88 };
+const BOARD_HEIGHT_MIN = 0.7;
+const BUTTON_MIN = { w: 60, h: 24 };
+
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+interface Control extends Box {
+  shown: boolean;
+  clipped: boolean;
+  tag: string;
+  // Nothing in it to show: no text and nothing drawn inside. An empty message
+  // box on a fresh game is not information hidden from the player (run
+  // 1790401782: an empty `message`, 0 px wide, told as "game info I need
+  // aren't showing").
+  empty: boolean;
+}
+interface Layout {
+  size: string;
+  vw: number;
+  vh: number;
+  scrollW: number;
+  scrollH: number;
+  boardScrollsSideways: boolean;
+  trayDrawn: boolean;
+  trayClearOfPoints: boolean;
+  // Pieces with more than a tenth of their drawn circle past the window edge,
+  // by the edge they cross (a piece in a corner counts for both), and how many
+  // there are on the board.
+  piecesPast: { bottom: number; top: number; left: number; right: number };
+  piecesHidden: { count: number; below: number[]; above: number[]; left: number[]; right: number[] };
+  pieces: number;
+  drawn: Box | null;
+  controls: Record<string, Control | null>;
+}
+
+async function openAt(page: Page, size: { width: number; height: number }): Promise<Layout> {
+  await page.setViewportSize(size);
+  await page.goto("/");
+  // A page that never shows its board is the load check's complaint, told
+  // there (a needs marker, harness/adapters/challenge/stages.py).
+  await expect(page.locator('[data-testid="board"]'), "[needs: F01]").toBeVisible();
+  await page.request.post("/api/new", { data: {} });
+  await page.reload();
+  await expect(page.locator('[data-testid="board"]'), "[needs: F01]").toBeVisible();
+  const layout = (await page.evaluate(
+    ({ ids, buttons }) => {
+      const controls: Record<string, unknown> = {};
+      // What is drawn on top at a control decides whether a player sees it: a
+      // control the board is drawn over is not showing, however its own style
+      // reads (run 1790439223's difficulty and New Game sat under the board's
+      // points; its difficulty check was told "nothing actually changes"). The
+      // controls are made hit-testable for the reading — a page may let clicks
+      // pass through its info boxes — and put back after it.
+      const probe = document.createElement("style");
+      probe.textContent = ids
+        .map((id) => `[data-testid="${id}"], [data-testid="${id}"] * { pointer-events: auto !important; }`)
+        .join("\n");
+      document.head.appendChild(probe);
+      const onTop = (el: HTMLElement, r: DOMRect) => {
+        for (const fy of [0.5, 0.25, 0.75]) {
+          for (const fx of [0.5, 0.25, 0.75]) {
+            const x = r.left + r.width * fx;
+            const y = r.top + r.height * fy;
+            if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) continue;
+            const hit = document.elementFromPoint(x, y);
+            if (hit && (hit === el || el.contains(hit))) return true;
+          }
+        }
+        return false;
+      };
+      for (const id of ids) {
+        const el = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        if (!el) {
+          controls[id] = null;
+          continue;
+        }
+        const r = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        const shown =
+          r.width > 0 &&
+          r.height > 0 &&
+          cs.visibility !== "hidden" &&
+          cs.display !== "none" &&
+          Number(cs.opacity) > 0.05 &&
+          (onTop(el, r) || !(r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight));
+        // A squished button cuts its own label off; a <select> reports its
+        // option list, not its face, so only buttons are read for this.
+        const clipped =
+          buttons.includes(id) && el.tagName === "BUTTON"
+            ? el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1
+            : false;
+        const empty = !(el.textContent ?? "").trim() && !el.querySelector("img,svg,canvas,button,select,input,option");
+        controls[id] = { x: r.left, y: r.top, w: r.width, h: r.height, shown, clipped, tag: el.tagName, empty };
+      }
+      probe.remove();
+      const board = document.querySelector<HTMLElement>('[data-testid="board"]');
+      const tray = document.querySelector<HTMLElement>('[data-testid="off-tray"]')?.getBoundingClientRect();
+      const pieceEls = [...document.querySelectorAll<HTMLElement>('[data-testid="checker"]')]
+        .map((el) => el.getBoundingClientRect())
+        .filter((r) => r.width > 0 && r.height > 0);
+      const inWindow = (r: DOMRect) =>
+        Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) *
+        Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+      // Partly in the window: a player sees the piece cut off at the edge. Wholly outside it: no one sees it.
+      const pastEdge = pieceEls.filter((r) => inWindow(r) > 0 && inWindow(r) < 0.9 * r.width * r.height);
+      const hiddenEls = pieceEls.filter((r) => inWindow(r) === 0);
+      const piecesHidden = {
+        count: hiddenEls.length,
+        below: hiddenEls.filter((r) => r.top >= innerHeight).map((r) => Math.round(r.top)),
+        above: hiddenEls.filter((r) => r.bottom <= 0).map((r) => Math.round(r.bottom)),
+        left: hiddenEls.filter((r) => r.right <= 0).map((r) => Math.round(r.right)),
+        right: hiddenEls.filter((r) => r.left >= innerWidth).map((r) => Math.round(r.left)),
+      };
+      const piecesPast = {
+        bottom: pastEdge.filter((r) => r.bottom > innerHeight).length,
+        top: pastEdge.filter((r) => r.top < 0).length,
+        left: pastEdge.filter((r) => r.left < 0).length,
+        right: pastEdge.filter((r) => r.right > innerWidth).length,
+      };
+      return {
+        piecesPast,
+        piecesHidden,
+        pieces: pieceEls.length,
+        size: `${innerWidth}×${innerHeight}`,
+        vw: innerWidth,
+        vh: innerHeight,
+        scrollW: document.documentElement.scrollWidth,
+        scrollH: document.documentElement.scrollHeight,
+        // A board wider than its box makes the player scroll only when it
+        // scrolls. Overflow that is shown or clipped is no scrollbar: checkers
+        // hanging 7 px over the frame were told as "I have to scroll to see the
+        // whole game" on a page that did not scroll (run 1790365975).
+        boardScrollsSideways: board
+          ? ["auto", "scroll"].includes(getComputedStyle(board).overflowX) &&
+            board.scrollWidth > board.clientWidth + 1
+          : false,
+        trayDrawn: !!tray && tray.width > 0 && tray.height > 0,
+        trayClearOfPoints:
+          !!tray &&
+          ![...document.querySelectorAll<HTMLElement>('[data-testid="point"]')].some((el) => {
+            const p = el.getBoundingClientRect();
+            // The same sliver rule as board-geometry.ts overlaps(): 4 px each way.
+            return (
+              Math.min(tray.right, p.right) - Math.max(tray.left, p.left) > 3 &&
+              Math.min(tray.bottom, p.bottom) - Math.max(tray.top, p.top) > 3
+            );
+          }),
+        controls,
+      };
+    },
+    { ids: RIGHT_SIDE, buttons: BUTTONS },
+  )) as Omit<Layout, "drawn">;
+  // The drawn board — points, bar, and the off tray when it is on the board — by the one rule every
+  // check shares (board-geometry.ts trayOnBoard), never a rule of this reader's own.
+  return { ...layout, drawn: drawnBoardBox(await readBoardParts(page)) };
+}
+
+function drawnBoard(layout: Layout): Box {
+  // No points, bar or tray drawn is the render checks' complaint.
+  expect(layout.drawn, "[needs: REQ-RENDER/point]").not.toBeNull();
+  return layout.drawn as Box;
+}
+
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+const overlap = (a: Box, b: Box) =>
+  Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) *
+  Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+// Drawn over, not touching: more than 3 px each way — the grader's one sliver rule (board-geometry.ts
+// overlaps(), and the tray-over-points read above). Once the off tray counted as the board it touches,
+// 35 history builds whose button panel starts flush against that tray (1-3 px) were told "none of the
+// buttons and game info is right of the board" and "rollBtn sits on top of the board" (corpus sweep
+// 2026-11-19, sel-4b00580cfef448c5: tray ends x=1037, panel flush beside it).
+const SLIVER = 3;
+const drawnOver = (a: Box, b: Box) =>
+  Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > SLIVER && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > SLIVER;
+
+test("[F35] REQ-LAYOUT — board and controls placement", async ({ page }) => {
+  for (const size of SIZES) {
+    const layout = await openAt(page, size);
+    const board = drawnBoard(layout);
+    // The orientation first, the left edge last: a player who sees the controls
+    // stacked under the board says the layout is wrong, not where the board
+    // starts (the operator, run 1793908891 round 1: "app orientation is wrong, buttons
+    // should be right with board on left" — the model was told only the left
+    // edge). Missing is the testid check's finding; not showing is F38's; an
+    // empty box has nothing to place.
+    const placed = Object.entries(layout.controls).filter(([, c]) => c && c.shown && !c.empty);
+    const notRight = placed.filter(([, c]) => c!.x < board.x + board.w - SLIVER).map(([id]) => id);
+    expect(
+      placed.length === 0 || notRight.length < placed.length,
+      `at ${layout.size} none of the buttons and game info is right of the board (it ends at x=${Math.round(board.x + board.w)}): ${notRight.join(", ")}`,
+    ).toBeTruthy();
+    expect(
+      notRight,
+      `[aspect: controls] at ${layout.size} not right of the board (it ends at x=${Math.round(board.x + board.w)}): ${notRight.join(", ")}`,
+    ).toEqual([]);
+    expect(
+      board.x <= 0.1 * layout.vw,
+      `[aspect: leftedge] at ${layout.size} the board starts at x=${Math.round(board.x)}, too far in from the left edge`,
+    ).toBeTruthy();
+  }
+});
+
+test("[F36] REQ-LAYOUT — the board takes about 80% of the width", async ({ page }) => {
+  for (const size of SIZES) {
+    const layout = await openAt(page, size);
+    // The board's width includes its off tray; a board drawn without one reads
+    // narrower than the player sees it (FIX-3 M06: same frame, empty tray
+    // column). The missing tray is the tray checks' complaint.
+    // A tray drawn over the points leaves its own column empty, and the board
+    // reads narrower than the frame the player sees (FIX-5 M54). Either is the
+    // tray checks' complaint.
+    expect(layout.trayDrawn && layout.trayClearOfPoints, "[needs: REQ-RENDER/off-tray F32]").toBeTruthy();
+    const share = drawnBoard(layout).w / layout.vw;
+    // A board too big is itself why the buttons don't fit on the right; a board
+    // too small can be the buttons' doing — run 1790381377's controls down the
+    // left edge narrowed it — and is then the placement check's complaint (F35).
+    // A board wider than the window runs off the screen — F30's and F37's
+    // finding; the buttons are not squished then, only covered or pushed out
+    // (run 1790781911's board spilled off the left edge and was told the
+    // buttons looked squished).
+    expect(share, `[needs: F30 F37] at ${layout.size} the board is ${pct(share)} of the width — wider than the window`).toBeLessThanOrEqual(1);
+    expect(share, `[aspect: wide] at ${layout.size} the board is ${pct(share)} of the width`).toBeLessThanOrEqual(
+      BOARD_SHARE.max,
+    );
+    expect(share, `[aspect: narrow] [needs: F35] at ${layout.size} the board is ${pct(share)} of the width`).toBeGreaterThanOrEqual(
+      BOARD_SHARE.min,
+    );
+  }
+});
+
+test("[F37] REQ-LAYOUT — the game fits the screen", async ({ page }) => {
+  for (const size of SIZES) {
+    const layout = await openAt(page, size);
+    expect(
+      layout.scrollW <= layout.vw + 2 && layout.scrollH <= layout.vh + 2 && !layout.boardScrollsSideways,
+      `[aspect: scroll] at ${layout.size} the page is ${layout.scrollW}×${layout.scrollH}` +
+        (layout.boardScrollsSideways ? " and the board scrolls sideways" : ""),
+    ).toBeTruthy();
+    // The page need not scroll for the player to lose part of the board: a
+    // board that hides its overflow cuts its pieces off at the window's edge
+    // (run 1790846840 round 3: 7 pieces below the bottom of an 800 px window,
+    // and no check told it — F43 leaves a piece past the window to this one).
+    // Told by the edge they cross: told only "past the edge", run 898deec7's
+    // model clamped its pieces sideways for five rounds while they hung off the
+    // bottom.
+    // Not on a layer-1 pass: there should be no pieces at all yet, and pieces
+    // drawn early are F91's finding, told last (the operator, 2026-11-11: no talk of
+    // pieces while the board and the buttons are wrong). Six saved builds were
+    // told "some of the pieces run off the bottom of the screen" first, over a
+    // board crammed into a corner or running into the buttons. A board that
+    // runs past the window is F30's offscreen finding either way.
+    if (process.env.BENCH_LAYER !== "1") {
+      // A piece drawn wholly outside a window that cannot scroll (the scroll check above passed) is one no player
+      // can see: the player says so, and the team says where it is drawn — one finding each, at this moment
+      // (the operator, 2026-11-18: "user would say 'i can't see the pieces' and the team would respond 'we looked at
+      // your implementation and it seems like your pieces are drawn (where)'"). Run 1795020410 round 4 told the
+      // player "some of the pieces run off the bottom of the screen" about 15 pieces wholly below an 800 px
+      // window nothing could scroll to.
+      const hidden = layout.piecesHidden;
+      if (hidden.count > 0) {
+        const span = (xs: number[]) => (xs.length > 1 ? `from ${Math.min(...xs)} to ${Math.max(...xs)} px` : `at ${xs[0]} px`);
+        const where = [
+          hidden.below.length ? `${hidden.below.length} below its bottom edge (tops ${span(hidden.below)} down, in a window ${layout.vh} px tall)` : "",
+          hidden.above.length ? `${hidden.above.length} above its top edge` : "",
+          hidden.right.length ? `${hidden.right.length} past its right edge (left sides ${span(hidden.right)} across, in a window ${layout.vw} px wide)` : "",
+          hidden.left.length ? `${hidden.left.length} past its left edge` : "",
+        ].filter(Boolean).join("; ");
+        expect.soft(hidden.count, `[aspect: unseen] at ${layout.size}, ${hidden.count} of ${layout.pieces} pieces cannot be seen`).toBe(0);
+        expect(
+          hidden.count,
+          `[aspect: unseenwhere] at ${layout.size}, ${hidden.count} of ${layout.pieces} pieces are drawn wholly outside the window, where the page cannot scroll to them — ${where}`,
+        ).toBe(0);
+      }
+      const past = layout.piecesPast;
+      const of = `of ${layout.pieces} pieces run past the`;
+      expect(past.bottom, `[aspect: offbottom] at ${layout.size} ${past.bottom} ${of} bottom edge of the window`).toBe(0);
+      expect(past.top, `[aspect: offtop] at ${layout.size} ${past.top} ${of} top edge of the window`).toBe(0);
+      expect(past.left, `[aspect: offleft] at ${layout.size} ${past.left} ${of} left edge of the window`).toBe(0);
+      expect(past.right, `[aspect: offright] at ${layout.size} ${past.right} ${of} right edge of the window`).toBe(0);
+    }
+    const tall = drawnBoard(layout).h / layout.vh;
+    expect(tall, `[aspect: space] at ${layout.size} the board is ${pct(tall)} of the height`).toBeGreaterThanOrEqual(
+      BOARD_HEIGHT_MIN,
+    );
+    // The board's shape is the board phase's rule (chunk-04-l1: the whole board
+    // 1.4 times as wide as it is tall), judged with the board, not a phase later
+    // (audit class 7: run 1794886524's board measured 1.28 through the whole
+    // board phase and was first told in the pieces phase, by F87).
+    const drawn = drawnBoard(layout);
+    const shape = drawn.w / drawn.h;
+    expect(
+      Math.abs(shape / BOARD_SHAPE - 1) <= SHAPE_SLACK,
+      `[aspect: shape] at ${layout.size} the board is ${shape.toFixed(2)} times as wide as it is tall, not ${BOARD_SHAPE}`,
+    ).toBe(true);
+  }
+});
+
+test("[F38] REQ-LAYOUT — the buttons and game info show properly", async ({ page }) => {
+  for (const size of SIZES) {
+    const layout = await openAt(page, size);
+    const board = drawnBoard(layout);
+    const present = Object.entries(layout.controls).filter((e): e is [string, Control] => e[1] !== null && !e[1].empty);
+    for (const [id, c] of present) {
+      expect(c.shown, `${ASPECT_OF[id]} at ${layout.size} ${id} is not showing`).toBeTruthy();
+    }
+    for (const [id, c] of present) {
+      expect(
+        c.x >= -1 && c.y >= -1 && c.x + c.w <= layout.vw + 1 && c.y + c.h <= layout.vh + 1,
+        `[aspect: cutoff] at ${layout.size} ${id} is cut off by the edge of the window (${Math.round(c.x)},${Math.round(c.y)} ${Math.round(c.w)}×${Math.round(c.h)})`,
+      ).toBeTruthy();
+      expect(drawnOver(c, board), `[aspect: onboard] at ${layout.size} ${id} sits on top of the board`).toBe(false);
+    }
+    const buttons = present.filter(([id]) => BUTTONS.includes(id));
+    // Too small to press is a button's measure. The difficulty <select> is
+    // sized by the browser — about 19 px tall unstyled — and a player uses it
+    // as it is (run 1790396722 told one "too small to use").
+    // A label cut off is the player's to see; a button a few pixels under the
+    // brief's 60 × 24 is a measurement, told by the team with its size (a
+    // button 58 px wide was told "squished too small to use properly").
+    const real = buttons.filter(([, c]) => c.tag === "BUTTON");
+    const clipped = real.filter(([, c]) => c.clipped);
+    expect(
+      clipped.map(([id]) => id),
+      `[aspect: squished] at ${layout.size} labels cut off on: ${clipped.map(([id, c]) => `${id} (${Math.round(c.w)}×${Math.round(c.h)})`).join(", ")}`,
+    ).toEqual([]);
+    const small = real.filter(([, c]) => c.w < BUTTON_MIN.w || c.h < BUTTON_MIN.h);
+    expect(
+      small.map(([id]) => id),
+      `[aspect: small] at ${layout.size} ${small.map(([id, c]) => `${id} is ${Math.round(c.w)}×${Math.round(c.h)} px`).join(", ")}`,
+    ).toEqual([]);
+    for (let i = 0; i < buttons.length; i++) {
+      for (let j = i + 1; j < buttons.length; j++) {
+        expect(
+          overlap(buttons[i][1], buttons[j][1]),
+          `[aspect: overlap] at ${layout.size} ${buttons[i][0]} and ${buttons[j][0]} overlap`,
+        ).toBeLessThanOrEqual(2);
+      }
+    }
+  }
+});
+
+// [F44] REQ-LAYOUT — the buttons carry their names. The build prompt names
+// them (chunk-04: "the buttons read Roll, Double, Undo, End Turn and New Game"),
+// since button names are the page's own and no backgammon convention; a longer
+// label is fine as long as it contains the name ("Roll Dice"). Read from the
+// button's own text whether or not it shows: a button that doesn't show is
+// F38's complaint, and one that isn't there the tag check's.
+test("[F44] REQ-LAYOUT — the buttons carry their names", async ({ page }) => {
+  await page.goto("/");
+  const labels = await page.evaluate((ids) => {
+    const out: Record<string, string | null> = {};
+    for (const id of ids) {
+      const el = document.querySelector(`[data-testid="${id}"]`);
+      // A label drawn with CSS (`content: "Roll"`) is a label a player reads.
+      const drawn = (pseudo: string) => {
+        const c = el ? getComputedStyle(el, pseudo).content : "none";
+        if (!c || c === "none" || c === "normal") return "";
+        // A string content value reads back wrapped in its quotes.
+        return c.length >= 2 && c[0] === c[c.length - 1] ? c.slice(1, -1) : c;
+      };
+      out[id] = el
+        ? [drawn("::before"), el.textContent ?? "", drawn("::after")].join(" ").replace(/\s+/g, " ").trim().toLowerCase()
+        : null;
+    }
+    return out;
+  }, Object.keys(BUTTON_NAMES));
+  const unnamed = Object.entries(BUTTON_NAMES)
+    .filter(([id, name]) => labels[id] !== null && !(labels[id] as string).includes(name))
+    .map(([id]) => `${id} reads "${labels[id]}"`);
+  expect(unnamed, `buttons whose label lacks their name: ${unnamed.join("; ")}`).toEqual([]);
+});
+
+// [F82] REQ-LAYOUT — the buttons match. The operator, run 1792248731 round 2, on a
+// board that looked wonky: "the triangles, the bar, the bear off, and the
+// buttons". Roll, Double, Undo and End Turn are one set and are drawn the same
+// size; New Game stacked with them (next to one of them in their column or
+// row) is the same size as them too — New Game in a header or a group of its
+// own is not part of the set. Grader only: the model knows a tidy control panel
+// from its training (owner, 2026-10-17).
+test("[F82] REQ-LAYOUT — the buttons match", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  const box = async (id: string) => page.getByTestId(id).first().boundingBox();
+  const set: { id: string; x: number; y: number; width: number; height: number }[] = [];
+  for (const id of ["rollBtn", "doubleBtn", "undoBtn", "endTurnBtn"]) {
+    const b = await box(id);
+    expect(b, "[needs: F38]").not.toBeNull();
+    set.push({ id, ...b! });
+  }
+  const others: typeof set = [];
+  const ng = await box("newGameBtn");
+  if (ng) {
+    // In the stack means next to one of them in their column or row — within
+    // a button's height (or width) of it. Run 1794311852's New Game sat at the
+    // top of the panel, the score boxes between it and Roll, 4 px shorter than
+    // the set; told "the buttons aren't all the same size" before anything on
+    // a board drawn upside down. Nobody reads that as one set of buttons.
+    const besideInColumn = (b: (typeof set)[number]) =>
+      Math.abs(b.x - ng.x) <= 2 &&
+      Math.min(Math.abs(ng.y - (b.y + b.height)), Math.abs(b.y - (ng.y + ng.height))) <= b.height;
+    const besideInRow = (b: (typeof set)[number]) =>
+      Math.abs(b.y - ng.y) <= 2 &&
+      Math.min(Math.abs(ng.x - (b.x + b.width)), Math.abs(b.x - (ng.x + ng.width))) <= b.width;
+    if (set.some((b) => besideInColumn(b) || besideInRow(b))) others.push({ id: "newGameBtn", ...ng });
+  }
+  const all = [...set, ...others];
+  const ratio = (xs: number[]) => Math.max(...xs) / Math.min(...xs);
+  const sizes = all.map((b) => `${b.id} ${Math.round(b.width)}×${Math.round(b.height)}`).join(", ");
+  // Widths that differ show as a ragged edge down the column, so they match
+  // closely; heights within a fifth read as the same button to a player (a New
+  // Game 33 px tall under 37 px buttons, a saved build told this first, before
+  // anything about its board). An Undo half again as tall still fails.
+  expect(
+    ratio(all.map((b) => b.width)) <= 1.05 && ratio(all.map((b) => b.height)) <= 1.2,
+    `[needs: F38 F44] the buttons are different sizes: ${sizes}`,
+  ).toBeTruthy();
+});
+
+// [F87] REQ-LAYOUT — the board keeps its shape as the window changes. The operator,
+// run 1792491065's final build: "the pieces were overlapping because i had a
+// banner inside my chrome browser that was pushing those pieces down … if the
+// users viewport is different sized the board and the elements should be
+// responsive", then "i squeezed and then re-expanded the game" — and was left
+// with copies of the bar and tray drawn over the board. Played as he did, on
+// one live page: full size, then each window shape below, then full size
+// again: a build that redraws on resize without clearing leaves its old bar
+// and tray where the smaller board put them (run 1792491065's buildBoard
+// appended a new bar and tray to the board on every resize). At every shape
+// nothing may scroll or leave the window and pieces of different points may
+// not run into each other; back at full size, the board must look as it did
+// before.
+// The board keeps one shape at any window size (the operator, 2026-10-27: "the board
+// layout and piece sizing should render against a fixed ratio using
+// percentage calculation … px count is wrong here"): the drawn board — the
+// span of its points, bar and tray — is 1.4 times as wide as it is tall, and
+// a piece stays the same share of a point's width. The window shapes are
+// fractions of the full window, named for what a player does to it: run
+// 1793021515's final build, fine at 1180×750, ran its 5- and 4-stacks into
+// each other once a banner took some height, because it stretched its board
+// to the window. With the shape held, stacks cannot meet at any size. The
+// reference reads 1.400 and 0.86 of a point at every shape below.
+const FULL = { width: 1440, height: 900 };
+const BOARD_SHAPE = 1.4;
+const SHAPE_SLACK = 0.03;
+const PIECE_SLACK = 0.05;
+const SMALLEST_FILL = 0.65;
+const PIECE_SPREAD = 1.1;
+const SHAPES = [
+  { name: "a banner taking a quarter of its height", w: 1, h: 0.72 },
+  { name: "a fifth smaller both ways", w: 0.8, h: 0.8 },
+  { name: "narrower, at full height", w: 0.7, h: 1 },
+  { name: "bigger", w: 1.6, h: 1.6 },
+];
+
+/** The page as pixels: a screenshot decoded in the page, reduced to luminance. */
+async function boardPixels(page: Page): Promise<string> {
+  return (await page.screenshot({ type: "png" })).toString("base64");
+}
+
+/** The drawn board's shape, where the pieces sit, and how big a piece is against a point. */
+async function readWindowFit(page: Page) {
+  const fit = await page.evaluate(() => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const boxes = (sel: string) =>
+      [...document.querySelectorAll<HTMLElement>(sel)]
+        .filter((e) => e.checkVisibility())
+        .map((e) => e.getBoundingClientRect())
+        .filter((r) => r.width > 0 && r.height > 0);
+    const points = boxes('[data-testid="point"]').map((r) => r.width).sort((p, q) => p - q);
+    const pointW = points[Math.floor(points.length / 2)] ?? 0;
+    const cs = [...document.querySelectorAll<HTMLElement>('[data-testid="checker"]')]
+      .filter((c) => c.checkVisibility())
+      .map((c) => {
+        const r = c.getBoundingClientRect();
+        return { loc: c.dataset.loc ?? "", x: r.x + r.width / 2, y: r.y + r.height / 2, w: Math.min(r.width, r.height), r };
+      });
+    const off = cs.filter((c) => c.r.bottom > vh + 0.1 * c.w || c.r.top < -0.1 * c.w || c.r.right > vw + 0.1 * c.w || c.r.left < -0.1 * c.w).length;
+    const clashes: string[] = [];
+    for (let i = 0; i < cs.length; i++)
+      for (let j = i + 1; j < cs.length; j++) {
+        const a = cs[i];
+        const b = cs[j];
+        if (a.loc !== b.loc && Math.hypot(a.x - b.x, a.y - b.y) < 0.9 * Math.min(a.w, b.w)) clashes.push(`${a.loc}/${b.loc}`);
+      }
+    const pieceW = cs.map((c) => c.w).sort((p, q) => p - q)[Math.floor(cs.length / 2)] ?? 0;
+    // Pieces a player can tell apart: one drawn on the same spot as another of
+    // its point (centres under a third of a piece apart) is a piece gone.
+    let piled = 0;
+    const byLoc = new Map<string, typeof cs>();
+    for (const c of cs) byLoc.set(c.loc, [...(byLoc.get(c.loc) ?? []), c]);
+    for (const group of byLoc.values())
+      group.forEach((c, i) => {
+        if (group.slice(0, i).some((o) => Math.hypot(o.x - c.x, o.y - c.y) < c.w / 3)) piled++;
+      });
+    // Each piece on a numbered point sits over that point's column.
+    const columns = new Map(
+      [...document.querySelectorAll<HTMLElement>('[data-testid="point"]')].map((e) => [e.dataset.point ?? "", e.getBoundingClientRect()]),
+    );
+    const astray = cs
+      .filter((c) => {
+        const col = columns.get(c.loc);
+        return !!col && (c.x < col.left - 0.1 * c.w || c.x > col.right + 0.1 * c.w || c.y < col.top - 0.5 * c.w || c.y > col.bottom + 0.5 * c.w);
+      })
+      .map((c) => c.loc);
+    // Pieces in one view are one size: run 1793474579 round 4 shrank only the
+    // pieces of its 5-stacks to fit a short window.
+    const onPoints = cs.filter((c) => columns.has(c.loc)).map((c) => c.w);
+    const spread = onPoints.length ? Math.max(...onPoints) / Math.min(...onPoints) : 1;
+    // The buttons by the rule F38 applies at the two laptop sizes: at least
+    // 60×24, the label inside its button, the button inside the window. Run
+    // 1793474579's final build squashed them in a short window, every label cut
+    // off at its bottom edge, and no check looked.
+    // Off the window and squashed are two things a player sees differently: run
+    // 1793482090 round 4 pushed New Game below a short window, every button full
+    // size, and was told "the buttons get squashed and their names are cut off".
+    const buttonEls = ["rollBtn", "doubleBtn", "undoBtn", "endTurnBtn", "newGameBtn"]
+      .map((id) => [id, document.querySelector<HTMLElement>(`[data-testid="${id}"]`)] as const)
+      .filter(([, b]) => !!b && b.tagName === "BUTTON" && b.checkVisibility()) as (readonly [string, HTMLElement])[];
+    const offscreen = buttonEls
+      .filter(([, b]) => {
+        const r = b.getBoundingClientRect();
+        return r.left < -1 || r.top < -1 || r.right > vw + 1 || r.bottom > vh + 1;
+      })
+      .map(([id]) => id);
+    // The game's information is read as well as pressed: run 1793488446's final
+    // build cleared every button check while its message box sat below a short
+    // window, a sliver of "New game. White rolls first." showing.
+    const infoPast = ["message", "turnIndicator", "pipWhite", "pipBlack", "cube", "scoreWhite", "scoreBlack", "difficulty"]
+      .filter((id) => {
+        const e = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        if (!e || !e.checkVisibility() || !(e.textContent ?? "").trim()) return false;
+        const r = e.getBoundingClientRect();
+        return r.width > 0 && (r.left < -1 || r.top < -1 || r.right > vw + 1 || r.bottom > vh + 1);
+      });
+    const squashed = buttonEls
+      .filter(([id, b]) => {
+        if (offscreen.includes(id)) return false;
+        const r = b.getBoundingClientRect();
+        const clipped = b.scrollWidth > b.clientWidth + 1 || b.scrollHeight > b.clientHeight + 1;
+        return r.width < 60 || r.height < 24 || clipped;
+      })
+      .map(([id]) => id);
+    const el = document.scrollingElement ?? document.documentElement;
+    return {
+      size: `${vw}×${vh}`,
+      spread,
+      offscreen,
+      shownButtons: buttonEls.map(([id]) => id),
+      infoPast,
+      squashed,
+      scrolls: el.scrollWidth > vw + 2 || el.scrollHeight > vh + 2,
+      off,
+      pieces: cs.length,
+      clashes,
+      piece: pointW ? pieceW / pointW : 0,
+      seen: cs.length - piled,
+      astray,
+      bars: boxes('[data-testid="bar"]').length,
+      trays: boxes('[data-testid="off-tray"]').length,
+    };
+  });
+  // The board's shape, how much of the window it fills and whether it runs past an edge, all from the
+  // drawn board by the one rule every check shares (board-geometry.ts trayOnBoard).
+  const box = drawnBoardBox(await readBoardParts(page));
+  const vp = page.viewportSize() ?? { width: 0, height: 0 };
+  return {
+    ...fit,
+    shape: box ? box.w / box.h : 0,
+    boardPast: !!box && (box.x < -2 || box.y < -2 || box.x + box.w > vp.width + 2 || box.y + box.h > vp.height + 2),
+    fills: box ? Math.max(box.w / vp.width, box.h / vp.height) : 0,
+  };
+}
+
+test("[F87] REQ-LAYOUT — the board keeps its shape as the window changes", async ({ page }) => {
+  // Measured at every window shape first, then told in this order: copies of
+  // the board left behind and pieces gone (faults of their own), then the
+  // board's proportions — at full size and as the window changes — and only
+  // then what a wrong shape brings with it: pieces running into each other or
+  // off their points, pieces of different sizes, a board shrunk below the room
+  // it has, the board or pieces off the window, squashed buttons. Run 1793119227's
+  // round 3 build (a fresh board at 1.28) piled up a new bar and tray at every
+  // resize — six of each after five — and was told only that its board was
+  // not 1.4 times as wide as it is tall, the first thing this check asked.
+  test.setTimeout(60_000);
+  await openAt(page, FULL);
+  await page.waitForTimeout(800);
+  const before = await boardPixels(page);
+  const full = await readWindowFit(page);
+  const seen: { where: string; fit: Awaited<ReturnType<typeof readWindowFit>> }[] = [];
+  for (const shape of SHAPES) {
+    await page.setViewportSize({ width: Math.round(FULL.width * shape.w), height: Math.round(FULL.height * shape.h) });
+    await page.waitForTimeout(800);
+    const fit = await readWindowFit(page);
+    seen.push({ where: `with the window ${shape.name} (${fit.size})`, fit });
+  }
+  await page.setViewportSize(FULL);
+  await page.waitForTimeout(800);
+  const after = await boardPixels(page);
+  const back = await readWindowFit(page);
+  // Back at the size it started: one bar and one tray, and the same picture.
+  // The stale copies a redraw leaves are near the board's own colour (run
+  // 1792491065's bar: about a sixth darker), so the picture is compared at a
+  // twelfth of brightness: the share of pixels that moved by more than that.
+  const changed = await pictureChange(page, Buffer.from(before, "base64"), Buffer.from(after, "base64"));
+
+  // A copy left behind is MORE bars or trays than the page drew at the start:
+  // run 1793897465 tags its bar as two halves from the first frame, and "2 bars"
+  // was told as old copies left by a resize that changed nothing.
+  const barsAtStart = Math.max(1, full.bars);
+  const traysAtStart = Math.max(1, full.trays);
+  for (const { where, fit } of [...seen, { where: "after the window was made full size again", fit: back }]) {
+    expect(
+      fit.bars <= barsAtStart && fit.trays <= traysAtStart,
+      `[aspect: stale] ${where} there are ${fit.bars} bars and ${fit.trays} off trays drawn`,
+    ).toBe(true);
+  }
+  // Every piece still shows: run 1793183074's round 3 build cleared its
+  // collisions in the banner window by hiding the fifth piece of each 5-stack.
+  for (const { where, fit } of seen) {
+    expect(
+      fit.seen >= full.seen,
+      `[aspect: missing] [needs: F41 F43] ${where} only ${fit.seen} of the ${full.seen} pieces shown at full size can be seen (${fit.pieces - fit.seen} drawn on top of another)`,
+    ).toBe(true);
+  }
+  // The board's shape comes before what follows from it. With the shape held,
+  // stacks cannot meet, pieces need not shrink and the panel keeps its room;
+  // told after them, the model fixed one symptom at a time and never heard the
+  // rule (WO-LI-OVERLAP-STUCK-WHY: overlap → uneven → buttons over runs 28–29,
+  // while its board measured 1.31 and 1.83).
+  const shapeOk = (v: number) => Math.abs(v / BOARD_SHAPE - 1) <= SHAPE_SLACK;
+  expect(
+    shapeOk(full.shape),
+    `[aspect: ratio] [needs: F37] at ${full.size} the board is ${full.shape.toFixed(2)} times as wide as it is tall, not ${BOARD_SHAPE}`,
+  ).toBe(true);
+  for (const { where, fit } of seen) {
+    expect(
+      shapeOk(fit.shape),
+      `[aspect: shape] [needs: F37] ${where} the board is ${fit.shape.toFixed(2)} times as wide as it is tall, not ${BOARD_SHAPE}`,
+    ).toBe(true);
+  }
+  for (const { where, fit } of seen) {
+    expect(fit.clashes, `[aspect: overlap] [needs: F31] ${where}, pieces of different points run into each other: ${fit.clashes.join(", ")}`).toEqual([]);
+  }
+  // Each piece stays over its own point: a page that resizes its board but not
+  // its pieces leaves them where the old board put them (a dodge tried on the
+  // reference, 2026-10-28: told "the board runs off the screen" of a board that
+  // fit).
+  for (const { where, fit } of seen) {
+    expect(fit.astray, `[aspect: place] [needs: F31] ${where}, pieces sit away from their points: ${fit.astray.join(", ")}`).toEqual([]);
+  }
+  for (const { where, fit } of [{ where: "at full size", fit: full }, ...seen]) {
+    expect(
+      fit.spread <= PIECE_SPREAD,
+      `[aspect: uneven] [needs: F41] ${where} the biggest piece on a point is ${fit.spread.toFixed(2)} times the smallest`,
+    ).toBe(true);
+  }
+  // And the board uses the room it has: at least 65% of the window across or
+  // down (the reference: 71% at its tightest). A board that shrank on resize was
+  // told "old copies stay drawn" by the picture compared below.
+  for (const { where, fit } of [...seen, { where: "after the window was made full size again", fit: back }]) {
+    expect(
+      fit.fills >= SMALLEST_FILL,
+      `[aspect: small] [needs: F35] ${where} the board fills ${Math.round(fit.fills * 100)}% of the window at most, either way`,
+    ).toBe(true);
+  }
+  // Back at full size the game must look as it did. A picture that differs is
+  // told as that, not as "old copies left drawn": copies are counted above
+  // (stale). Run 1793908891 rounds 9-11 restored every element (30 checkers,
+  // one bar, one tray) but drew its pieces another size, and was told about
+  // copies that were not there. Lines approved by the operator, 2026-11-06.
+  expect(
+    changed <= 0.02,
+    `[aspect: changed] after the window changed shape and was made full size again, ${(changed * 100).toFixed(1)}% of the screen looks different from before`,
+  ).toBe(true);
+  for (const { where, fit } of seen) {
+    expect(
+      !fit.scrolls && fit.off === 0 && !fit.boardPast,
+      `[aspect: fit] [needs: F37] ${where} the page ${fit.scrolls ? "scrolls" : "fits"}, the board ${fit.boardPast ? "runs past" : "stays inside"} the window and ${fit.off} of ${fit.pieces} pieces run past it`,
+    ).toBeTruthy();
+  }
+  // A button showing at full size and gone at a shape is off the screen to the
+  // player as surely as one past the edge (WO-LI-NEWGAME-STUCK-WHY: a button
+  // hidden at a shape was dropped from the read and passed).
+  for (const { where, fit } of seen) {
+    const gone = full.shownButtons.filter((id) => !fit.shownButtons.includes(id));
+    expect(gone, `[aspect: gonebuttons] [needs: F38] ${where} these buttons shown at full size are gone: ${gone.join(", ")}`).toEqual([]);
+  }
+  for (const { where, fit } of seen) {
+    expect(fit.offscreen, `[aspect: offbuttons] [needs: F38] ${where} these buttons are past the edge of the window: ${fit.offscreen.join(", ")}`).toEqual([]);
+  }
+  for (const { where, fit } of seen) {
+    expect(fit.infoPast, `[aspect: info] [needs: F38] ${where} this game information is past the edge of the window: ${fit.infoPast.join(", ")}`).toEqual([]);
+  }
+  for (const { where, fit } of seen) {
+    expect(fit.squashed, `[aspect: buttons] [needs: F38] ${where} these buttons are squashed, their names cut off: ${fit.squashed.join(", ")}`).toEqual([]);
+  }
+  for (const { where, fit } of seen) {
+    expect(
+      Math.abs(fit.piece / full.piece - 1) <= PIECE_SLACK,
+      `[aspect: size] [needs: F41] ${where} a piece is ${fit.piece.toFixed(2)} of a point's width, against ${full.piece.toFixed(2)} at full size`,
+    ).toBe(true);
+  }
+});

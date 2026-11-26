@@ -1,0 +1,3820 @@
+import { type Locator, type Page } from "@playwright/test";
+import { expect, expectPopupShown, hintPositions, pickUpAPiece, pictureChange, playerClick, playerClickUntilShown, PORT, press, rollAndCheck, seedRolled, settledHintPositions, setupState, test } from "./fixtures.ts";
+import { readColumnBox, readPointBoxes, sampleBoxBrightness, sampleBoxContrast, waitForBoardSettled } from "./board-geometry.ts";
+
+type Player = "white" | "black";
+type Difficulty = "easy" | "medium" | "hard";
+type Move = { from: number; to: number; die: number };
+
+interface ApiState {
+  remainingDice: number[];
+  legalMoves: Move[];
+  turnOver: boolean;
+  phase: "openingRoll" | "roll" | "move" | "gameover" | "doubleOffered";
+  difficulty: Difficulty;
+  message: string;
+  pip: { white: number; black: number };
+  cube: { value: number; owner: Player | null };
+  turn: Player;
+  winner: Player | null;
+  score: { white: number; black: number };
+  dice: number[];
+  canDouble: boolean;
+  points: number[];
+  bar: { white: number; black: number };
+  off: { white: number; black: number };
+}
+
+const BAR = 0;
+const OFF = 25;
+
+async function postJson<T>(page: Page, path: string, data: unknown = {}): Promise<T> {
+  const response = await page.request.post(path, { data });
+  expect(response.ok(), `POST ${path} failed (${response.status()})`).toBeTruthy();
+  return (await response.json()) as T;
+}
+
+async function readState(page: Page): Promise<ApiState> {
+  return postJson<ApiState>(page, "/api/state", {});
+}
+
+async function openApp(page: Page): Promise<void> {
+  await page.goto("/");
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+}
+
+// The first Roll of a new game. A Roll button that cannot be clicked at the
+// start of a game is F61's finding (its [aspect: roll]); the checks that only
+// ride on the opening roll defer to it rather than tell their own line — run
+// 1790769627's page kept Roll shut through the opening.
+async function clickOpeningRoll(page: Page): Promise<void> {
+  const canRoll = await page
+    .getByTestId("rollBtn")
+    .click({ trial: true, timeout: 5_000 })
+    .then(() => true, () => false);
+  expect(canRoll, "[needs: F61] the Roll button could not be clicked at the start of a game").toBe(true);
+  await page.getByTestId("rollBtn").click();
+}
+
+function locAttr(from: number): string {
+  return from === BAR ? "bar" : String(from);
+}
+
+async function clickTopWhiteChecker(page: Page, from: number): Promise<boolean> {
+  const checker = page.locator(
+    `[data-testid="checker"][data-color="white"][data-loc="${locAttr(from)}"]`,
+  );
+  const count = await checker.count();
+  if (count === 0) return false;
+  await playerClick(checker.last());
+  return true;
+}
+
+async function waitForHints(page: Page, timeout = 1500): Promise<boolean> {
+  try {
+    await expect
+      .poll(async () => page.getByTestId("hint").count(), { timeout })
+      .toBeGreaterThan(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function revealHints(page: Page, legalMoves: Move[], preferredFrom?: number): Promise<void> {
+  const orderedFroms = [
+    preferredFrom,
+    ...legalMoves.map((m) => m.from),
+  ].filter((value, index, list): value is number => {
+    return typeof value === "number" && list.indexOf(value) === index;
+  });
+
+  for (const from of orderedFroms) {
+    const clicked = await clickTopWhiteChecker(page, from);
+    if (!clicked) continue;
+
+    const shown = await waitForHints(page);
+    if (shown) return;
+  }
+
+  throw new Error(`Could not reveal hints. Tried from-points: ${orderedFroms.join(", ")}`);
+}
+
+function normalizeHint(raw: string): string {
+  return raw.replace(/\s+/g, "").toLowerCase();
+}
+
+// The words a hint's label is made of: "3", "off", or "3" and "10" from
+// "3→10". The checks that look for the hint of one die read its words, so a
+// "1" is never found inside a "10" and a "3→10" hint is still the 3's. Whether
+// a label says more than its die is F04's finding alone.
+function hintWords(raw: string): string[] {
+  return normalizeHint(raw).split(/[^0-9a-z]+/).filter(Boolean);
+}
+
+// Wait until the hint count inside pointHints has been unchanged for a full
+// window, then return it. The roll's client-side handling renders dice, then
+// runs its roll-time hint logic a moment later; this waits past that, so a
+// build that paints hints right after the roll shows a non-zero count here.
+async function waitForEarlyHintsStable(page: Page): Promise<number> {
+  const deadline = Date.now() + 3000;
+  const windowMs = 600;
+  let previous = -1;
+  let unchangedSince = Date.now();
+  let last = 0;
+  while (Date.now() < deadline) {
+    last = await page.getByTestId("pointHints").getByTestId("hint").count();
+    if (last === previous) {
+      if (Date.now() - unchangedSince >= windowMs) return last;
+    } else {
+      previous = last;
+      unchangedSince = Date.now();
+    }
+    await page.waitForTimeout(100);
+  }
+  return last;
+}
+
+// True when the hints on screen have genuinely relocated to a DIFFERENT set of
+// points: every current hint sits more than a point-width away from every
+// first hint. A switch from one piece to another moves each hint to a
+// different destination point (tens of pixels), while a re-render that keeps
+// the same piece shifts everything by a few pixels — which must not count as a
+// change. A hint that is still in its old spot (the first piece's hints never
+// cleared) fails this, as does no hint at all.
+function hintsMovedAway(
+  first: { x: number; y: number }[],
+  now: { x: number; y: number }[],
+): boolean {
+  if (now.length === 0) return false;
+  const MIN_DIST = 40; // a full point is ~68px across; 40px is a clear relocation
+  return now.every((n) =>
+    first.every((f) => Math.hypot(n.x - f.x, n.y - f.y) > MIN_DIST),
+  );
+}
+
+// The cube's number as a player reads it, wherever it sits in the element: "2",
+// "×2" and "x2" all read 2 (the brief asks only that the cube value is on screen
+// and matches the API — "just the number" is the pip counters' contract alone).
+// A 12 or a 32 is not a 2.
+function showsNumber(n: number): RegExp {
+  return new RegExp(`(^|[^0-9])${n}([^0-9]|$)`);
+}
+
+async function readInt(locator: Locator): Promise<number> {
+  // A player reads the counter once it shows a number. Pages that fill it after
+  // the game state arrives from the server show an empty box for a moment, and
+  // reading it at that instant failed F06 for three rounds in two runs
+  // (1789664067, 1789712833) while the page showed the right number.
+  // A number inside a label ("Pips: 167") breaks the prompt's contract, not the
+  // player's reading: that is F69's, the team's, finding — the player reads
+  // the number wherever it sits. No number at all is what a player sees.
+  await expect(locator, "[aspect: format] the pip counter shows no number").toHaveText(/-?\d+/);
+  const text = (await locator.innerText()).trim();
+  return Number.parseInt(text.match(/-?\d+/)![0], 10);
+}
+
+function emptyPoints(): number[] {
+  return new Array(26).fill(0);
+}
+
+// The pip counts of the position a state holds, counted by the grader: white
+// travels 24 → 1, black 1 → 24, and a checker on the bar is 25 from home.
+function pipsOf(state: ApiState): { white: number; black: number } {
+  let white = 25 * state.bar.white;
+  let black = 25 * state.bar.black;
+  for (let p = 1; p <= 24; p++) {
+    const n = state.points[p];
+    if (n > 0) white += n * p;
+    else if (n < 0) black += -n * (25 - p);
+  }
+  return { white, black };
+}
+
+test("[F01] REQ-RENDER — page loads and the board appears", async ({ page }) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+
+  page.on("console", (msg) => {
+    if (msg.type() === "error") {
+      consoleErrors.push(msg.text());
+    }
+  });
+
+  page.on("pageerror", (err) => {
+    pageErrors.push(err.stack ?? err.message);
+  });
+
+  await page.goto("/");
+  // Found by its tag. A board drawn without the tag is the team's complaint
+  // (the tag check names it), never "the board doesn't show up": run
+  // 1790604214's third round drew its board and every piece, missing only the
+  // board's tag, and was told exactly that.
+  await expect(page.getByTestId("board"), "[needs: REQ-TESTID/testid.board]").toBeVisible();
+});
+
+// Layer 1 is the board and the buttons, with no pieces yet (the operator, 2026-11-09:
+// the layered run 1794248721 drew its pieces while it was still on layer 1).
+// Its own check, in the last first-look stage, so it is told only once the
+// board and buttons are right (the operator, 2026-11-11: big picture first — no talk
+// of pieces while the board and the buttons are wrong). Only a layer-1 pass
+// asks; every later pass needs the pieces.
+test("[F91] REQ-RENDER — no pieces before the pieces layer", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  if (process.env.BENCH_LAYER === "1") {
+    await page.waitForTimeout(1_500);
+    const drawn = await page.locator('[data-testid="checker"]').evaluateAll(
+      (els) => els.filter((el) => (el as HTMLElement).checkVisibility()).length,
+    );
+    expect(drawn, `at layer 1 ${drawn} pieces are drawn on the board`).toBe(0);
+  }
+});
+
+test("[F27] REQ-RENDER — no console or page errors on load", async ({ page }) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+
+  page.on("console", (msg) => {
+    if (msg.type() === "error") {
+      consoleErrors.push(msg.text());
+    }
+  });
+
+  page.on("pageerror", (err) => {
+    pageErrors.push(err.stack ?? err.message);
+  });
+
+  const origins = [
+    `http://localhost:${PORT}`,
+    `http://127.0.0.1:${PORT}`,
+  ];
+  expect(new Set(origins).size, "the two origins must differ").toBe(2);
+
+  for (const origin of origins) {
+    await page.goto(`${origin}/`);
+    await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  }
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+});
+
+test("[F02] REQ-RENDER — start game renders full board", async ({ page }) => {
+  await openApp(page);
+
+  await postJson<ApiState>(page, "/api/new", {});
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  await expect(page.getByTestId("point")).toHaveCount(24);
+  await expect(page.getByTestId("checker")).toHaveCount(30);
+  await expect(page.locator('[data-testid="checker"][data-color="white"]')).toHaveCount(15);
+  await expect(page.locator('[data-testid="checker"][data-color="black"]')).toHaveCount(15);
+});
+
+test("[F03] REQ-HINT — clicking a piece shows its moves", async ({ page }) => {
+  await openApp(page);
+
+  await postJson<ApiState>(page, "/api/new", {});
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [6, 5] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  await rollAndCheck(page, [6, 5], () => clickOpeningRoll(page));
+  await expect
+    .poll(async () => page.getByTestId("die").count(), "[needs: REQ-RENDER/die F61]")
+    .toBeGreaterThanOrEqual(2);
+
+  const state = await readState(page);
+  // A roll that leaves no move is the movable-checker gate's complaint when it
+  // fails too (a needs marker, harness/adapters/challenge/stages.py).
+  expect(state.legalMoves.length, "[needs: REQ-HINT/hint]").toBeGreaterThan(0);
+  // What the click itself did, judged on what the hints look like before and
+  // after it. A board that already shows hints before any pick (F84's
+  // complaint) passed here on its stray hints alone, and every gate waiting on
+  // this one was told as if picking a piece up worked: run 1792491065 round 3
+  // and run 1792503711 round 4 — the layer holding the pieces took no mouse
+  // events, so no click ever picked a piece up, the model was told "when I
+  // click a piece / pick up a piece …", believed picking up worked, and gated
+  // hints on a selection that could never happen (WO-LI-HINT-DELETION-WHY).
+  const hints = page.getByTestId("hint");
+  const where = async () =>
+    JSON.stringify(
+      (
+        await hints.evaluateAll((els) =>
+          els
+            .filter((el) => (el as HTMLElement).checkVisibility())
+            .map((el) => {
+              const r = el.getBoundingClientRect();
+              return `${Math.round(r.x + r.width / 2)},${Math.round(r.y + r.height / 2)}`;
+            }),
+        )
+      ).sort(),
+    );
+  await waitForEarlyHintsStable(page);
+  const before = await where();
+  const beforeCount = (await hints.count()) > 0;
+  // The piece about to be clicked, as it looks before: a click that leaves the
+  // hints where they were may still visibly pick the piece up (run 1795215909
+  // a3: a yellow ring round it), and that is not "nothing was picked up".
+  const firstFrom = state.legalMoves[0]?.from;
+  const firstPiece = page.locator(`[data-testid="checker"][data-color="white"][data-loc="${locAttr(firstFrom ?? -1)}"]`).last();
+  const pieceBox = firstFrom === undefined ? null : await firstPiece.boundingBox().catch(() => null);
+  const pieceClip = pieceBox
+    ? { x: Math.max(0, pieceBox.x - pieceBox.width / 4), y: Math.max(0, pieceBox.y - pieceBox.height / 4), width: pieceBox.width * 1.5, height: pieceBox.height * 1.5 }
+    : null;
+  const pieceBefore = pieceClip ? await page.screenshot({ clip: pieceClip }).catch(() => null) : null;
+  try {
+    await revealHints(page, state.legalMoves, state.legalMoves[0]?.from);
+  } catch {
+    // Judged below, with its marker.
+  }
+  // No hints for any piece is the setup check's complaint too (REQ-HINT/hint,
+  // "selecting a movable checker shows move hints"): when both fail it is one
+  // fault, told once, by the setup check (run 1792491065 round 4 told the model
+  // the same thing twice). This gate tells it when only the played-game path
+  // shows nothing.
+  await expect
+    .poll(async () => hints.count(), "[needs: REQ-HINT/hint] clicking a movable piece showed no hints")
+    .toBeGreaterThan(0);
+  // Hints were up before the click: the click must have changed them to the
+  // picked piece's own — otherwise nothing was picked up.
+  // The hints up before the click could be the very piece's own: then a second,
+  // different piece is clicked, whose moves cannot be the same set.
+  if (beforeCount) {
+    const changedWithin = async (ms: number) => {
+      for (const end = Date.now() + ms; Date.now() < end; ) {
+        if ((await where()) !== before) return true;
+        await page.waitForTimeout(150);
+      }
+      return false;
+    };
+    let changed = await changedWithin(1_500);
+    // Judged on the first piece before a second is tried (a second click may move
+    // the highlight away). The mouse leaves first, so a hover look is not a pick-up.
+    let litUp = false;
+    if (!changed && pieceClip && pieceBefore) {
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(300);
+      const pieceAfter = await page.screenshot({ clip: pieceClip }).catch(() => null);
+      litUp = pieceAfter !== null && (await pictureChange(page, pieceBefore, pieceAfter)) > 0.02;
+    }
+    if (!changed) {
+      const froms = [...new Set(state.legalMoves.map((m) => m.from))];
+      const other = froms.find((f) => f !== (state.legalMoves[0]?.from ?? -1));
+      if (other !== undefined && (await clickTopWhiteChecker(page, other))) changed = await changedWithin(1_500);
+    }
+    if (!changed) {
+      expect(!litUp, "[aspect: stale] clicking a piece lit it up, but left the hints exactly as they were before the click").toBe(true);
+    }
+    expect(changed, "[aspect: nochange] clicking a piece left the hints exactly as they were before the click").toBe(true);
+  }
+});
+
+test("[F25] REQ-HINT — a played move consumes a die", async ({ page }) => {
+  await openApp(page);
+
+  await postJson<ApiState>(page, "/api/new", {});
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [6, 5] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  await rollAndCheck(page, [6, 5], () => clickOpeningRoll(page));
+  await expect
+    .poll(async () => page.getByTestId("die").count(), "[needs: REQ-RENDER/die F61]")
+    .toBeGreaterThanOrEqual(2);
+
+  // Steps a player must get through before any die can be used up: a move to
+  // make and a hint to click. When the gates that test those after an
+  // ordinary roll fail too, the complaint is theirs (a needs marker,
+  // harness/adapters/challenge/stages.py).
+  const before = await readState(page);
+  expect(before.legalMoves.length, "[needs: REQ-HINT/hint F03]").toBeGreaterThan(0);
+
+  const move = before.legalMoves[0];
+  try {
+    await revealHints(page, before.legalMoves, move.from);
+  } catch {
+    // A no-hints outcome must fail on the [aspect: reveal] assertion below,
+    // not as the helper's uncaught throw.
+  }
+
+  // A hint the player can see: one that is drawn but hidden cannot be clicked
+  // by a player, and clicking it anyway reported "the die didn't go away" for
+  // a move nobody could make (FIX-2 mutation M28).
+  const reveal = "[aspect: reveal] [needs: REQ-HINT/hint F03]";
+  const hints = page.getByTestId("hint");
+  await expect.poll(async () => hints.count(), reveal).toBeGreaterThan(0);
+  await expect(hints.first(), reveal).toBeVisible();
+
+  const hintCount = await hints.count();
+  let clicked = false;
+  for (let i = 0; i < hintCount; i++) {
+    const words = hintWords(await hints.nth(i).innerText());
+    if ((move.to === OFF && words.includes("off")) || words.includes(String(move.die))) {
+      // Clicked where it shows: a pulsing hint on top of a stack (fixtures.ts).
+      await playerClick(hints.nth(i));
+      clicked = true;
+      break;
+    }
+  }
+
+  if (!clicked) {
+    await playerClick(hints.first());
+  }
+
+  // The click must play the move before a die can be used up. A click that
+  // changes nothing on the board is this gate's own finding, told as the
+  // move not registering — never as a die left over from a move that never
+  // happened (FIX-2 mutation M13: the hint's click did nothing).
+  const boardOf = (s: ApiState) => JSON.stringify([s.points, s.bar, s.off]);
+  const moved = await expect
+    .poll(async () => boardOf(await readState(page)))
+    .not.toBe(boardOf(before))
+    .then(
+      () => true,
+      () => false,
+    );
+  if (!moved) {
+    // The number spent and the piece left where it was is told as that, which a
+    // player sees: run 1795158914's server applied the move to a copy of the
+    // board and still took the die, and three rounds of "the piece didn't move"
+    // sent its model to rework the page.
+    const after = await readState(page);
+    expect(after.remainingDice.length, "[aspect: spent] the hint's die was used up, but the board did not change").toBe(
+      before.remainingDice.length,
+    );
+    expect(moved, "the board did not change after the hint was clicked").toBe(true);
+  }
+
+  const expectedRemaining = before.remainingDice.length - 1;
+  await expect
+    .poll(async () => {
+      const state = await readState(page);
+      return state.remainingDice.length;
+    }, "[aspect: consume]")
+    .toBe(expectedRemaining);
+
+  const after = await readState(page);
+  expect(after.remainingDice.length, "[aspect: consume]").toBe(expectedRemaining);
+});
+
+test("[F84] REQ-HINT — a roll alone draws no hints", async ({ page }) => {
+  // The operator, playing run 1792044236's round-2 build, saw green hint dots on 7
+  // points the moment the roll landed — before he'd selected anything — and
+  // clicking a checker changed nothing. The hints live in the pointHints layer
+  // (the build prompt tags the move-hint container pointHints); before any
+  // click there must be no hint in it. Its own gate (was F04's [aspect: early]):
+  // a board hinting everything at once leaves a player unable to tell which
+  // hints belong to the piece they pick, so F75 waits on it (the operator, run
+  // 1792253230 round 3: "hints appear for everything").
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [5, 3] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await rollAndCheck(page, [5, 3], () => clickOpeningRoll(page));
+  await expect
+    .poll(async () => page.getByTestId("die").count(), "[needs: REQ-RENDER/die F61]")
+    .toBeGreaterThanOrEqual(2);
+  // The roll's effects land on the client after the roll response: the page
+  // animates the dice, re-renders, and only then runs any roll-time hint logic
+  // (~500ms later). Wait until the hint count is STABLE — no change across a
+  // window — so a build that paints hints shortly after the roll is caught
+  // here, not passed on a board still mid-roll.
+  const earlyHints = await waitForEarlyHintsStable(page);
+  expect(earlyHints, "[needs: REQ-RENDER/die] move hints are shown before any piece is selected").toBe(0);
+});
+
+test("[F04] REQ-HINT — legal-move affordance + die attribution", async ({ page }) => {
+  await openApp(page);
+
+  await postJson<ApiState>(page, "/api/new", {});
+  // The opening roll is [playerDie, computerDie], unsorted: the player's 5 must
+  // come FIRST to win the opening and play both numbers (a forced [3,5] hands
+  // the turn — and the 3 and 5 — to the computer).
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [5, 3] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  await rollAndCheck(page, [5, 3], () => clickOpeningRoll(page));
+  await expect
+    .poll(async () => page.getByTestId("die").count(), "[needs: REQ-RENDER/die F61]")
+    .toBeGreaterThanOrEqual(2);
+
+  // The roll's effects land on the client after the roll response; wait until
+  // the board has settled before picking a piece up. Hints shown before any
+  // pick are F84's.
+  await waitForEarlyHintsStable(page);
+
+  const state = await readState(page);
+  // A roll that leaves no move, or a checker that shows no hints, is the
+  // complaint of the gates that test those steps when they fail too
+  // (a needs marker, harness/adapters/challenge/stages.py).
+  expect(state.legalMoves.length, "[needs: REQ-HINT/hint]").toBeGreaterThan(0);
+  // The back piece on 13 first: at the opening a 3 and a 5 both move it, to
+  // 10 and to 8, open on every board. Any other piece when it shows nothing.
+  // Clicked again when a click lands while the dice still roll, as a player
+  // does (fixtures.ts playerClickUntilShown): one click left 13 unjudged on
+  // every build that takes clicks only once the dice land (FIX-27b: M88).
+  const back = page.locator('[data-testid="checker"][data-color="white"][data-loc="13"]');
+  const backCount = await back.count();
+  if (backCount > 0) await playerClickUntilShown(back.last(), page.getByTestId("hint"));
+  const on13 = (await page.getByTestId("hint").count()) > 0;
+  if (!on13) {
+    try {
+      await revealHints(page, state.legalMoves, state.legalMoves[0]?.from);
+    } catch {
+      // No hints must fail on the marked assertion below, not the helper's throw.
+    }
+  }
+
+  const hints = page.getByTestId("hint");
+  await expect
+    .poll(async () => hints.count(), "[needs: REQ-HINT/hint F03]")
+    .toBeGreaterThan(0);
+
+  const hintTexts = (await hints.allInnerTexts()).map(normalizeHint).filter(Boolean);
+  // The hints are there but carry no number: a player sees dots and cannot tell
+  // which die each one uses (run 1792224699, round 3: two bare green dots).
+  expect(hintTexts.length, "[aspect: label] [needs: F03] the hints show no die number").toBeGreaterThan(0);
+
+  // Only the piece picked up shows its moves (the build prompt: picking up a
+  // piece "shows its hints"). The back piece's two numbers are two hints; a
+  // board that shows the moves of every piece at once (run 1791304274's, which
+  // showed them before anything was picked up) leaves the player unable to tell
+  // which piece a hint belongs to. Judged on the piece on 13, as above.
+  if (on13) {
+    expect(
+      hintTexts.length <= 2,
+      `[aspect: others] [needs: F03] after picking up the back piece on 13 there are ${hintTexts.length} hints on the board`,
+    ).toBe(true);
+    // A hint for each die the piece can use (the build prompt, chunk-04: "A
+    // hint appears for each playable die when a movable checker is selected").
+    // Run 1790414346's game offered its first die only: the piece on 13 showed
+    // a 3, and its 5 came up only once the 3 was played. Judged on the piece on
+    // 13 only, whose two moves are open on every board.
+    const dice = new Set(hintTexts.flatMap((text) => hintWords(text)));
+    expect(
+      dice.has("3") && dice.has("5"),
+      `[aspect: perdie] [needs: F03] after rolling 3-5 the back piece on 13 shows hints for: ${[...dice].join(", ")}`,
+    ).toBe(true);
+
+    // (switch) selecting a DIFFERENT piece must update the hints to that piece
+    // immediately. The operator: "i want to see the hints appear as soon as i select
+    // any piece and update IMMEDIATELY when i select another piece." A second
+    // movable source is taken from the server's own legal-move list — never a
+    // destination of the first (so the click is a pick-up, not a move), and
+    // never the computer's choice. The hints move to a different set of
+    // destination points, so the change is judged from where the hints sit on
+    // screen, not from die labels (every piece uses the same 3 and 5).
+    const firstPositions = await hintPositions(page);
+    const firstSource = on13 ? 13 : state.legalMoves[0]?.from;
+    const firstDests = new Set(
+      state.legalMoves.filter((m) => m.from === firstSource).map((m) => m.to),
+    );
+    const secondSource = state.legalMoves
+      .map((m) => m.from)
+      .find((f) => f !== firstSource && !firstDests.has(f));
+    if (secondSource !== undefined) {
+      const secondTop = page.locator(
+        `[data-testid="checker"][data-color="white"][data-loc="${locAttr(secondSource)}"]`,
+      );
+      const secondCount = await secondTop.count();
+      if (secondCount > 0) {
+        await playerClick(secondTop.last());
+        await expect
+          .poll(
+            async () => hintsMovedAway(firstPositions, await hintPositions(page)),
+            {
+              message:
+                "[aspect: switch] [needs: REQ-RENDER/die F03] the hints did not update to the newly selected piece within 1000ms",
+              timeout: 1000,
+            },
+          )
+          .toBe(true);
+      }
+    }
+  }
+
+  // Each hint's text is the die it uses (the build prompt: "a hint's visible
+  // text is the die value it would use, or "off" for bearing off"). A label
+  // with no 3 or 5 in it (run 1790641632's "10" and "8", the landing points)
+  // tells the player nothing. One that says more than its die is its own
+  // complaint: the operator, playing run 1790661859's build, found its "2→11" very
+  // confusing. Judged on the back piece's hints, as above.
+  for (const text of hintTexts) {
+    if (text === "off") continue;
+    expect(
+      hintWords(text).some((word) => word === "3" || word === "5"),
+      `[aspect: label] [needs: F03] hint "${text}" names no die it uses`,
+    ).toBe(true);
+    expect(text === "3" || text === "5", `[aspect: extra] [needs: F03] hint "${text}" says more than its die`).toBe(true);
+  }
+});
+
+test("[F45] REQ-HINT — clicking where a piece can go plays the move", async ({ page }) => {
+  // The build prompt: "Clicking one of your checkers shows you where it can
+  // go, and clicking one of those destinations plays that move." The other
+  // move checks click the hint itself. The operator, playing run 1790661859's build,
+  // clicked the point the piece could go to: the game put the piece back down,
+  // and only a small circle drawn half off the bottom of the screen played the
+  // move. A player clicks where the piece will sit — on the destination point,
+  // as far in from the board's edge as the first piece of each stack in that
+  // row (a point's checkers stack from the edge). A game that draws its hint
+  // there, as the reference does, or that plays the move from a click on the
+  // point, passes.
+  //
+  // One spot proves too little: a build that only makes the hint token itself
+  // playable passes it while a click elsewhere on the destination's column
+  // does nothing. So the click lands on three distinct spots up point 11's
+  // column — near its middle-ward end, its centre, and its edge-ward end —
+  // all away from the hint token, which sits at the very edge (~0.9+ of the
+  // way down). A successful click CONSUMES the move (the piece arrives, the
+  // selection clears, the dice advance), so each spot gets its own fresh
+  // setup.
+  for (const f of [0.25, 0.5, 0.75]) {
+    await openApp(page);
+
+    await postJson<ApiState>(page, "/api/new", {});
+    await postJson<ApiState>(page, "/api/debug/roll", { dice: [2, 1] });
+    await page.reload();
+    await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+    await rollAndCheck(page, [2, 1], () => clickOpeningRoll(page));
+    await expect
+      .poll(async () => page.getByTestId("die").count(), "[needs: REQ-RENDER/die F61]")
+      .toBeGreaterThanOrEqual(2);
+
+    // With 2-1 at the opening the back piece on 13 has one move, to the empty 11
+    // (black holds 12). A game that doesn't offer it is the dice checks' finding.
+    const before = await readState(page);
+    expect(before.legalMoves.some((m) => m.from === 13 && m.to === 11), "[needs: G03 G31]").toBe(true);
+
+    const hints = page.getByTestId("hint");
+    const back = page.locator('[data-testid="checker"][data-color="white"][data-loc="13"]');
+    const backCount = await back.count();
+    if (backCount > 0) await playerClickUntilShown(back.last(), hints);
+    await expect.poll(async () => hints.count(), "[needs: REQ-HINT/hint F03 F60]").toBeGreaterThan(0);
+
+    // Point 11 sits in the bottom row: its column runs from the board's middle
+    // (box.y, the triangle's tip) down to the board's edge (box.y + box.height,
+    // where the stack and the hint token sit).
+    const box = await readColumnBox(page, 11);
+    expect(box, "[needs: REQ-TESTID/point REQ-TESTID/checker F03]").not.toBeNull();
+    await page.mouse.click(box!.centerX, box!.y + box!.height * f);
+
+    // A game whose hints play no move either is told that first (F25).
+    await expect
+      .poll(async () => (await readState(page)).points[11], {
+        message: "[needs: F25 F03] the piece did not go to 11",
+        timeout: 3_000,
+      })
+      .toBeGreaterThan(0);
+  }
+});
+
+test("[F60] REQ-HINT — picking a piece up from its column", async ({ page }) => {
+  // The build prompt: "Clicking one of your checkers shows you where it can
+  // go." A player aims at the piece, but a piece is a small disc standing in a
+  // tall column, and a click that lands on the column away from the disc is
+  // still a click on that piece's point: it must pick the piece up, not
+  // silently do nothing. With nothing selected, click point 13's column near
+  // its middle-ward end — its checkers stack from the top edge down, so the
+  // spot is away from every one of them — and require the hints.
+  await openApp(page);
+
+  await postJson<ApiState>(page, "/api/new", {});
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [2, 1] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  await rollAndCheck(page, [2, 1], () => clickOpeningRoll(page));
+  await expect
+    .poll(async () => page.getByTestId("die").count(), "[needs: REQ-RENDER/die F61]")
+    .toBeGreaterThanOrEqual(2);
+
+  // At the 2-1 opening the back piece on 13 is a movable source.
+  const state = await readState(page);
+  expect(state.legalMoves.some((m) => m.from === 13), "[needs: G03 G31]").toBe(true);
+
+  // Point 13 is a top-row point: its checkers stack from the top edge (box.y)
+  // downward. The opening 5-checker stack fills most of the column, so a fixed
+  // fraction lands on a checker. Click just below the deepest checker's bottom
+  // edge instead — a bare stretch of the point's own column (the triangle tip
+  // end, toward the board's middle) — so only the column can pick the piece up.
+  const box = await readColumnBox(page, 13);
+  expect(box, "[needs: REQ-TESTID/point REQ-TESTID/checker]").not.toBeNull();
+  const spot = await page.evaluate(() => {
+    const point = document.querySelector('[data-testid="point"][data-point="13"]');
+    if (!point) return null;
+    const pb = point.getBoundingClientRect();
+    let deepest = pb.y;
+    for (const el of document.querySelectorAll('[data-testid="checker"][data-loc="13"]')) {
+      const r = el.getBoundingClientRect();
+      deepest = Math.max(deepest, r.y + r.height);
+    }
+    // A few pixels below the deepest checker's bottom, clamped inside the column.
+    return { x: pb.x + pb.width / 2, y: Math.min(deepest + 6, pb.y + pb.height - 4) };
+  });
+  expect(spot, "[needs: REQ-TESTID/point]").not.toBeNull();
+  const x = spot!.x;
+  const y = spot!.y;
+
+  // Click the spot the way a player does when the game is not ready yet:
+  // click, look for the hints, click again if none came up — the dice are
+  // still rolling for a moment after they are on screen, and a game that
+  // ignores a click in that moment is right (playerClickUntilShown's rule,
+  // at a bare column spot).
+  const hints = page.getByTestId("hint");
+  for (let i = 0; i < 8; i++) {
+    await page.mouse.click(x, y);
+    try {
+      await expect(hints.first()).toBeAttached({ timeout: 1500 });
+      break;
+    } catch {
+      // not ready yet — a player would click again
+    }
+  }
+
+  await expect
+    .poll(async () => hints.count(), "[needs: REQ-HINT/hint F03]")
+    .toBeGreaterThan(0);
+});
+
+// Black's pieces as the state places them: points, bar and off. Changes only
+// when a black piece moves.
+function blackOf(state: ApiState): string {
+  return JSON.stringify([state.points.map((v) => Math.min(v, 0)), state.bar.black, state.off.black]);
+}
+
+// The opening arrangement, set through the debug seam when a check needs a
+// later turn from the standard position.
+function startingPoints(): number[] {
+  const points = emptyPoints();
+  points[24] = 2;
+  points[13] = 5;
+  points[8] = 3;
+  points[6] = 5;
+  points[1] = -2;
+  points[12] = -5;
+  points[17] = -3;
+  points[19] = -5;
+  return points;
+}
+
+test("[F89] REQ-ROLL — pressing Roll rolls the dice", async ({ page }) => {
+  // WO-LI-HIDDEN-FREEZE-SWEEP: a Roll that does nothing was told as whatever the
+  // gate checked next, in seven places, because the roll helper took "no roll
+  // made" for fine. Roll is pressed in nearly every game the grader plays, so a
+  // dead Roll is its own stage-1 gate; the helper's own finding waits on this
+  // one (fixtures.ts rollAndCheck, the ROLL DEAD marker). Pressed twice, as a
+  // player meets it: at the start of a game, and on the player's turn later on.
+  test.setTimeout(60_000);
+  await openApp(page);
+  // `setUp` names a position the check set through /api/debug/state rather than one reached by play. A page
+  // that will not roll from it is the team's to tell, with what they set and what they saw: run 1795034166
+  // round 10's build never makes phase "roll" (it starts the player's turn as phase "move" with no dice left),
+  // so its Roll stayed off on the set-up turn while it rolled on every later turn of a real game — and the
+  // player was told "I pressed Roll and nothing happened", which no one playing it could meet. The press at
+  // the start of a new game is reached by play: still the player's.
+  const pressRoll = async (when: string, setUp = "") => {
+    const answered = page
+      .waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/roll", { timeout: 8_000 })
+      .catch(() => null);
+    let pressed = true;
+    try {
+      await page.getByTestId("rollBtn").click({ timeout: 5_000 });
+    } catch {
+      pressed = false;
+    }
+    const response = await answered;
+    expect(
+      response !== null,
+      // Roll that could not be pressed because it is hidden or covered is F38's
+      // "I can't find the Roll button", never "I pressed Roll and nothing
+      // happened" (run 1793119227 round 4: the board covered the panel and
+      // both were told).
+      setUp
+        ? `[aspect: seeded] ${pressed ? "" : "[needs: REQ-TESTID/testid.rollBtn F38] "}${setUp}, ${pressed ? "pressing Roll sent no roll" : "the Roll button could not be pressed"}`
+        : pressed
+          ? `${when}, pressing Roll made no roll`
+          : `[needs: REQ-TESTID/testid.rollBtn F38] ${when}, Roll could not be pressed`,
+    ).toBe(true);
+  };
+  await postJson<ApiState>(page, "/api/new", {});
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await pressRoll("at the start of a game");
+
+  await setupState(page, {
+    points: startingPoints(),
+    bar: { white: 0, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await pressRoll(
+    "on my turn later in the game",
+    'with the game set through /api/debug/state to white\'s turn in phase "roll" and the page reloaded',
+  );
+});
+
+test("[F85] REQ-OPENING — a tied opening never freezes the game", async ({ page }) => {
+  // The operator, run 1792269501 round 3: the opening tied 2-2, the page said "Tie —
+  // roll again", he pressed Roll "like it tells me. nothing happens … game is
+  // left in a frozen state" — and "no other problems would appear because the
+  // player cannot get through the opening sequence". Every pause now opens on a
+  // tie (hold_ui.py), so a game that freezes there blocks everything a player
+  // could meet. Stage 1, so it is told before anything past the opening. Not
+  // stuck: a press of Roll, as the tie message invites, gets past it. A page
+  // that rolls again by itself is not stuck either — that it should wait for
+  // the press is F61's [aspect: self].
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [2, 2] });
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [5, 3] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  // The tie landed when the page's own roll was answered 2-2. Not a later read
+  // of the state's dice: run 1793564995 round 2's server answered 2-2, then
+  // cleared the dice while it waited on the tie, and a poll for [2,2] there
+  // told "pressing Roll did nothing" about a tie that a press got past.
+  await rollAndCheck(page, [2, 2], () => clickOpeningRoll(page));
+  // A page that rolls again by itself does so within a few seconds.
+  const pastBy = async (ms: number): Promise<boolean> => {
+    for (const end = Date.now() + ms; Date.now() < end; ) {
+      if ((await readState(page)).phase !== "openingRoll") return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  if (await pastBy(4_000)) return;
+  // It did not: press Roll, as the tie message says.
+  const roll = page.getByTestId("rollBtn");
+  if (await roll.isEnabled().catch(() => false)) await roll.click();
+  expect(await pastBy(4_000), "after a tie, neither the game nor a press of Roll got past the opening roll").toBe(true);
+});
+
+test("[F88] REQ-OPENING — the computer plays when it wins the opening", async ({ page }) => {
+  // The operator, run 1792517825's final build: "we roll, i get 4 ai gets 6, ai goes
+  // first. ok. ai never moves. broken … unplayable." A game that freezes the
+  // moment the computer wins the opening — about half of all games — blocks
+  // everything after it: its own gate, in the first-roll stage.
+  //
+  // The opening as the grader scripts it (the operator, 2026-11-12): three ties, then
+  // the computer wins the fourth roll, 3 against 5, and plays exactly those two
+  // numbers, paced as every computer turn is — its dice readable, then one
+  // move, a pause, the next — and the turn comes back to the player. Run
+  // 1794480585's gameplay build played its opening numbers twice.
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  const rolls: [number, number][] = [
+    [2, 2],
+    [5, 5],
+    [1, 1],
+    [3, 5],
+  ];
+  for (const dice of rolls) await postJson<ApiState>(page, "/api/debug/roll", { dice });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  const before = await readState(page);
+
+  // Three ties: both dice show the same number, nobody moves, and Roll is
+  // there to press again. Whether the page waits for that press is F61's.
+  for (const [n, dice] of rolls.slice(0, 3).entries()) {
+    if (n === 0) {
+      await rollAndCheck(page, dice, () => clickOpeningRoll(page));
+    } else {
+      const canRoll = await page
+        .getByTestId("rollBtn")
+        .click({ trial: true, timeout: 5_000 })
+        .then(() => true, () => false);
+      expect(canRoll, `[aspect: tie] [needs: F85] after ${n} tied opening rolls Roll could not be pressed again`).toBe(true);
+      await rollAndCheck(page, dice, () => page.getByTestId("rollBtn").click());
+    }
+    // A player reads the tie before pressing Roll again: a page still drawing
+    // the last roll may ignore a press (the reference is busy ~0.5 s after one).
+    await waitForBoardSettled(page);
+    await page.waitForTimeout(1_000);
+    const tied = await readState(page);
+    expect(
+      tied.phase === "openingRoll" &&
+        pipsOf(tied).black === pipsOf(before).black &&
+        pipsOf(tied).white === pipsOf(before).white,
+      `[aspect: tiemoved] [needs: F85] after a ${dice[0]}-${dice[1]} tie the game left the opening roll: phase ${tied.phase}`,
+    ).toBe(true);
+  }
+
+  // The fourth roll, watched frame by frame from the press.
+  await waitForBoardSettled(page);
+  await recordFrames(page, "black");
+  await page.waitForTimeout(200);
+  const { at: clickAt, dice: atClick } = await diceNow(page);
+  await rollAndCheck(page, rolls[3], () => page.getByTestId("rollBtn").click());
+
+  // A computer that offers a double during that turn has not "sat there": the
+  // player answers it, as a player would, and the turn goes on. Whether it may
+  // double at all is the cube stage's finding.
+  let answered = false;
+  const cameBack = await expect
+    .poll(
+      async () => {
+        const state = await readState(page);
+        if (state.phase === "doubleOffered" && !answered) {
+          const take = answerButton(page, TAKE);
+          if (await take.isVisible().catch(() => false)) {
+            answered = true;
+            await take.click().catch(() => undefined);
+          }
+        }
+        return state.turn === "white" && state.phase !== "openingRoll";
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true)
+    .then(
+      () => true,
+      () => false,
+    );
+  // A turn that never came back is told as the player saw it: a computer that
+  // moved and then stuck is not one that "never made its move". Run 1795181750
+  // (a11): the computer re-rolled, moved, and hung on "AI is thinking…" with a
+  // die left — a player watched its pieces move.
+  if (!cameBack) {
+    expect(
+      blackOf(await readState(page)) === blackOf(before),
+      "[aspect: stuck] [needs: F89] after three ties and a 3-5 opening the computer moved, then its turn never ended — the turn never came back",
+    ).toBe(true);
+    throw new Error("[needs: F89] after three ties and a 3-5 opening the computer's first turn never ended — the turn never came back");
+  }
+  // Back, but played or not: run 1794902330's server answered the 3-5 with
+  // "black rolled 3, 5 — No moves available" and handed the turn straight back,
+  // Roll live, and the player was told the game "just sat there and I couldn't
+  // do anything".
+  expect(
+    blackOf(await readState(page)) !== blackOf(before),
+    "[aspect: passed] [needs: F89] after a 3-5 opening the computer handed the turn back without moving",
+  ).toBe(true);
+
+  // Exactly the two numbers thrown — no more, no less. Played twice over (16)
+  // has its own line, naming it (the operator, 2026-11-12: run 1794488314's build
+  // read "no more, no less" as dice order and never found its move loop
+  // applying every move twice).
+  const moved = pipsOf(before).black - pipsOf(await readState(page)).black;
+  expect(moved, `[aspect: twice] after a 3-5 opening the computer's first turn moved ${moved} pips — the 3 and the 5 played twice`).not.toBe(16);
+  expect(moved, `[aspect: numbers] after a 3-5 opening the computer's first turn moved ${moved} pips, not 8`).toBe(8);
+
+  // As the player watches it: the dice readable about a second, then one move,
+  // a pause, the next (F62's and F77's rules, here on the opening turn).
+  let seen = await piecesSettled(page, clickAt);
+  for (const deadline = Date.now() + 15_000; seen !== "settled" && Date.now() < deadline; ) {
+    await page.waitForTimeout(250);
+    seen = await piecesSettled(page, clickAt);
+  }
+  const frames = await stopFrames(page);
+  expect(seen, "[aspect: drawn] the computer's opening move never showed on the board").not.toBe("still");
+  const { starts, first } = moveStarts(frames, clickAt);
+  const { readable } = readableDice(frames, clickAt, first, atClick);
+  expect(readable, `[aspect: pace] the computer's opening dice were up ${readable.toFixed(0)} ms before its first move`).toBeGreaterThanOrEqual(800);
+  const gaps = starts.slice(1).map((t, i) => t - starts[i]);
+  expect(
+    starts.length >= 2 && gaps.every((gap) => gap >= 350),
+    `[aspect: between] the computer's two opening moves started ${starts.length < 2 ? "together" : gaps.map((g) => `${g.toFixed(0)} ms`).join(", ") + " apart"}`,
+  ).toBe(true);
+});
+
+test("[F61] REQ-OPENING — the opening roll shows both dice and the winner plays them", async ({ page }) => {
+  // The opening roll as a player meets it: ONE die per side, both on screen;
+  // equal dice tie and the page says to roll again; when the computer's die is
+  // higher, it makes the first move with both numbers and the turn comes back.
+  // The player's own first move with both numbers is F03's and F04's (both
+  // open with a roll the player wins); whose die is whose, and the order of
+  // the pair in the state, are the team's contract (F63).
+  test.setTimeout(120_000);
+  await openApp(page);
+
+  // The dice as they rest once the roll has landed: their drawing unchanged
+  // for 700 ms — a rolling animation changes faces far faster — then counted.
+  const restingDice = async (): Promise<number> => {
+    let last = "";
+    let count = 0;
+    let since = Date.now();
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+      const drawn = await page.locator('[data-testid="die"]').evaluateAll((els) =>
+        els.filter((el) => (el as HTMLElement).checkVisibility()).map((el) => el.outerHTML),
+      );
+      const now = drawn.join("|");
+      if (now !== last) {
+        last = now;
+        count = drawn.length;
+        since = Date.now();
+      } else if (Date.now() - since >= 700) {
+        break;
+      }
+      await page.waitForTimeout(100);
+    }
+    return count;
+  };
+
+  const openWith = async (dice: [number, number]): Promise<ApiState> => {
+    await postJson<ApiState>(page, "/api/new", {});
+    await postJson<ApiState>(page, "/api/debug/roll", { dice });
+    await page.reload();
+    await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+    return readState(page);
+  };
+
+  // ── First, the Roll button can be used at all at the start of a game. The
+  // game opens with the tie queued: a debug queue may outlive a new game (the
+  // golden's does), so nothing is queued that this game does not roll. ──
+  await openWith([4, 4]);
+  // Nothing rolls before the player presses Roll (chunk-04: a new game waits
+  // for the press; nothing rolls by itself when the page opens). Run 1793897465
+  // round 10 played the opening on load, and every check that went on to press
+  // Roll was told "I pressed Roll and nothing happened" about a button greyed
+  // out because the opening was already over.
+  await page.waitForTimeout(2_500);
+  const untouched = await readState(page);
+  expect(
+    untouched.phase === "openingRoll" && (untouched.dice ?? []).length === 0,
+    `[aspect: autoroll] [needs: F01] the opening roll was played before Roll was pressed: phase ${untouched.phase}, dice ${JSON.stringify(untouched.dice)}`,
+  ).toBe(true);
+  const canRoll = await page
+    .getByTestId("rollBtn")
+    .click({ trial: true, timeout: 5_000 })
+    .then(() => true, () => false);
+  expect(canRoll, "[aspect: roll] [needs: F38] the Roll button could not be clicked at the start of a game").toBe(true);
+
+  // ── A tie: 4 and 4. The page says to roll again, anywhere a player can read
+  // it, with any dash; both dice stay up, and the page waits for the player to
+  // press Roll (chunk-04; the operator, 2026-10-18: manual). ──
+  await rollAndCheck(page, [4, 4], () => page.getByTestId("rollBtn").click());
+  // It waits: three seconds on, still the opening roll, still the tie. Whether
+  // a press of Roll then gets past it is F85's. Asked before the words, which
+  // are only looks: run 1793021515's final build rolled the tie again by itself
+  // and was told only that "Tie — roll again" was missing, so the model never
+  // heard about the roll it made for the player. And before the dice colours:
+  // run 1793525853 round 4 "fixed" a frozen tie by rolling it again by itself
+  // and was told only that its opening dice were the wrong colours.
+  // Rolled again means a new roll: the opening is over, or other dice are up.
+  // Dice cleared while the tie waits are not a roll (run 1793564995 round 2:
+  // they were told "rolled again by itself" about a page that waited) — that
+  // the tied dice stay up is [aspect: dice] below.
+  await page.waitForTimeout(3_000);
+  const afterTie = await readState(page);
+  const tieDice = JSON.stringify(afterTie.dice ?? []);
+  expect(
+    afterTie.phase === "openingRoll" && (tieDice === "[4,4]" || tieDice === "[]"),
+    "[aspect: self] the tied opening roll rolled again by itself",
+  ).toBe(true);
+  await expect
+    .poll(async () => (await page.locator("body").innerText()).replace(/\s+/g, " "), {
+      message: "[aspect: tie] the tied opening roll never showed the words Tie — roll again",
+      timeout: 5_000,
+    })
+    .toMatch(/tie\s*[—–-]\s*roll again/i);
+  expect(
+    await restingDice(),
+    "[aspect: dice] [needs: REQ-RENDER/die REQ-TESTID/die] the tied opening roll left fewer than two dice on screen",
+  ).toBeGreaterThanOrEqual(2);
+
+  // ── Then a fresh game, 6 against 5, for the roll the player watches. ──
+  await openWith([6, 5]);
+  await rollAndCheck(page, [6, 5], () => page.getByTestId("rollBtn").click());
+  expect(
+    await restingDice(),
+    "[aspect: dice] [needs: REQ-RENDER/die REQ-TESTID/die] the opening roll left fewer than two dice on screen",
+  ).toBeGreaterThanOrEqual(2);
+
+  // Whose die is whose, at a glance: the dice match the pieces — one drawn like the
+  // computer's (black) pieces, the other like the player's (white) ones. The operator, run
+  // 1792139998 round 3, of two white dice told apart by a green and a red outline:
+  // "there STILL is no black and white die difference for the first roll (comp vs
+  // player)". Judged by each die's median brightness against a white and a black
+  // piece read the same way, so a fill, a gradient or an image all count and an
+  // outline does not. The data-owner tags are the team's (F63), so the pair is read
+  // by colour, not by tag.
+  await waitForBoardSettled(page).catch(() => undefined);
+  const dieBoxes = await page.locator('[data-testid="die"]').evaluateAll((els) =>
+    els
+      .filter((el) => (el as HTMLElement).checkVisibility())
+      .slice(0, 2)
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height };
+      }),
+  );
+  if (dieBoxes.length === 2) {
+    const pieceBox = (color: "white" | "black") =>
+      page.locator(`[data-testid="checker"][data-color="${color}"]`).first().boundingBox();
+    const [a, b, white, black] = await sampleBoxBrightness(page, [
+      ...dieBoxes,
+      await pieceBox("white"),
+      await pieceBox("black"),
+    ]);
+    expect(white !== null && black !== null, "[needs: REQ-RENDER/checker] expected a white and a black piece to read").toBe(true);
+    const likeBlack = (v: number) => Math.abs(v - black!) < Math.abs(v - white!);
+    expect(
+      a !== null && b !== null && likeBlack(a) !== likeBlack(b),
+      `[aspect: match] [needs: REQ-RENDER/die REQ-TESTID/die] the opening dice do not match the pieces: die brightness ${a?.toFixed(2)} and ${b?.toFixed(2)} against white pieces ${white?.toFixed(2)} and black pieces ${black?.toFixed(2)}`,
+    ).toBe(true);
+  }
+
+  // The computer winning the opening is F88's: a game that freezes there blocks
+  // everything after it, so it is its own stage-1 gate.
+});
+
+test("[F63] REQ-OPENING — the opening dice carry whose they are", async ({ page }) => {
+  // The team's side of the opening roll (chunk-01's dice, chunk-04's tags): the
+  // state carries the pair as [playerDie, computerDie], and each die drawn
+  // carries a data-owner of "you" or "ai". Read from the elements themselves,
+  // never from a position in a list.
+  test.setTimeout(60_000);
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [6, 5] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await rollAndCheck(page, [6, 5], () => clickOpeningRoll(page));
+
+  await expect
+    .poll(async () => JSON.stringify((await readState(page)).dice), {
+      message: "[aspect: order] [needs: G31] a 6-5 opening's dice never read [6,5], the player's die first",
+      timeout: 5_000,
+    })
+    .toBe("[6,5]");
+  await expect
+    .poll(
+      async () =>
+        page.locator('[data-testid="die"]').evaluateAll((els) => {
+          const owners = els
+            .filter((el) => (el as HTMLElement).checkVisibility())
+            .map((el) => (el as HTMLElement).dataset.owner ?? "");
+          return owners.includes("you") && owners.includes("ai");
+        }),
+      {
+        message: "[aspect: owner] [needs: F61] the two opening dice never carried data-owner you and ai",
+        timeout: 5_000,
+      },
+    )
+    .toBe(true);
+});
+
+// ── WATCHING A TURN FRAME BY FRAME (F62, F65) ─────────────────────────────
+// A turn the page plays — the computer's, or the player's under Fast Forward —
+// is judged on what is drawn, frame by frame, through the tags the build
+// prompt names only: the dice and one colour's pieces. Whatever the page's
+// structure: pieces in a layer or inside their points, moved or redrawn, dice
+// as numbers or as pips. Positions are read against the board, so a page that
+// shifts as a whole is not a move. The server hands a turn back before the
+// page has finished showing it (grader/meta/README.md "gate on the screen"),
+// so the state only ever says that a turn happened; the frames say how it
+// looked.
+type PaceFrame = { t: number; dice: string; pieces: string; locs: string };
+
+async function recordFrames(page: Page, color: Player): Promise<void> {
+  await page.evaluate((color) => {
+    type Frame = { t: number; dice: string; pieces: string; locs: string };
+    const frames: Frame[] = [];
+    const w = window as unknown as { __pace: { frames: Frame[]; on: boolean } };
+    w.__pace = { frames, on: true };
+    const tick = () => {
+      if (!w.__pace.on) return;
+      const board = document.querySelector('[data-testid="board"]')?.getBoundingClientRect();
+      const ox = board?.x ?? 0;
+      const oy = board?.y ?? 0;
+      // A die by its face — what is drawn inside it — never by its class or
+      // style, which a page changes to dim or mark a used die
+      // (diceNow reads the same way). Run 1794900428's page dropped a
+      // "no-moves" class from the player's spent 3-1 102 ms after End Turn,
+      // and that was read as the computer's roll coming up straight away; its
+      // 6-5 came up at 1075 ms. Its class stands in only for a die drawn
+      // with nothing inside it.
+      const dice = [...document.querySelectorAll('[data-testid="die"]')]
+        .filter((el) => (el as HTMLElement).checkVisibility())
+        .map((el) => el.innerHTML || String(el.getAttribute("class") ?? ""))
+        .join("|");
+      const drawn = [...document.querySelectorAll(`[data-testid="checker"][data-color="${color}"]`)].filter((el) =>
+        (el as HTMLElement).checkVisibility(),
+      );
+      const pieces = drawn
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return `${Math.round((r.x + r.width / 2 - ox) / 4)}:${Math.round((r.y + r.height / 2 - oy) / 4)}`;
+        })
+        .sort()
+        .join("|");
+      const locs = drawn
+        .map((el) => (el as HTMLElement).dataset.loc ?? "")
+        .sort()
+        .join("|");
+      frames.push({ t: performance.now(), dice, pieces, locs });
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, color);
+}
+
+// The page's clock and the dice drawn at this very moment: what was up when a
+// turn began is read at the click itself, never from the last frame recorded
+// before it, which can predate the page drawing it.
+async function diceNow(page: Page): Promise<{ at: number; dice: string }> {
+  return page.evaluate(() => ({
+    at: performance.now(),
+    // By face, as recordFrames reads it.
+    dice: [...document.querySelectorAll('[data-testid="die"]')]
+      .filter((el) => (el as HTMLElement).checkVisibility())
+      .map((el) => el.innerHTML || String(el.getAttribute("class") ?? ""))
+      .join("|"),
+  }));
+}
+
+// "still" until the recorded pieces have moved on screen after `since`, then
+// "moving" until drawing and tags have held still for 1.5 s: "settled".
+async function piecesSettled(page: Page, since: number): Promise<string> {
+  return page.evaluate((since) => {
+    const frames = (window as unknown as { __pace: { frames: { t: number; pieces: string; locs: string }[] } }).__pace
+      .frames;
+    let moved = false;
+    let last = -1;
+    for (let i = 1; i < frames.length; i++) {
+      if (frames[i].t <= since) continue;
+      if (frames[i].pieces !== frames[i - 1].pieces) moved = true;
+      if (frames[i].pieces !== frames[i - 1].pieces || frames[i].locs !== frames[i - 1].locs) last = frames[i].t;
+    }
+    if (!moved) return "still";
+    return performance.now() - last >= 1500 ? "settled" : "moving";
+  }, since);
+}
+
+async function stopFrames(page: Page): Promise<PaceFrame[]> {
+  return page.evaluate(() => {
+    const w = window as unknown as { __pace: { frames: PaceFrame[]; on: boolean } };
+    w.__pace.on = false;
+    return w.__pace.frames;
+  });
+}
+
+// Where each move starts after `since`, read two ways. The tags: each move
+// changes where the pieces are tagged (data-loc) once, and changes within
+// 100 ms are one update. The drawing: the pieces' layout changes after a still
+// spell of 120 ms — the frames of one slide are one move, but two slides with
+// little rest between them read as one, and a slide whose reported position
+// stalls for a few frames can read as two. So the tags time the moves whenever
+// they show two or more; the drawing only when they do not (tags that lag the
+// drawing). The first move is the earliest sign of either.
+function moveStarts(frames: PaceFrame[], since: number): { starts: number[]; first: number } {
+  const startsOf = (key: "pieces" | "locs", quiet: number): number[] => {
+    const found: number[] = [];
+    let last = -Infinity;
+    for (let i = 1; i < frames.length; i++) {
+      if (frames[i].t <= since || frames[i][key] === frames[i - 1][key]) continue;
+      if (frames[i].t - last > quiet) found.push(frames[i].t);
+      last = frames[i].t;
+    }
+    return found;
+  };
+  const drawn = startsOf("pieces", 120);
+  const tagged = startsOf("locs", 100);
+  return { starts: tagged.length >= 2 ? tagged : drawn, first: Math.min(drawn[0] ?? Infinity, tagged[0] ?? Infinity) };
+}
+
+// The roll as the player saw it before `firstMove`: the longest spell after
+// `since` in which the dice drawn stayed the same — something drawn, and not
+// `before`, the dice already up when the turn began. A rolling animation
+// changes faces far faster; a die dimmed as it is used does not shorten the
+// spell before it.
+function readableDice(
+  frames: PaceFrame[],
+  since: number,
+  firstMove: number,
+  before: string,
+): { shown: boolean; readable: number } {
+  let readable = 0;
+  let shown = false;
+  for (let i = 0; i < frames.length; ) {
+    const f = frames[i];
+    let j = i;
+    while (j + 1 < frames.length && frames[j + 1].dice === f.dice) j++;
+    const from = Math.max(f.t, since);
+    const to = Math.min(j + 1 < frames.length ? frames[j + 1].t : frames[j].t, firstMove);
+    if (f.dice !== "" && f.dice !== before && to > from && f.t < firstMove) {
+      shown = true;
+      readable = Math.max(readable, to - from);
+    }
+    i = j + 1;
+  }
+  return { shown, readable };
+}
+
+// A finished turn reached the way the build's own game reaches one: the standard
+// opening, a 3-1 rolled through the server and played there (8/5, 6/5). A finished
+// turn LOADED through the debug route carries no moves, and a page may read it as
+// a roll with no move and hand the turn over by itself: run 1795234131 (a2) did,
+// and F55 and F62 told "End Turn couldn't be pressed" and "the computer's turn
+// never went through" of a build whose End Turn worked in play.
+// The player's roll played out through the server, the first listed move each
+// time, until none is left: a finished turn reached the way the build's own game
+// reaches one, with its moves in the history. Shared by every check that needs
+// the player's finished turn to stay theirs. A finished turn LOADED through the
+// debug route carries no moves, and a page may read it as a roll with no move and
+// hand it over by itself: run 1795290402 (a2) did within a second, F67's first
+// Fast Forward click timed out on a page already showing the computer's turn,
+// and the player was told the double during Fast Forward went wrong.
+async function rollPlayedOut(page: Page, prefer?: (move: Move) => boolean): Promise<ApiState> {
+  let state = await readState(page);
+  for (let guard = 0; guard < 4 && state.turn === "white" && state.phase === "move" && (state.legalMoves?.length ?? 0) > 0; guard++) {
+    const move = (prefer && state.legalMoves.find(prefer)) || state.legalMoves[0]!;
+    state = await postJson<ApiState>(page, "/api/move", { from: move.from, to: move.to, die: move.die });
+  }
+  return state;
+}
+const turnStillPlayers = (state: ApiState) =>
+  state.turn === "white" && state.phase === "move" && state.remainingDice.length === 0 && !state.winner;
+
+async function playOutTheRoll(page: Page, prefer?: (move: Move) => boolean): Promise<ApiState> {
+  const state = await rollPlayedOut(page, prefer);
+  expect(turnStillPlayers(state), "[needs: F25 G23 F47] the roll played through the server did not finish the turn").toBe(true);
+  return state;
+}
+
+// A finished turn in a given position: the player's dice queued and rolled there
+// (seedRolled), then played out.
+async function playRolledTurn(
+  page: Page,
+  body: Record<string, any>,
+  dice: number[],
+  prefer?: (move: Move) => boolean,
+): Promise<ApiState> {
+  await seedRolled(page, body, dice);
+  return playOutTheRoll(page, prefer);
+}
+
+async function playOwnFinishedTurn(page: Page): Promise<void> {
+  await setupState(page, {
+    points: startingPoints(),
+    bar: { white: 0, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
+    cube: { value: 1, owner: null },
+    difficulty: "easy",
+    winner: null,
+    message: "",
+  });
+  await postJson(page, "/api/debug/roll", { dice: [3, 1] });
+  await postJson(page, "/api/roll", {});
+  await postJson(page, "/api/move", { from: 8, to: 5, die: 3 });
+  await postJson(page, "/api/move", { from: 6, to: 5, die: 1 });
+  const played = await readState(page);
+  expect(played.points[5] === 2 && played.remainingDice.length === 0, "[needs: F25 G23 F47] the 3-1 played through the server did not finish the turn").toBe(true);
+}
+
+// The computer's turn as the player watches it, from End Turn: the opening
+// position with the player's roll used up, easy (never doubles), the
+// computer's roll fixed to 6-5 (two moves, always open, no hit). Shared by F62
+// (its dice) and F77 (its moves): a player watching an instant computer sees
+// both at once — no dice and every piece jumping together — so each is told
+// on its own (run 1792224699, round 3: the operator saw both, the model heard only
+// the dice).
+//
+// The server hands the turn back BEFORE the page has finished showing it
+// (grader/meta/README.md "gate on the screen"), so the state only says the
+// turn happened; the frames say how it looked.
+async function watchComputerTurn(page: Page, turnNeeds: string): Promise<{
+  clickAt: number;
+  atClick: string;
+  seen: string;
+  frames: PaceFrame[];
+}> {
+  await openApp(page);
+  await playOwnFinishedTurn(page);
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  const before = await readState(page);
+  await postJson(page, "/api/debug/roll", { dice: [6, 5] });
+
+  // Nothing is recorded until the page has finished drawing what it loaded:
+  // End Turn live and the pieces held still, so the frames before the click
+  // are a still picture of the player's finished turn.
+  const endTurn = page.getByTestId("endTurnBtn");
+  await expect(endTurn, `${turnNeeds} End Turn was not available with nothing left to play`).toBeEnabled();
+  await waitForBoardSettled(page);
+
+  // Record every frame: the dice drawn and where the black pieces sit.
+  await recordFrames(page, "black");
+  await page.waitForTimeout(200);
+  const { at: clickAt, dice: atClick } = await diceNow(page);
+  await press(endTurn, `${turnNeeds} End Turn was not available with nothing left to play`);
+
+  // The turn happened, as the state records it: the computer's pieces moved
+  // and the turn is the player's again.
+  await expect
+    .poll(
+      async () => {
+        const state = await readState(page);
+        return state.turn === "white" && blackOf(state) !== blackOf(before);
+      },
+      { message: `${turnNeeds} after End Turn the computer never moved and handed the turn back`, timeout: 20_000 },
+    )
+    .toBe(true);
+
+  // The same turn as the player watches it: wait until the black pieces on
+  // screen have moved and then held still.
+  let seen = await piecesSettled(page, clickAt);
+  for (const deadline = Date.now() + 15_000; seen !== "settled" && Date.now() < deadline; ) {
+    await page.waitForTimeout(250);
+    seen = await piecesSettled(page, clickAt);
+  }
+  return { clickAt, atClick, seen, frames: await stopFrames(page) };
+}
+
+// When the computer's dice first come up after `since`: the first frame drawing
+// dice that are something, and not `before` (the player's dice still up at the
+// click). Infinity when none ever do.
+function diceUpAt(frames: PaceFrame[], since: number, before: string): number {
+  return frames.find((f) => f.t > since && f.dice !== "" && f.dice !== before)?.t ?? Infinity;
+}
+
+test("[F62] REQ-PACING — the computer's turn is paced so its dice and moves can be followed", async ({ page }) => {
+  test.setTimeout(120_000);
+  // A computer that plays instantly is a computer the player cannot follow.
+  // The operator, run 1792224699 round 3: "there should be 1 sec pause after i click
+  // 'end turn' then followed by dice rolled. then wait one second again. then
+  // ai moves one piece." This gate is the dice: they come up, about a second
+  // after End Turn, and stay readable about a second before the first move.
+  // The spacing of the moves is F77's.
+  const { clickAt, atClick, seen, frames } = await watchComputerTurn(page, "[aspect: turn] [needs: F47 G25]");
+  // Dice before a first move only mean something once a move was drawn.
+  expect(seen, "[aspect: drawn] [needs: REQ-RENDER/checker F02 F03 F45] the computer's pieces never moved on screen").not.toBe("still");
+
+  const { first: firstMove } = moveStarts(frames, clickAt);
+  const { shown, readable } = readableDice(frames, clickAt, firstMove, atClick);
+  expect(shown, "[aspect: dice] [needs: REQ-RENDER/die REQ-TESTID/die F03 F45] the computer's dice never showed before its first move").toBe(true);
+  const upAfter = diceUpAt(frames, clickAt, atClick) - clickAt;
+  expect(upAfter, `[aspect: wait] [needs: F03 F45] the computer's dice came up ${upAfter.toFixed(0)} ms after End Turn`).toBeGreaterThanOrEqual(800);
+  expect(readable, `[aspect: first] [needs: F03 F45] the computer's roll was up ${readable.toFixed(0)} ms before its first move`).toBeGreaterThanOrEqual(800);
+});
+
+test("[F77] REQ-PACING — the computer moves one piece at a time", async ({ page }) => {
+  test.setTimeout(120_000);
+  // The computer's moves as the player watches them: drawn on the board, one
+  // after another, each about half a second after the last (the build prompt,
+  // chunk-04). Its dice are F62's. A turn that never went through, or whose
+  // pieces never moved on screen, is F62's too (its [aspect: turn] and
+  // [aspect: drawn]): both fail together on either, and only F62 tells it.
+  const { clickAt, seen, frames } = await watchComputerTurn(page, "[needs: F62]");
+  expect(seen, "[needs: F62] the computer's pieces never moved on screen").not.toBe("still");
+
+  const { starts } = moveStarts(frames, clickAt);
+  const gaps = starts.slice(1).map((t, i) => t - starts[i]);
+  expect(
+    starts.length >= 2 && gaps.every((gap) => gap >= 350),
+    `[aspect: between] [needs: F03 F45] the computer's moves started ${starts.length < 2 ? "together" : gaps.map((g) => `${g.toFixed(0)} ms`).join(", ") + " apart"}`,
+  ).toBe(true);
+});
+
+test("[G05] REQ-HIGHER-DIE — use higher die", async ({ page }) => {
+  // Judged on screen, as a player meets it. Run 1790627099's server listed the
+  // smaller number's move in this spot while its page showed only the 4, and
+  // the player was told the game "showed me a move with the smaller number":
+  // the gate had read the server's list. One white piece on 13 and a
+  // three-deep black block on 6: with a 3 and a 4 only one number plays, and it
+  // must be the 4. (Three deep, not two: a two-deep block trips the
+  // land-on-a-block mutation M12, whose own line is G04's.)
+  await openApp(page);
+  const points = emptyPoints();
+  points[13] = 1;
+  points[6] = -3;
+  await seedRolled(page, { points, bar: { white: 0, black: 0 }, off: { white: 14, black: 12 }, message: "" }, [3, 4]);
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  // The player picks the piece up and reads the hints it shows. A piece that
+  // shows none offers the smaller number nothing: not this gate's finding.
+  const hints = page.getByTestId("hint");
+  const piece = page.locator('[data-testid="checker"][data-color="white"][data-loc="13"]');
+  if ((await piece.count()) > 0) await playerClickUntilShown(piece.last(), hints, 3);
+  const shown = await hints.evaluateAll((els) =>
+    els
+      .map((el, i) => ({ i, text: (el as HTMLElement).innerText, on: (el as HTMLElement).checkVisibility() }))
+      .filter((hint) => hint.on),
+  );
+  const smaller = shown.find((hint) => hintWords(hint.text).includes("3"));
+  if (smaller) {
+    const board = async () => {
+      const s = await readState(page);
+      return JSON.stringify([s.points, s.bar, s.off]);
+    };
+    const before = await board();
+    await playerClick(hints.nth(smaller.i));
+    const played = await expect
+      .poll(board, { timeout: 2_000 })
+      .not.toBe(before)
+      .then(
+        () => true,
+        () => false,
+      );
+    expect(played, "the game played the smaller number").toBe(false);
+    // The hint is the page's own when the server lists no move for the smaller
+    // number: said by the team, which sees the list. Run 1795229136 (a4-a6): the
+    // server listed only 13>9/4, the page drew 9(4) and 10(3), and the model,
+    // told only "the game still shows me a move for the smaller one", rewrote its
+    // server's (already right) move list three rounds running.
+    const listed = ((await readState(page)).legalMoves ?? []).some((m) => m.die === 3);
+    expect(
+      listed,
+      "[aspect: pagehint] with only the bigger number playable, your server's legalMoves list no move for the smaller one, but the page draws a hint for it",
+    ).toBe(true);
+  }
+  expect(smaller === undefined, "[aspect: offered] the game showed a hint for the smaller number").toBe(true);
+});
+
+test("[G05] REQ-HIGHER-DIE — the server lists only the bigger number when one can be played", async ({ page }) => {
+  // The same spot as the screen check above, read from the server. When the
+  // page plays the smaller number, the fault is usually the server's move list,
+  // and the team says so at the same stage (the operator, 2026-11-19: a server fault
+  // is told by the team too). Run 1795167020's model put a filter on its page,
+  // broke the hints for an ordinary roll, took it out, and played the 3 again —
+  // its server listed 13→10 all along.
+  await openApp(page);
+  const points = emptyPoints();
+  points[13] = 1;
+  points[6] = -3;
+  const rolled = await seedRolled(page, { points, bar: { white: 0, black: 0 }, off: { white: 14, black: 12 }, message: "" }, [3, 4]);
+  const smaller = ((rolled?.legalMoves ?? []) as { from: number; to: number; die: number }[]).filter((m) => m.die === 3);
+  expect(
+    smaller.map((m) => `${m.from}→${m.to}`),
+    "[aspect: listed] on a roll where the two numbers can't both be played, and the bigger one has a move, your server's legalMoves still list moves for the smaller one",
+  ).toEqual([]);
+});
+
+test("[F75] REQ-HINT — the hints are the picked piece's own moves", async ({ page }) => {
+  // Every hint a player meets after picking up a piece is a move of THAT piece.
+  // The operator, run 1792221909 round 2: "i click on piece on top right. it shows hints
+  // as if i rolled 2, 4 … i tried to move a piece and a completely different piece
+  // than what i clicked moved instead." Run 1792190110 round 3: the piece on 13
+  // (legal to 10 and 8) drew its hints on 20 and 22. Its own check, apart from
+  // F04, so these are told in the same round as hints shown before a pick.
+  // Judged by the point under each hint's centre against the server's own legal
+  // moves; white travels down the numbers, so a higher number is behind a piece.
+  test.setTimeout(150_000);
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [5, 3] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await rollAndCheck(page, [5, 3], () => clickOpeningRoll(page));
+  const state = await readState(page);
+  expect(state.legalMoves.length, "[needs: REQ-HINT/hint]").toBeGreaterThan(0);
+
+  const sources = [...new Set(state.legalMoves.map((m) => m.from))].filter((f) => typeof f === "number") as number[];
+  const behind: string[] = [];
+  const astray: string[] = [];
+  // Where each picked piece's hints sat, by point, to tell hints that follow the
+  // piece from hints that never move.
+  const seen: { from: number; at: string }[] = [];
+  let oversized = false;
+  let widestSeen = 0;
+  let pointWidest = 0;
+  for (const from of sources) {
+    // A fresh page per piece, so picking one is never read as a move of another.
+    await page.reload();
+    await waitForBoardSettled(page).catch(() => undefined);
+    const top = page.locator(`[data-testid="checker"][data-color="white"][data-loc="${locAttr(from)}"]`);
+    const n = await top.count();
+    if (n === 0) continue;
+    await playerClick(top.last());
+    await page.waitForTimeout(600);
+    const legalTo = new Set(state.legalMoves.filter((m) => m.from === from).map((m) => m.to));
+    const points = await readPointBoxes(page);
+    const under = (h: { x: number; y: number }) =>
+      points.find((pt) => h.x >= pt.x && h.x <= pt.x + pt.width && h.y >= pt.y && h.y <= pt.y + pt.height)?.num ?? null;
+    // Where each backward hint sits AND where the piece's moves go: run
+    // 1795152917's model read "13→17" alone as a move and reasoned in circles
+    // for two rounds; the destinations make the misplacement plain.
+    const over: number[] = [];
+    const spots = (await settledHintPositions(page)).map(under);
+    seen.push({ from, at: JSON.stringify([...new Set(spots)].sort((a, b) => (a ?? 0) - (b ?? 0))) });
+    for (const at of spots) {
+      if (at !== null && at > from) over.push(at);
+      else if (at === null || !legalTo.has(at)) astray.push(`${from}→${at ?? "no point"}`);
+    }
+    if (over.length > 0) {
+      const goes = [...legalTo].map((to) => (to === 25 ? "off" : String(to)));
+      behind.push(`the piece on ${from}: drawn over ${over.join(", ")}, where its moves go to ${goes.join(", ")}`);
+    }
+    const widest = await page
+      .locator('[data-testid="hint"]')
+      .evaluateAll((els) =>
+        Math.max(0, ...els.filter((el) => (el as HTMLElement).checkVisibility()).map((el) => el.getBoundingClientRect().width)),
+      );
+    const pointWide = points.length ? Math.max(...points.map((pt) => pt.width)) : 0;
+    widestSeen = Math.max(widestSeen, widest);
+    pointWidest = Math.max(pointWidest, pointWide);
+    if (pointWide > 0 && widest > 1.5 * pointWide) oversized = true;
+  }
+  // A hint far bigger than a point has its centre wherever its size throws it,
+  // not where it was put: run 1794248721 rounds 13-15 anchored each hint on the
+  // right point but drew it 654 px across, so its centre landed on no point, and
+  // "hints sit on points it can't move to" was told three rounds running while
+  // the model's placement was right. The size is told first, in this stage (F86
+  // judges hint size too, but sits a stage later); placement is judged after.
+  expect(
+    !oversized,
+    `[aspect: size] [needs: REQ-HINT/hint F03 F84] a hint is ${Math.round(widestSeen)} px across and a point ${Math.round(pointWidest)} px`,
+  ).toBe(true);
+  // Hints that sit in one place whichever piece is picked up don't go "the wrong
+  // way round" — they never follow the piece at all. Run 1795220321 (a2): the
+  // pieces on 13, 8, 6 and 24 all drew their hints over point 13, and the pieces
+  // below 13 were told "its hints go clockwise". Told as what it is, first.
+  const placed = seen.filter((s) => s.at !== "[]");
+  const fixedAt = new Set(placed.map((s) => s.at));
+  expect(
+    !(placed.length >= 2 && placed.length === seen.length && fixedAt.size === 1),
+    `[aspect: fixed] [needs: REQ-HINT/hint F03 F84] whichever piece was picked up, its hints sat over the same points ${[...fixedAt][0] ?? ""} — the pieces on ${placed.map((s) => s.from).join(", ")}`,
+  ).toBe(true);
+  expect(behind, `[aspect: backwards] [needs: REQ-HINT/hint F03 F84] hints drawn over points the picked piece has already passed — ${behind.join("; ")}`).toEqual([]);
+  expect(astray, `[aspect: astray] [needs: REQ-HINT/hint F03 F84] hints on points the picked piece can't reach: ${astray.join(", ")}`).toEqual([]);
+
+});
+
+test("[F76] REQ-HINT — clicking a hint moves the piece that was picked up", async ({ page }) => {
+  // The operator, run 1792221909 round 2: "i tried to move a piece and a completely
+  // different piece than what i clicked moved instead." Its own check, so it is
+  // told in the same round as hints drawn in the wrong places (F75).
+  test.setTimeout(90_000);
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [5, 3] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await rollAndCheck(page, [5, 3], () => clickOpeningRoll(page));
+  await waitForBoardSettled(page).catch(() => undefined);
+  const back = page.locator('[data-testid="checker"][data-color="white"][data-loc="13"]');
+  const backCount = await back.count();
+  if (backCount > 0) {
+    await playerClick(back.last());
+    await page.waitForTimeout(600);
+    const hints = page.getByTestId("hint");
+    if ((await hints.count()) > 0) {
+      const before = await readState(page);
+      await playerClick(hints.first());
+      const moved = await expect
+        .poll(async () => JSON.stringify((await readState(page)).points), { timeout: 3_000 })
+        .not.toBe(JSON.stringify(before.points))
+        .then(() => true, () => false);
+      if (moved) {
+        const after = await readState(page);
+        const left = after.points
+          .map((count, pt) => ({ pt, lost: (before.points[pt] ?? 0) - (count ?? 0) }))
+          .filter((d) => d.pt >= 1 && d.pt <= 24 && d.lost > 0 && (before.points[d.pt] ?? 0) > 0)
+          .map((d) => d.pt);
+        expect(
+          left.includes(13),
+          `[needs: REQ-HINT/hint F03 F45] picked up the piece on 13, clicked its hint, and a piece left ${left.join(", ") || "nowhere"}`,
+        ).toBe(true);
+      }
+    }
+  }
+});
+
+test("[F05] REQ-TURN — no-legal-move notice", async ({ page }) => {
+  await openApp(page);
+
+  const points = emptyPoints();
+  points[23] = -2; // black blocks white entry for die 2 (25-2=23)
+  points[21] = -2; // black blocks white entry for die 4 (25-4=21)
+  // The remaining black checkers — the golden client requires exactly 15 per
+  // side — far from black's home with room ahead: whatever the computer rolls
+  // next, it can move, so its own "no moves" message never stands in for the
+  // player's (run 1791204055: the build wiped the player's notice, the
+  // computer's random 6-5 found no move, and "AI rolled [6, 5] — No moves
+  // available." passed this check).
+  points[2] = -11;
+  points[1] = 14; // 14 white in home; the 15th white checker is on the bar (below)
+
+  await setupState(page, {
+    points,
+    bar: { white: 1, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  // Whose turn the page says it is before the roll — the player's.
+  const yourTurn = ((await page.getByTestId("turnIndicator").textContent()) ?? "").trim();
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [2, 4] });
+  await rollAndCheck(page, [2, 4], () => page.getByTestId("rollBtn").click());
+
+  // A player with no move exists only once pieces come in off the bar where
+  // they should (G06): run 1790633807's entered at the wrong end.
+  const message = page.getByTestId("message");
+  await expect(message).toBeVisible();
+  await expect(message, "[needs: G06 F03 F45]").not.toHaveText(/^\s*$/);
+  await expect(message, "[needs: G06 F03 F45]").toContainText(/no moves available/i);
+  // The player's own notice: shown while the page still says it is the
+  // player's turn. Run 1791204055's build wiped the player's notice and handed
+  // over at once; the computer's random 6-5 then printed "AI rolled [6, 5] — No
+  // moves available.", and that passed this check for a player never told.
+  const turnAtNotice = ((await page.getByTestId("turnIndicator").textContent()) ?? "").trim();
+  // Still the player's turn means the indicator has not been handed to the
+  // computer. It may gain words once dice are up ("Your turn (2 dice)", run
+  // 1791399197's build, whose notice DID show and was told it never did), so
+  // only an indicator that now names the computer counts as moved on.
+  const handedOver =
+    turnAtNotice !== yourTurn &&
+    !turnAtNotice.startsWith(yourTurn) &&
+    /\b(ai|computer|black|opponent|cpu)\b/i.test(turnAtNotice);
+  expect(handedOver, "[needs: G06 F03 F45] the notice showed only after the turn indicator moved on from the player").toBe(false);
+});
+
+test("[F24] REQ-TURN — stuck turn state", async ({ page }) => {
+  await openApp(page);
+
+  const points = emptyPoints();
+  points[23] = -2; // black blocks white entry for die 2 (25-2=23)
+  points[21] = -2; // black blocks white entry for die 4 (25-4=21)
+  // The remaining black checkers, far from black's home with room ahead, so
+  // the computer's next roll always has a move — as in F05.
+  points[2] = -11;
+  points[1] = 14; // 14 white in home; the 15th white checker is on the bar (below)
+
+  await setupState(page, {
+    points,
+    bar: { white: 1, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [2, 4] });
+  await rollAndCheck(page, [2, 4], () => page.getByTestId("rollBtn").click());
+
+  const whiteBarChecker = page.locator(
+    '[data-testid="checker"][data-color="white"][data-loc="bar"]',
+  );
+  await expect(whiteBarChecker, "[needs: F10]").toHaveCount(1);
+  // The bar column div overlays the checker (and it isn't selectable in a stuck
+  // state anyway) — force past the pointer-interception to prove no hints appear.
+  await whiteBarChecker.first().click({ force: true });
+  // Stuck only once pieces come in off the bar where they should (G06): run
+  // 1790633807's entered at the wrong end and showed hints there.
+  await expect(page.getByTestId("hint"), "[needs: G06]").toHaveCount(0);
+
+  // The server's own fields for a stuck turn are its contract: told by the team as
+  // exactly that (the operator 2026-11-23: no untold checks). Run 1794516809's page passed
+  // the turn by itself (F48) while /api/state never set turnOver, and the player
+  // was told "it keeps me stuck or still shows me places to click" — the wrong
+  // voice and the wrong fault.
+  const state = await readState(page);
+  const stuck = `[aspect: stuckstate] [brief] [needs: G06] a turn stuck on the bar answered turnOver ${state.turnOver} with ${Array.isArray(state.legalMoves) ? `${state.legalMoves.length} legal moves` : "no legalMoves list"}`;
+  expect(state.turnOver, stuck).toBe(true);
+  expect(state.legalMoves, stuck).toHaveLength(0);
+});
+
+test("[F47] REQ-TURN — the turn waits for End Turn", async ({ page }) => {
+  // The turn no longer ends by itself after a move: it stays white's until End
+  // Turn is clicked, and Undo keeps working the whole time. A position white
+  // can move in — the opening shape, mirrored — so a forced [6,5] gives two
+  // plies and "done moving" is a real choice, never a stuck turn.
+  test.setTimeout(90_000);
+  await openApp(page);
+
+  const points = emptyPoints();
+  points[1] = 2;
+  points[12] = 5;
+  points[17] = 3;
+  points[19] = 5;
+  points[24] = -2;
+  points[13] = -5;
+  points[8] = -3;
+  points[6] = -5;
+
+  await setupState(page, {
+    points,
+    bar: { white: 0, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [6, 5] });
+  await rollAndCheck(page, [6, 5], () => page.getByTestId("rollBtn").click());
+  // The roll lands and white has a move to play.
+  await expect
+    .poll(
+      async () => (await readState(page)).legalMoves.length,
+      "[needs: F03] [needs: F25] [needs: F45] the forced [6,5] roll gave white no move",
+    )
+    .toBeGreaterThan(0);
+
+  // The turn is not over while moves are left to play. Run 1795164653's server
+  // said turnOver right after this roll (6-5, four moves listed); the play-out
+  // below stopped where the server said, played nothing, and the player was told
+  // "the Undo button is greyed out for the full duration of the turn" of a turn
+  // with no move in it — its Undo worked once a move was made (played by hand).
+  // The team says what the server said, at this stage (the operator, 2026-11-19: a
+  // server fault is told by the team too).
+  // One rule, both halves told by one line (the late half is below): turnOver is
+  // false while a move is left to play and true once none is.
+  const rolled = await readState(page);
+  expect(
+    rolled.turnOver,
+    "[aspect: turnover] [needs: F03 F25 F45] right after the roll, with moves still to play, your server's state already says turnOver is true",
+  ).toBe(false);
+
+  // Play the plies the way a player does — pick up a movable checker, click a
+  // hint — until the dice are used up (or the server says the turn is over): a
+  // player stops when there is nothing left to play, not on a flag. Run
+  // 1794853654 round 3's build left turnOver false with no dice left, the loop
+  // played on, and the model was told "my turn ends by itself" of a turn that
+  // held — End Turn waiting, the computer still. Playing the roll out is this
+  // check's SETUP, not its subject: when it fails, the turn was never judged,
+  // so it is scored and never told, and hands no brief back: F47's excerpt is
+  // how the turn ends, not how a roll is played (stages.py is_brief).
+  const hints = page.getByTestId("hint");
+  // Played out when nothing is left to play — no die, or no move listed — as a
+  // player stops; a turnOver flag with moves still listed does not stop a player.
+  const playedOut = (s: ApiState): boolean => s.remainingDice.length === 0 || s.legalMoves.length === 0;
+  // Whether Undo was live after each move of the first play-out: greyed out
+  // the whole turn and greyed out only once the turn waits are different
+  // faults, told apart below (the operator, 2026-11-20).
+  const undoBtn = page.getByTestId("undoBtn");
+  const undoAfterMove: boolean[] = [];
+  const playUntilTurnOver = async (told: string, watchUndo = false): Promise<void> => {
+    for (let i = 0; i < 4; i++) {
+      const s = await readState(page);
+      if (playedOut(s)) return;
+      // A player picks up what is drawn once it holds still, as F33 does: run
+      // 1794892305 round 8's pick-up after Undo, clicked while the board still
+      // redrew under the grader's load, found no checker, and the turn's brief
+      // was handed back to a build whose turn waited and whose Undo worked
+      // (6 of 6, then 16 of 16 passes run alone).
+      await waitForBoardSettled(page).catch(() => undefined);
+      const picked = await pickUpAPiece(page, hints);
+      expect(picked, `[setup] [needs: F03] [needs: F25] [needs: F45] ${told}: no checker could be picked up`).toBe(true);
+      await expect(hints.first(), "[setup] [needs: F03]").toBeVisible();
+      await playerClick(hints.first());
+      await expect
+        .poll(
+          async () => (await readState(page)).remainingDice.length,
+          `[setup] [needs: F25 F45] ${told}: a move did not consume a die`,
+        )
+        .toBeLessThan(s.remainingDice.length);
+      if (watchUndo) {
+        undoAfterMove.push(await expect(undoBtn).toBeEnabled({ timeout: 1_500 }).then(() => true, () => false));
+      }
+    }
+    await expect
+      .poll(async () => playedOut(await readState(page)), `[setup] [needs: F25 F45] ${told}: white could not finish the roll's moves`)
+      .toBe(true);
+  };
+  await playUntilTurnOver("playing the roll", true);
+
+  // The heart of the gate: wait as long as a player takes to find the button and
+  // the turn must still be white's, still in the move phase — it ends only at End
+  // Turn. 1.6 s let run 1791408711's build, which ends the turn by itself after
+  // exactly 2 s, pass; a player reading "End your turn" takes longer than that.
+  await page.waitForTimeout(4000);
+  const held = await readState(page);
+  expect(held.turn, "[brief] [needs: F45] the turn ended by itself before End Turn was clicked").toBe("white");
+  expect(held.phase, "[brief] [needs: F45] the turn left the move phase by itself").toBe("move");
+
+  // The other half of the turnOver rule: once nothing is left to play, the turn
+  // waits with turnOver true. That is the state every later check LOADS for a
+  // finished turn instead of playing to it (F55, F62, F77, F94, the cube's
+  // checks), and each of their End Turn steps [needs: F47] — so this is where a
+  // build proves its own play reaches that state. Run 1795174621's server kept
+  // turnOver false with every die used, and its page ended the turn whenever
+  // turnOver was true: in play the two cancelled and End Turn worked, but the
+  // loaded state stuck, and the player was told "End Turn couldn't be pressed"
+  // and "the computer's turn never went through" of a build a player could play.
+  // After the held checks, so a turn that ends by itself is told as that.
+  expect(
+    held.turnOver,
+    "[aspect: turnover] [needs: F03 F25 F45] after the last move is played, with nothing left to play, your server's state still says turnOver is false",
+  ).toBe(true);
+
+  // Undo still works while the turn waits: the button is live and clicking it
+  // gives a die back. Greyed out after every move and while the turn waits is
+  // told as that — The operator, 2026-11-20, playing run 1795161793's build: "the undo
+  // button is physically greyed out for the full duration of the turn. I cannot
+  // ever undo my turns". Live after a move but greyed once the turn waits is a
+  // partial fault with its own line, so neither is told of the other.
+  const undoLive = await expect(undoBtn)
+    .toBeEnabled()
+    .then(
+      () => true,
+      () => false,
+    );
+  if (!undoLive && undoAfterMove.length > 0) {
+    expect(
+      undoAfterMove.some(Boolean),
+      "[brief] [aspect: undonever] [needs: G23 F45] the Undo button was greyed out after every move of the turn and while it waited",
+    ).toBe(true);
+    expect(undoLive, "[brief] [aspect: undo] [needs: G23 F45] Undo was live after a move, but greyed out once the turn waited").toBe(true);
+  }
+  const beforeUndo = (await readState(page)).remainingDice.length;
+  await undoBtn.click();
+  await expect
+    .poll(async () => (await readState(page)).remainingDice.length, "[aspect: undoclick] [needs: G23 F45] Undo did not give a die back")
+    .toBeGreaterThan(beforeUndo);
+
+  // Undo cleared turnOver, so play the die back to finish the turn again — then
+  // End Turn, and only End Turn, hands over to the computer.
+  await playUntilTurnOver("after Undo");
+
+  const endTurnBtn = page.getByTestId("endTurnBtn");
+  await expect(endTurnBtn, "[brief] [aspect: endturnoff] [needs: F45] End Turn was not available once the moves were done").toBeEnabled();
+  const beforeEnd = await readState(page);
+  const blackAt = (s: ApiState): string =>
+    JSON.stringify([s.points.map((n) => Math.min(n, 0)), s.bar.black, s.off.black]);
+  await press(endTurnBtn, "[brief] [aspect: endturnoff] [needs: F45] End Turn was not available once the moves were done");
+
+  // The turn hands over: the server shows black (the computer) at some point
+  // after End Turn, or the computer's turn has already been played — its pieces
+  // moved, or the turn is back to white for a new roll. Run 1792224699's build
+  // plays the whole computer turn inside the End Turn request, so black never
+  // shows in a poll; the operator played it and End Turn handed over fine (round 3).
+  // Too fast a computer turn is F62's complaint, never this one.
+  let sawBlack = false;
+  await expect
+    .poll(
+      async () => {
+        const s = await readState(page);
+        if (s.turn === "black" || blackAt(s) !== blackAt(beforeEnd) || (s.turn === "white" && s.phase === "roll")) {
+          sawBlack = true;
+        }
+        return sawBlack;
+      },
+      { message: "[aspect: endturn] [needs: F45] the turn did not hand over to the computer after End Turn", timeout: 6000 },
+    )
+    .toBe(true);
+});
+
+test("[F48] REQ-TURN — a no-move roll passes by itself", async ({ page }) => {
+  // The operator, 2026-10-17: "if no dice can be played, dim them, pause for 1
+  // second. then progress to the next players turn." The dimmed dice are how
+  // the player sees why they could not move; the pause is the moment to take it
+  // in. Judged on screen: the same 6-5 is rolled once where it plays (the dice
+  // as they look live) and once where it cannot (white's whole stack on 12,
+  // black holding 6 and 7: neither 12->6 nor 12->7, off the bar), and the
+  // no-move dice must be visibly fainter than the live ones — dimmed or greyed,
+  // whatever colours the dice use. Then the turn holds about a second and
+  // passes to the computer with no End Turn click.
+  test.setTimeout(60_000);
+  await openApp(page);
+  const shownDice = async () =>
+    page.getByTestId("die").evaluateAll((els) =>
+      els
+        .filter((el) => (el as HTMLElement).checkVisibility())
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        }),
+    );
+
+  // The live 6-5: the opening layout, where both numbers play.
+  await setupState(page, {
+    points: startingPoints(),
+    bar: { white: 0, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [6, 5] });
+  await rollAndCheck(page, [6, 5], () => page.getByTestId("rollBtn").click());
+  await expect.poll(async () => (await shownDice()).length, "[needs: REQ-RENDER/die F39]").toBe(2);
+  await page.waitForTimeout(1_000);
+  const live = (await sampleBoxContrast(page, await shownDice())) as number[];
+
+  // The no-move 6-5.
+  const points = emptyPoints();
+  points[12] = 15;
+  points[6] = -2;
+  points[7] = -2;
+  points[24] = -11;
+  await setupState(page, {
+    points,
+    bar: { white: 0, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  const before = await readState(page);
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [6, 5] });
+  await rollAndCheck(page, [6, 5], () => page.getByTestId("rollBtn").click());
+  const rolledAt = Date.now();
+
+  // The dice stay up, dimmed, inside the second the turn must hold. A roll
+  // animates before it settles (run 1793559891 round 2: the dice faded in for
+  // ~0.6 s, then sat at opacity 0.3 — a single read at 0.5 s caught the fade-in
+  // and told a player "they don't dim" about dice that did). A fade-in is not a
+  // dim either, so judge the dice once they have settled — no animation running
+  // and the same look twice in a row — while the turn is still white, within
+  // 1.5 s of the roll.
+  await page.waitForTimeout(300);
+  const dead = await shownDice();
+  expect(dead.length, "[aspect: dim] [needs: REQ-RENDER/die F39 F03 F45] the dice of a roll with no move left the screen").toBeGreaterThan(0);
+  const diceLook = () =>
+    page.getByTestId("die").evaluateAll((els) =>
+      els
+        .filter((el) => (el as HTMLElement).checkVisibility())
+        .map((el) => {
+          const s = getComputedStyle(el);
+          return el.getAnimations().length > 0 ? "moving" : `${s.opacity} ${s.filter} ${s.backgroundColor} ${s.color}`;
+        })
+        .join("|"),
+    );
+  let look = await diceLook();
+  while (Date.now() - rolledAt < 1_500) {
+    await page.waitForTimeout(100);
+    if ((await shownDice()).length === 0 || (await readState(page)).turn !== "white") break;
+    const now = await diceLook();
+    if (now === look && !now.includes("moving")) break;
+    look = now;
+  }
+  const settled = await shownDice();
+  const liveFaintest = Math.min(...live);
+  const brightest = settled.length ? Math.max(...((await sampleBoxContrast(page, settled)) as number[])) : Infinity;
+  expect(
+    brightest <= 0.8 * liveFaintest,
+    `[aspect: dim] [needs: F03 F45] the dice of a roll with no move stand out ${brightest.toFixed(2)} against ${liveFaintest.toFixed(2)} for a live roll`,
+  ).toBe(true);
+
+  // It holds for about a second: the turn is still white's.
+  await page.waitForTimeout(Math.max(0, 900 - (Date.now() - rolledAt)));
+  expect((await readState(page)).turn, "[aspect: pause] [needs: F03 F45] the turn passed before a second had gone by").toBe("white");
+
+  // Then it passes by itself: without touching End Turn, the computer's turn
+  // happens — black shows in a poll, or the computer's pieces have moved, or
+  // the turn is back to white for a new roll (a server that plays the whole
+  // computer turn in one request never shows black; F47, run 1792224699).
+  const blackAt = (s: ApiState): string =>
+    JSON.stringify([s.points.map((n) => Math.min(n, 0)), s.bar.black, s.off.black]);
+  let passed = false;
+  await expect
+    .poll(
+      async () => {
+        const s = await readState(page);
+        if (s.turn === "black" || blackAt(s) !== blackAt(before) || (s.turn === "white" && s.phase === "roll")) {
+          passed = true;
+        }
+        return passed;
+      },
+      { message: "[needs: F03 F45] the no-move turn never passed to the computer by itself", timeout: 6000 },
+    )
+    .toBe(true);
+
+  // And the computer's turn that follows finishes: the turn comes back to white
+  // for a new roll, the computer offers a double, or the game ends. "Black shows"
+  // above is the hand-over, not the turn: run 1795234131 (a2) passed its no-move
+  // roll and the computer then sat on "rolling…" for good — a freeze a player
+  // meets — while this check passed and stage 12 told End Turn faults instead.
+  const finished = await expect
+    .poll(
+      async () => {
+        const s = await readState(page);
+        return (s.turn === "white" && s.phase === "roll") || s.phase === "doubleOffered" || !!s.winner;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true)
+    .then(
+      () => true,
+      () => false,
+    );
+  expect(finished, "[aspect: stuck] [needs: F03 F45] after the no-move roll passed, the computer's turn never finished").toBe(true);
+});
+
+// [F93] REQ-PACING — the dice land and stay still after a roll. The operator,
+// 2026-11-12: "enforce a brief pause after the roll 1 second delay before any
+// subsequent action … so that we eliminate the spam and ensure that the
+// benchmarked product produced is legible to a human observing it." A build
+// that redrew its dice with their rolling animation every 200 ms kept them
+// tumbling from the roll until the first move (run 1794159080's last build,
+// played in a browser), and a game that moves on by itself the moment the dice
+// land is one a player can't follow. The computer's turn (F62), the opening
+// (F88) and a roll with no move (F48) are timed on their own; this is the
+// player's ordinary roll. Read from the screen — the dice's own boxes and
+// pixels, and where the player's pieces are tagged — never from animation
+// events: the dice may roll in any way, once, and then must sit still.
+test("[F93] REQ-PACING — the dice land and stay still after a roll", async ({ page }) => {
+  test.setTimeout(60_000);
+  await openApp(page);
+  await setupState(page, {
+    points: startingPoints(),
+    bar: { white: 0, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await waitForBoardSettled(page).catch(() => undefined);
+
+  const look = () =>
+    page.evaluate(() => {
+      const dice = [...document.querySelectorAll('[data-testid="die"]')]
+        .filter((el) => (el as HTMLElement).checkVisibility())
+        .map((el) => el.getBoundingClientRect())
+        .filter((r) => r.width > 2 && r.height > 2);
+      const pieces = [...document.querySelectorAll('[data-testid="checker"][data-color="white"]')]
+        .map((el) => (el as HTMLElement).dataset.loc ?? "")
+        .sort()
+        .join("|");
+      if (dice.length === 0) return { boxes: "", clip: null, pieces };
+      const pad = 4;
+      const x = Math.max(0, Math.min(...dice.map((r) => r.x)) - pad);
+      const y = Math.max(0, Math.min(...dice.map((r) => r.y)) - pad);
+      const right = Math.min(innerWidth, Math.max(...dice.map((r) => r.right)) + pad);
+      const bottom = Math.min(innerHeight, Math.max(...dice.map((r) => r.bottom)) + pad);
+      const boxes = dice.map((r) => `${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)},${Math.round(r.height)}`).join("|");
+      return { boxes, clip: { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) }, pieces };
+    });
+
+  const beforeRoll = (await look()).pieces;
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [6, 5] });
+  await rollAndCheck(page, [6, 5], () => page.getByTestId("rollBtn").click());
+  const rolledAt = Date.now();
+  await page.mouse.move(1, 1);
+
+  // Three seconds of the dice and the player's pieces as drawn, about ten
+  // times a second.
+  const samples: { t: number; boxes: string; pixels: Buffer | null; pieces: string }[] = [];
+  while (Date.now() - rolledAt < 3_000) {
+    const now = await look();
+    const pixels = now.clip ? await page.screenshot({ clip: now.clip, animations: "allow" }).catch(() => null) : null;
+    samples.push({ t: Date.now() - rolledAt, boxes: now.boxes, pixels, pieces: now.pieces });
+    await page.waitForTimeout(80);
+  }
+
+  expect(
+    samples.some((s) => s.boxes !== ""),
+    "[needs: REQ-RENDER/die F39] no dice showed after the roll",
+  ).toBe(true);
+  const movedAt = samples.find((s) => s.t < 1_000 && s.pieces !== beforeRoll)?.t;
+  expect(
+    movedAt === undefined,
+    `[aspect: moved] the player's pieces moved by themselves ${movedAt ?? 0} ms after the roll`,
+  ).toBe(true);
+
+  // The longest spell in which the dice kept the same boxes and the same pixels.
+  let still = 0;
+  for (let i = 0; i < samples.length; ) {
+    let j = i;
+    const same = (a: (typeof samples)[number], b: (typeof samples)[number]) =>
+      a.boxes !== "" && a.boxes === b.boxes && a.pixels !== null && b.pixels !== null && a.pixels.equals(b.pixels);
+    while (j + 1 < samples.length && same(samples[i], samples[j + 1])) j++;
+    if (samples[i].boxes !== "") still = Math.max(still, samples[j].t - samples[i].t);
+    i = j + 1;
+  }
+  expect(
+    still >= 900,
+    `[aspect: still] [needs: REQ-RENDER/die F39] in the 3 s after the roll the dice never held still for a second (longest ${still} ms)`,
+  ).toBe(true);
+});
+
+// [F94] REQ-TURN — when the computer can't move, the turn comes back to roll.
+// The operator, 2026-11-13, playing run 1794560336's build: "when i had hit the AI and
+// it went to the bar, it rolled dice that it couldn't move. the turn should have
+// returned to me, but it didn't. and now the game is left in a frozen unplayable
+// state." Its server handed the turn back with the computer's dice left for the
+// player to play and no roll to make; G32 (the team's check of the same spot)
+// saw only that the turn was white's and the message right. Judged as the player
+// meets it: their turn played out, End Turn pressed, the computer on the bar with
+// every way in held and a 6-5 it cannot use — then Roll must come back, and
+// pressing it must give the player a fresh roll of their own.
+test("[F94] REQ-TURN — when the computer can't move, the turn comes back to roll", async ({ page }) => {
+  test.setTimeout(60_000);
+  await openApp(page);
+  const points = emptyPoints();
+  for (let p = 1; p <= 6; p++) points[p] = 2; // white holds every way in
+  points[13] = 3;
+  points[12] = -5;
+  points[17] = -3;
+  points[19] = -6; // 14 black on the board, the 15th on the bar
+  // The player's turn PLAYED, not loaded: a 2-1 rolled and played through the
+  // server from the 13 (13→11→10), so the closed home board stays closed and the
+  // page sees a turn with its moves in the history (a loaded finished turn with
+  // none could be passed by the page itself). The computer's 6-5 is queued after
+  // the player's roll has taken its own dice.
+  await playRolledTurn(
+    page,
+    { points, bar: { white: 0, black: 1 }, off: { white: 0, black: 0 }, cube: { value: 1, owner: null }, difficulty: "easy", winner: null, message: "" },
+    [2, 1],
+    (move) => move.from > 6,
+  );
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [6, 5] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await waitForBoardSettled(page).catch(() => undefined);
+  await press(page.getByTestId("endTurnBtn"), "[aspect: noend] [needs: F47] End Turn was not available with nothing left to play");
+
+  // The computer rolls, cannot come in, says so, and hands the turn back.
+  const roll = page.getByTestId("rollBtn");
+  await expect(roll, "[needs: G39] after the computer's stuck turn Roll never came back to the player").toBeEnabled({ timeout: 10_000 });
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [2, 1] });
+  await press(roll, "[needs: G39] after the computer's stuck turn Roll never came back to the player", 10_000);
+  await expect
+    .poll(
+      async () => {
+        const s = await readState(page);
+        return s.turn === "white" && JSON.stringify([...s.remainingDice].sort()) === "[1,2]";
+      },
+      { message: "[needs: G39] pressing Roll after the computer's stuck turn gave the player no roll of their own", timeout: 5_000 },
+    )
+    .toBe(true);
+});
+
+// [F95] REQ-BEAROFF — clicking the off tray bears the picked piece off. The operator,
+// 2026-11-13, playing run 1794565288's build to the end: "when clicking on the
+// final pieces moving them to the off tray, i'm not able to click in the
+// rectangle that is the off tray and i have to directly click on the hint. had
+// this same issue before with piece movement." F45's class: a move plays
+// wherever a player clicks for it, and for bearing off that is the off tray.
+// Clicked inside the tray clear of every hint, so the tray itself is judged.
+test("[F95] REQ-BEAROFF — clicking the off tray bears the picked piece off", async ({ page }) => {
+  test.setTimeout(60_000);
+  await openApp(page);
+  const points = emptyPoints();
+  for (let p = 1; p <= 5; p++) points[p] = 3; // all fifteen home
+  for (let p = 19; p <= 23; p++) points[p] = -3;
+  await seedRolled(
+    page,
+    { points, bar: { white: 0, black: 0 }, off: { white: 0, black: 0 }, cube: { value: 1, owner: null }, message: "" },
+    [5, 4],
+  );
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await waitForBoardSettled(page).catch(() => undefined);
+
+  const hints = page.getByTestId("hint");
+  const piece = page.locator('[data-testid="checker"][data-color="white"][data-loc="5"]');
+  const count = await piece.count();
+  expect(count, "[needs: F03 F25] no piece on 5 to pick up").toBeGreaterThan(0);
+  await playerClickUntilShown(piece.last(), hints);
+  await expect.poll(async () => hints.count(), "[needs: REQ-HINT/hint F03 F60 G08 E03]").toBeGreaterThan(0);
+
+  // Where the "off" hint is drawn: on the off tray, where the piece goes and
+  // where a click anywhere bears it off (chunk-04-l3: "clicking any[where] in
+  // the off tray bears it off, the same as its 'off' hint"). Judged from
+  // 2026-11-19 (the operator left where it belongs to judgement; the reference draws
+  // it in the tray), as F75 and F10 judge where a move's hint sits. No "off"
+  // hint at all is the hint checks' finding, not this one; hints drawn too big or
+  // on the wrong points everywhere are F75's (two of three corpus builds it fired on).
+  const offHintOnTray = await page.evaluate(() => {
+    const trays = ['[data-testid="off-tray"]', '[data-testid="off-you"]']
+      .map((sel) => document.querySelector(sel)?.getBoundingClientRect())
+      .filter((r): r is DOMRect => !!r && r.width >= 2 && r.height >= 2);
+    const off = [...document.querySelectorAll<HTMLElement>('[data-testid="hint"]')].filter(
+      (el) => el.checkVisibility() && /\boff\b/i.test(el.innerText),
+    );
+    if (trays.length === 0 || off.length === 0) return null;
+    return off.every((el) => {
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      return trays.some((t) => x >= t.left - 4 && x <= t.right + 4 && y >= t.top - 4 && y <= t.bottom + 4);
+    });
+  });
+  if (offHintOnTray !== null) {
+    expect(offHintOnTray, "[aspect: offhint] [needs: REQ-HINT/hint F03 F75] the bear-off hint is drawn off the off tray").toBe(true);
+  }
+
+  // A spot in the tray clear of every hint, the player's end first.
+  const spot = await page.evaluate(() => {
+    const tray = document.querySelector('[data-testid="off-tray"]')?.getBoundingClientRect();
+    if (!tray || tray.width < 2 || tray.height < 2) return null;
+    const taken = [...document.querySelectorAll('[data-testid="hint"]')]
+      .filter((el) => (el as HTMLElement).checkVisibility())
+      .map((el) => el.getBoundingClientRect());
+    for (const fy of [0.85, 0.7, 0.55, 0.4, 0.25, 0.15]) {
+      for (const fx of [0.5, 0.25, 0.75]) {
+        const x = tray.x + tray.width * fx;
+        const y = tray.y + tray.height * fy;
+        if (!taken.some((h) => x >= h.left - 4 && x <= h.right + 4 && y >= h.top - 4 && y <= h.bottom + 4)) return { x, y };
+      }
+    }
+    return null;
+  });
+  expect(spot, "[needs: REQ-RENDER/off-tray] no part of the off tray clear of the hints to click").not.toBeNull();
+  await page.mouse.click(spot!.x, spot!.y);
+  await expect
+    .poll(async () => (await readState(page)).off.white, {
+      message: "clicking the off tray did not bear the picked piece off",
+      timeout: 3_000,
+    })
+    .toBe(1);
+});
+
+// [F92] REQ-TURN — one roll per turn. The operator, 2026-11-12, playing run
+// 1794488314's build: after he played his whole roll, End Turn showed "like it
+// should but also the 'roll' button … when i click it, it allows me to roll
+// again and play again effectively bypassing the computer's turn". The
+// reference keeps Roll off and ignores a roll asked for once the dice are down.
+test("[F92] REQ-TURN — one roll per turn", async ({ page }) => {
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [5, 3] });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await rollAndCheck(page, [5, 3], () => clickOpeningRoll(page));
+  // Play every die by clicking a hint, as a player does.
+  for (let guard = 0; guard < 6; guard++) {
+    const state = await readState(page);
+    if (state.turn !== "white" || (state.remainingDice ?? []).length === 0 || (state.legalMoves ?? []).length === 0) break;
+    const left = state.remainingDice.length;
+    await revealHints(page, state.legalMoves);
+    await playerClick(page.getByTestId("hint").first());
+    await expect
+      .poll(async () => (await readState(page)).remainingDice?.length ?? 0, {
+        message: "[needs: F45] a click on a hint did not play the move",
+        timeout: 5_000,
+      })
+      .toBeLessThan(left);
+  }
+  const played = await readState(page);
+  expect(
+    played.turn === "white" && (played.remainingDice ?? []).length === 0,
+    "[needs: F45] the opening roll could not be played out by clicking",
+  ).toBe(true);
+  await waitForBoardSettled(page);
+  // A roll now must change nothing: a page that rolls again shows new dice to
+  // play. (No decoy is queued — a correct build never takes it, and it would be
+  // left behind for the next roll.)
+  const roll = page.getByTestId("rollBtn");
+  const pressable = await roll.click({ trial: true, timeout: 1_000 }).then(() => true, () => false);
+  if (pressable) {
+    await roll.click();
+    await page.waitForTimeout(1_500);
+  }
+  const after = await readState(page);
+  expect(
+    after.turn === "white" &&
+      (after.remainingDice ?? []).length === 0 &&
+      JSON.stringify(after.dice) === JSON.stringify(played.dice),
+    `after the roll was played out, pressing Roll rolled again: dice ${JSON.stringify(after.dice)}, ${(after.remainingDice ?? []).length} to play`,
+  ).toBe(true);
+});
+
+test("[F06] REQ-PIPUI — pip display cross-checked vs engine", async ({ page }) => {
+  await openApp(page);
+
+  await postJson<ApiState>(page, "/api/new", {});
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  const openingDomWhite = await readInt(page.getByTestId("pipWhite"));
+  const openingDomBlack = await readInt(page.getByTestId("pipBlack"));
+  const openingState = await readState(page);
+
+  expect(openingDomWhite, "[aspect: sync]").toBe(openingState.pip.white);
+  expect(openingDomBlack, "[aspect: sync]").toBe(openingState.pip.black);
+  // What a player can check: the numbers on screen against the pieces on the
+  // board. A wrong opening counted right is G01's complaint, never this one
+  // (run 1790349319: 139/178 on a wrong setup was told "the wrong numbers for
+  // the position on the board"); a wrong counting formula is G02's.
+  const openingPips = pipsOf(openingState);
+  expect(openingDomWhite, "[aspect: value] [needs: G02]").toBe(openingPips.white);
+  expect(openingDomBlack, "[aspect: value] [needs: G02]").toBe(openingPips.black);
+
+  const custom = emptyPoints();
+  custom[6] = 5;
+  custom[4] = 5;
+  custom[19] = -5;
+  custom[21] = -5;
+
+  await setupState(page, {
+    points: custom,
+    bar: { white: 0, black: 0 },
+    off: { white: 5, black: 5 },
+    turn: "white",
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  const customDomWhite = await readInt(page.getByTestId("pipWhite"));
+  const customDomBlack = await readInt(page.getByTestId("pipBlack"));
+  const customState = await readState(page);
+
+  expect(customDomWhite, "[aspect: sync]").toBe(customState.pip.white);
+  expect(customDomBlack, "[aspect: sync]").toBe(customState.pip.black);
+});
+
+test("[F34] REQ-CUBEUI — a new game shows the cube at one, centered", async ({ page }) => {
+  await openApp(page);
+
+  await postJson<ApiState>(page, "/api/new", {});
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  await expect(page.getByTestId("cubeVal"), "[aspect: value] a new game's cube does not read 1").toHaveText(showsNumber(1));
+  const openingOwnerLabel = await page.getByTestId("cubeOwner").innerText();
+  expect(openingOwnerLabel.toLowerCase(), "[aspect: owner] a new game's cube is not shown in the middle").toMatch(/center|centre|centr/);
+});
+
+test("[F07] REQ-CUBEUI — cube UI", async ({ page }) => {
+  // A double before the opening roll is refused (the cube is dead until the
+  // opening is rolled), so the cube is judged on a LATER turn: the standard
+  // opening position in the roll phase — F46's setup pattern — where the
+  // medium AI takes an even race and the cube ends at 2 with an owner.
+  await openApp(page);
+
+  const points = emptyPoints();
+  points[24] = 2;
+  points[13] = 5;
+  points[8] = 3;
+  points[6] = 5;
+  points[1] = -2;
+  points[12] = -5;
+  points[17] = -3;
+  points[19] = -5;
+  await setupState(page, {
+    points,
+    bar: { white: 0, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    cube: { value: 1, owner: null },
+    difficulty: "medium",
+    winner: null,
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  // A player who cannot double meets none of what follows: that is G11's
+  // finding (run 1793624268 round 2 told four after-the-double lines to a page
+  // whose Double button was never enabled).
+  expect((await readState(page)).canDouble, "[needs: G11 G35]").toBe(true);
+  const doubled = await postJson<ApiState>(page, "/api/double", {});
+  // A passed double ends the game with nobody taking the cube — G12's take
+  // decision, as in G20 (run 1793659780 passed even doubles).
+  expect(doubled.winner ?? null, "[needs: G12] the computer passed an even double").toBeNull();
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  // What the server holds after the double is told by what it puts on the
+  // cube: run 1795107958 gave the doubler the cube, and this step told the
+  // vague "the cube on screen didn't change to match" about a page that showed
+  // the server's owner ("Your cube"); the model saw the cube change, checked
+  // the screen twice and changed nothing. The page is judged against it, one fault per line: the value on
+  // the cube, then who it shows owning it. One line for both told a build whose
+  // cube read 2 "doesn't show the new value, or doesn't show who owns it".
+  const state = await readState(page);
+  expect(state.cube.value, "[aspect: value] [needs: G12] the server's cube after a taken double").toBe(2);
+  // White doubled and black took: the cube is black's (the computer's).
+  expect(state.cube.owner, "[aspect: owner] [needs: G12] the server's cube owner after a taken double").toBe("black");
+  await expect(page.getByTestId("cubeVal"), "[aspect: value] after a taken double the cube does not read 2").toHaveText(showsNumber(2));
+  // The owner is read once it has had the moment the value had to settle (step 4
+  // meter audit, 2026-11-24: read once, right after the value, a build that
+  // draws the owner a frame later would be told its owner is wrong).
+  const owner = async () => (await page.getByTestId("cubeOwner").innerText().catch(() => "")).trim().toLowerCase();
+  let ownerLabel = await owner();
+  for (let i = 0; i < 15 && !/ai|black|opponent|computer/.test(ownerLabel); i++) {
+    await page.waitForTimeout(200);
+    ownerLabel = await owner();
+  }
+  expect(ownerLabel, `[aspect: owner] after a taken double the cube shows its owner as "${ownerLabel}", not the computer`).toMatch(
+    /ai|black|opponent|computer/,
+  );
+});
+
+test("[F46] REQ-DOUBLE-DECLINE — the decline pop-up says you won", async ({ page }) => {
+  // Judged on screen, as a player meets it: the double goes through the button
+  // so the page's own handler shows the pop-up — posting /api/double directly
+  // would bypass the modal this gate reads. One white checker a roll from home
+  // and all fifteen black on the bar put the AI's win probability far below
+  // every difficulty's take point, so the decline (and its announcement) is
+  // deterministic.
+  await openApp(page);
+  const points = emptyPoints();
+  points[1] = 1;
+  await setupState(page, {
+    points,
+    bar: { white: 0, black: 15 },
+    off: { white: 14, black: 0 },
+    turn: "white",
+    phase: "roll", // the client may only double in the roll phase
+    cube: { value: 1, owner: null },
+    difficulty: "medium",
+    winner: null,
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  // A player who cannot double meets none of what follows: that is G11's
+  // finding (run 1793624268 round 2 told four after-the-double lines to a page
+  // whose Double button was never enabled).
+  await expect(page.getByTestId("doubleBtn"), "[needs: G11 G35]").toBeEnabled();
+  await page.getByTestId("doubleBtn").click();
+  // Judged once the computer has actually dropped: a computer that takes a
+  // double it should pass is G12's finding (on G22's estimate), not the
+  // drop's wording (run 1793628483: it took when hopeless, and was told the
+  // drop pop-up and the drop message were wrong).
+  // Who won is its own finding (run 1795614488 L3, 2026-11-25): a computer that
+  // passed and then gave the game to itself ("AI wins.") was told F46's title
+  // line and F50's "the message goes into its working" — neither what happened.
+  let winner: string | null = null;
+  await expect
+    .poll(async () => (winner = (await readState(page)).winner ?? null), { message: "[needs: G12 G22]", timeout: 5_000 })
+    .not.toBeNull();
+  expect(winner, "[aspect: winner] the computer turned down the player's double and the game gave the win to the computer").toBe("white");
+  await expectPopupShown(page, "[aspect: nopopup] [needs: F01] the computer passed the double and no pop-up came up");
+  await expect(page.getByTestId("modalTitle"), "[needs: F01] [needs: F07]").toContainText(/win/i);
+});
+
+// The internal math a double or take message must never show the player: a win
+// chance, pip counts, a take point, a doubling window, an estimate, a
+// percentage. The AI works all of it out; the person at the screen gets a plain
+// sentence. Shared by F49 (the offer) and F50 (the answer).
+const REASONING_ARTIFACTS = /(winning chance|win probability|pips?|take point|doubling window|estimates?|%)/i;
+
+// Where a double is put to the player and answered. The build prompt names a
+// pop-up only for the end of the game; a double offer, and the computer's answer
+// to the player's double, may show in the message area the prompt names or in
+// any pop-up, and the player answers with whatever buttons the page gives them.
+// Run 1790661859's reference showed both in its end-of-game pop-up, and the
+// first cut of these checks demanded that pop-up and its wording.
+const TAKE = /\baccept|\btake\b(?!\s*back)/i;
+const PASS = /\bdecline|\bpass\b|\bdrop\b|\brefuse|\breject/i;
+
+async function shownDoubleText(page: Page): Promise<string> {
+  const message = await page.getByTestId("message").innerText().catch(() => "");
+  const overlay = page.getByTestId("modalOverlay");
+  const popup = (await overlay.isVisible().catch(() => false)) ? await overlay.innerText().catch(() => "") : "";
+  return `${message} ${popup}`.replace(/\s+/g, " ").trim();
+}
+
+function answerButton(page: Page, name: RegExp): Locator {
+  return page.getByRole("button", { name }).filter({ visible: true }).first();
+}
+
+// The race the hard computer doubles on. The prompt fixes the offer window, not
+// the win-chance formula, so one fixed race sits inside the window for some
+// conforming formulas and above it for others (run 1793645251's build rated
+// black 30 pips with 10 off against 61 with 4 off as certain, held, and the
+// player was told its offer never showed). Each rung white gains a little — a
+// checker from 6 to 1, then one borne off — and the first rung where the build
+// itself offers, through End Turn and its own computer turn, is the race; the
+// first rung is the race these checks always used.
+// With "middle" the race is the middle of the rungs the build offers on: a check
+// that plays a turn of white's before the offer needs room either side of it.
+// With `played` dice the player's turn on each rung is played (playRolledTurn),
+// not loaded: for a check that needs that finished turn to stay the player's.
+async function offerRace(
+  page: Page,
+  pick: "first" | "middle" = "first",
+  played?: number[],
+): Promise<{ points: number[]; off: { white: number; black: number }; offered: boolean }> {
+  const ladder: { points: number[]; off: { white: number; black: number } }[] = [];
+  let six = 10, one = 1, whiteOff = 4;
+  const rung = () => {
+    const points = emptyPoints();
+    points[6] = six; points[1] = one; points[19] = -5;
+    return { points, off: { white: whiteOff, black: 10 } };
+  };
+  ladder.push(rung());
+  while (six > 0) { six--; one++; ladder.push(rung()); }
+  while (one > 1) { one--; whiteOff++; ladder.push(rung()); }
+  // Then black further ahead than the first rung: white's off checkers back
+  // on the 6, then two at a time out on the 13. A formula that rates black's
+  // 31-pip lead below its doubling point still doubles somewhere here (run
+  // 1793751254 round 3 doubled from about 50 pips, and every check that rode
+  // on this ladder told the player its offer never showed on screen).
+  six = 10; one = 1;
+  for (whiteOff = 3; whiteOff >= 0; whiteOff--) { six++; ladder.push(rung()); }
+  for (const out of [2, 4]) {
+    const r = rung();
+    r.points[6] = six - out; r.points[13] = out;
+    ladder.push(r);
+  }
+  const offering: typeof ladder = [];
+  for (const race of ladder) {
+    await postJson(page, "/api/new", {});
+    if (played) {
+      // A rung the played roll finishes (the last checkers borne off: the 2026-11-21
+      // sweep's builds that never offered walked the whole ladder into it) is no
+      // race for the check — skipped, never a finding.
+      await seedRolled(page, { ...race, bar: { white: 0, black: 0 }, cube: { value: 1, owner: null }, difficulty: "hard", winner: null, message: "" }, played);
+      if (!turnStillPlayers(await rollPlayedOut(page))) continue;
+    } else {
+      await setupState(page, {
+        ...race, bar: { white: 0, black: 0 }, turn: "white", phase: "move", dice: [6, 5], remainingDice: [],
+        turnOver: true, cube: { value: 1, owner: null }, difficulty: "hard", winner: null, message: "",
+      });
+    }
+    let state: any = await postJson(page, "/api/endturn", {});
+    for (let guard = 0; guard < 12 && state?.turn === "black" && state?.phase !== "doubleOffered" && !state?.winner; guard++) {
+      state = await postJson(page, "/api/ai", {});
+    }
+    if (state?.phase === "doubleOffered") {
+      offering.push(race);
+      if (pick === "first") break;
+    }
+  }
+  // A server remembers it has offered this game; the check starts clean.
+  await postJson(page, "/api/new", {});
+  // The middle by black's lead, not by ladder order.
+  const whitePips = (r: (typeof ladder)[number]) => r.points.reduce((sum, n, i) => sum + Math.max(0, n) * i, 0);
+  const byLead = [...offering].sort((a, b) => whitePips(a) - whitePips(b));
+  return { ...(byLead[Math.floor((byLead.length - 1) / 2)] ?? ladder[0]!), offered: offering.length > 0 };
+}
+
+test("[F49] REQ-DOUBLE-OFFER — the doubling message reads like a person", async ({ page }) => {
+  // A race black leads by 31 pips without dominating, so the hard AI's offer is
+  // deterministic. It reaches the screen through the page's own handler when End
+  // Turn hands the turn over — posting /api/ai directly would bypass the pop-up
+  // this gate reads. The off trays pad both sides to fifteen checkers, the
+  // count the golden client draws (F05's comment); borne-off checkers add no
+  // pips, so the AI's decision is the same as the bare points give.
+  test.setTimeout(90_000);
+  await openApp(page);
+  const { points, off, offered: anyOffer } = await offerRace(page, "first", [2, 1]);
+  // No rung of the ladder drew an offer from the build's own server: there is
+  // no offer for the screen to show. Run 1794873096's computer never doubled
+  // until a game had been finished on the server, so a player's first game
+  // never saw one — and was told the offer "never shows up on screen".
+  expect(anyOffer, "[aspect: never] [needs: G12 G35] far behind in a race, the computer never offered to double").toBe(true);
+  await playRolledTurn(page, { points, bar: { white: 0, black: 0 }, off, cube: { value: 1, owner: null }, difficulty: "hard", winner: null, message: "" }, [2, 1]);
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await press(page.getByTestId("endTurnBtn"), "[aspect: noend] [needs: F47] End Turn was not available with nothing left to play");
+
+  await expect
+    .poll(async () => /double|offer/i.test(await shownDoubleText(page)), {
+      message: "[aspect: shown] [needs: F01] [needs: G12 G24] nothing on screen said the computer was doubling",
+      timeout: 10_000,
+    })
+    .toBe(true);
+  const offered = await shownDoubleText(page);
+  expect(
+    offered,
+    `[needs: F01] [needs: G12] the double offer showed internal math: "${offered}"`,
+  ).not.toMatch(REASONING_ARTIFACTS);
+
+  // The two buttons that answer it, by the words the build prompt gives them:
+  // Accept (or Take) and Decline (or Pass). The reload and Fast Forward checks
+  // answer with the same buttons and wait on this one for their names.
+  await expect(answerButton(page, TAKE), "[aspect: answer] no button reading Accept or Take answered the offer").toBeVisible();
+  await expect(answerButton(page, PASS), "[aspect: answer] no button reading Decline or Pass answered the offer").toBeVisible();
+});
+
+test("[F90] REQ-DOUBLE-ACCEPT-PLAYS-ON — taking the computer's double, the game plays on", async ({ page }) => {
+  // The operator, 2026-11-02, playing run 1793615343's build: "if the ai doubles and i
+  // accept the game is left in a broken frozen state". Its server answered the
+  // take with the computer to move and no dice, leaving the roll to the page,
+  // which never made it. Reached as a player meets it: a turn played through
+  // the page, End Turn, the offer through the page's own computer turn — a page
+  // loaded straight into the offer restarts its loop on load and plays on, and
+  // that build offered only once moves had been made. The computer leads a
+  // race the build itself doubles on (offerRace), from the middle of its
+  // offering rungs so white's 2-1 leaves it inside.
+  test.setTimeout(150_000);
+  await openApp(page);
+  const { points, off } = await offerRace(page, "middle");
+  await setupState(page, {
+    points,
+    bar: { white: 0, black: 0 },
+    off,
+    turn: "white",
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
+    cube: { value: 1, owner: null },
+    difficulty: "hard",
+    winner: null,
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [2, 1] });
+  await rollAndCheck(page, [2, 1], () => page.getByTestId("rollBtn").click());
+  const hints = page.getByTestId("hint");
+  for (let i = 0; i < 2; i++) {
+    if ((await readState(page)).turnOver) break;
+    expect(await pickUpAPiece(page, hints), "[needs: F03 F45]").toBe(true);
+    await playerClick(hints.first());
+    await page.waitForTimeout(600);
+  }
+  await expect.poll(async () => (await readState(page)).turnOver, { message: "[needs: F25 F45]" }).toBe(true);
+  await press(page.getByTestId("endTurnBtn"), "[aspect: noend] [needs: F47] End Turn was not available with nothing left to play");
+  await expect
+    // An offer that never comes is the computer's doubling window (G12), as in
+    // G24: run 1793638605's build raised it to 85%, never doubled here, and was
+    // told the game froze after the player accepted.
+    .poll(async () => (await readState(page)).phase, { message: "[needs: G12 F49]", timeout: 10_000 })
+    .toBe("doubleOffered");
+  const take = answerButton(page, TAKE);
+  await expect(take, "[needs: G12 F49]").toBeVisible();
+  await playerClick(take);
+  // Answered, the offer's pop-up goes. Run 1795290402 (a2): its Accept sent the
+  // answer and left the pop-up over the game (closed only by New Game or a click
+  // on the backdrop); no check looked, and F67 met it as a Fast Forward button it
+  // could not reach.
+  await expect(
+    page.getByTestId("modalOverlay"),
+    "[aspect: stays] after the computer's double was taken its pop-up stayed on screen",
+  ).toBeHidden({ timeout: 3_000 });
+  // The computer, having been taken, plays its turn and hands it back.
+  await expect
+    .poll(
+      async () => {
+        const s = await readState(page);
+        return s.winner != null || (s.turn === "white" && s.phase !== "doubleOffered");
+      },
+      { message: "after the computer's double was taken the game never moved on", timeout: 20_000 },
+    )
+    .toBe(true);
+});
+
+test("[F50] REQ-DOUBLE-ANSWER — the computer's answer to a double is plain", async ({ page }) => {
+  // Two answers, both deterministic and both read on screen — the pop-up and
+  // the message bar, where the player meets them. From an even position the
+  // medium AI takes; from F46's far-ahead position it passes. A double before
+  // the opening roll is refused, so the even position is a LATER turn set up
+  // in the roll phase (F07's fix), never a fresh game.
+  await openApp(page);
+  const evenPoints = emptyPoints();
+  evenPoints[24] = 2;
+  evenPoints[13] = 5;
+  evenPoints[8] = 3;
+  evenPoints[6] = 5;
+  evenPoints[1] = -2;
+  evenPoints[12] = -5;
+  evenPoints[17] = -3;
+  evenPoints[19] = -5;
+  await setupState(page, {
+    points: evenPoints,
+    bar: { white: 0, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    cube: { value: 1, owner: null },
+    difficulty: "medium",
+    winner: null,
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await expect(page.getByTestId("doubleBtn"), "[needs: G11 G35]").toBeEnabled();
+  await page.getByTestId("doubleBtn").click();
+  // Read what the page said first, then ask whether the game carries on, then
+  // judge the words: a frozen page used to be told as wording, or not at all
+  // (WO-LI-HIDDEN-FREEZE-SWEEP).
+  const sawTake = await expect
+    .poll(async () => TAKE.test(await shownDoubleText(page)), { timeout: 10_000 })
+    .toBe(true)
+    .then(() => true, () => false);
+  const accepted = await shownDoubleText(page);
+  // The game carries on after the computer takes: dismiss whatever the page put
+  // up, as a player does, and press Roll. Only once the take has happened (the
+  // cube moved to 2): no take is the cube's own finding.
+  const took = (await readState(page)).cube.value === 2;
+  if (took) {
+    const answer = page.locator('[data-testid="modalBtns"] button:visible');
+    if ((await answer.count()) > 0) await playerClick(answer.first());
+    // Roll comes back, or the game froze (run 1794568362: after the take it
+    // left the player in the move phase with nothing to play, and the click
+    // waited out the test — told as the answer's wording).
+    await expect(
+      page.getByTestId("rollBtn"),
+      "[aspect: frozen] after the computer took the double, Roll never came back",
+    ).toBeEnabled({ timeout: 10_000 });
+    await postJson<ApiState>(page, "/api/debug/roll", { dice: [3, 1] });
+    await rollAndCheck(page, [3, 1], () => page.getByTestId("rollBtn").click());
+  }
+  expect(sawTake, "[aspect: shown] [needs: F01] [needs: F07] nothing on screen said the computer took the double").toBe(true);
+  expect(
+    accepted,
+    `[needs: F01] [needs: F07] the accept showed internal math: "${accepted}"`,
+  ).not.toMatch(REASONING_ARTIFACTS);
+
+  // The second answer in a fresh game, as a player meets it: run 1793628483's
+  // server kept an unexposed "doubled already" flag that a debug position does
+  // not reset, so its Double stayed off here and the player was told the
+  // computer's answer "goes into its working" — a message it never reached.
+  await postJson<ApiState>(page, "/api/new", {});
+  const points = emptyPoints();
+  points[1] = 1;
+  await setupState(page, {
+    points,
+    bar: { white: 0, black: 15 },
+    off: { white: 14, black: 0 },
+    turn: "white",
+    phase: "roll",
+    cube: { value: 1, owner: null },
+    difficulty: "medium",
+    winner: null,
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await expect(page.getByTestId("doubleBtn"), "[needs: G11 G35]").toBeEnabled();
+  await page.getByTestId("doubleBtn").click();
+  // Judged once the computer has actually dropped: a computer that takes a
+  // double it should pass is G12's finding (on G22's estimate), not the
+  // drop's wording (run 1793628483: it took when hopeless, and was told the
+  // drop pop-up and the drop message were wrong).
+  // Who won is its own finding (run 1795614488 L3, 2026-11-25): a computer that
+  // passed and then gave the game to itself ("AI wins.") was told F46's title
+  // line and F50's "the message goes into its working" — neither what happened.
+  let winner: string | null = null;
+  await expect
+    .poll(async () => (winner = (await readState(page)).winner ?? null), { message: "[needs: G12 G22]", timeout: 5_000 })
+    .not.toBeNull();
+  expect(winner, "[aspect: winner] the computer turned down the player's double and the game gave the win to the computer").toBe("white");
+  await expect
+    .poll(async () => PASS.test(await shownDoubleText(page)), {
+      message: "[aspect: passed] [needs: F01] [needs: F07] nothing on screen said the computer passed the double",
+      timeout: 10_000,
+    })
+    .toBe(true);
+  const declined = await shownDoubleText(page);
+  expect(
+    declined,
+    `[needs: F01] [needs: F07] the decline showed internal math: "${declined}"`,
+  ).not.toMatch(REASONING_ARTIFACTS);
+});
+
+test("[F51] REQ-ENDSCREEN — the finishing pop-up names the winner and the stake", async ({ page }) => {
+  // Who won and what the game was worth is the whole of the end-of-game pop-up
+  // — the running match totals have no line here. The game is ended by the
+  // player's own last bear-off (F53's move): a stage-5 check reached through a
+  // double would tell a doubling fault as an end-screen one.
+  await bearOffTheLastPiece(page);
+  await expect(page.getByTestId("modalTitle"), "[needs: F53]").toContainText(/win/i, { timeout: 10_000 });
+  const title = await page.getByTestId("modalTitle").innerText();
+  const body = await page.getByTestId("modalBody").innerText();
+  const message = await page.getByTestId("message").innerText();
+  expect(
+    `${title} ${body} ${message}`,
+    `[aspect: points] the end pop-up never said what the game was worth: "${title}" / "${body}" / "${message}"`,
+  ).toMatch(/point/i);
+  expect(
+    `${title} ${body} ${message}`.toLowerCase(),
+    `the end pop-up showed the running match totals: "${title}" / "${body}" / "${message}"`,
+  ).not.toContain("match score");
+});
+
+// The last move of a game, played the way a player plays it: pick up the one
+// white checker left, click the "off" hint. Both sides hold exactly fifteen
+// checkers (white: fourteen off + one on point 1; black: fifteen on point 24),
+// the count the golden client draws — any other total leaves the page stuck on
+// "Loading…". The die is a 1 and the checker sits on point 1, so the bear-off is
+// the exact final move. Shared by F53 (the pop-up opens) and F51 (what it says).
+async function bearOffTheLastPiece(page: Page): Promise<void> {
+  await openApp(page);
+  const points = emptyPoints();
+  points[1] = 1;
+  points[24] = -15;
+  await setupState(page, {
+    points,
+    bar: { white: 0, black: 0 },
+    off: { white: 14, black: 0 },
+    turn: "white",
+    phase: "move",
+    dice: [1],
+    remainingDice: [1],
+    turnOver: false,
+    cube: { value: 1, owner: null },
+    difficulty: "hard",
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  const hints = page.getByTestId("hint");
+  const picked = await pickUpAPiece(page, hints);
+  expect(picked, "[needs: F03] the last white checker on point 1 could not be picked up").toBe(true);
+
+  // The bear-off hint reads "off" or the die it uses, as every hint may (the
+  // prompt asks for a hint per playable die, not a word): a 1 bearing off from
+  // point 1 is the only move, so either is it. Run 1793780359's hint read "1",
+  // and both checks told the player the pop-up never came.
+  const hintCount = await hints.count();
+  let offHint: Locator | null = null;
+  for (let i = 0; i < hintCount; i++) {
+    const words = hintWords(await hints.nth(i).innerText());
+    if (words.includes("off") || words.includes("1")) {
+      offHint = hints.nth(i);
+      break;
+    }
+  }
+  expect(offHint, '[needs: F03] [needs: F04] no hint said "off" for the bear-off').not.toBeNull();
+  await playerClick(offHint!);
+}
+
+test("[F53] REQ-ENDGAME — bearing off the last piece opens the win pop-up", async ({ page }) => {
+  // The server answers the last bear-off with a winner, and the page's own move
+  // handler must open the end-of-game pop-up on the spot — a build that shows
+  // it only after End Turn, or never, fails here.
+  await bearOffTheLastPiece(page);
+  await expectPopupShown(page, "[needs: F01] [needs: F12] [needs: G10] no pop-up came up after the last bear-off", 10_000);
+  await expect(page.getByTestId("modalTitle"), "[aspect: title] [needs: F01] [needs: F12] [needs: G10]").toContainText(/win/i);
+});
+
+test("[F52] REQ-BUTTONS — greyed-out buttons look clearly different", async ({ page }) => {
+  // A player tells which buttons they may press by how they look. At a new
+  // game Undo and End Turn cannot be used yet, while New Game and Roll can.
+  // Judged on what is drawn, whatever styling produced it: each button's
+  // screenshot, and how far its brightest marks stand from its darkest (the
+  // lettering against its face). The buttons that cannot be used must be
+  // clearly fainter than the least clear usable one. Run 1790661859's reference
+  // drew its unusable buttons at 80 against a Roll button at 120 and the player
+  // could not tell them apart; its fix draws them at 60.
+  await openApp(page);
+  await postJson(page, "/api/new", {});
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  const clarity = async (id: string): Promise<number> => {
+    const button = page.getByTestId(id);
+    await expect(button, `[needs: F38] the ${id} button is not on screen`).toBeVisible();
+    const png = await button.screenshot();
+    return page.evaluate(async (b64) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const lum: number[] = [];
+      for (let i = 0; i < data.length; i += 4) lum.push(0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]);
+      lum.sort((a, b) => a - b);
+      // The brightest and darkest 0.2%: lettering is a sliver of a big button
+      // (run 1790778770 drew New Game as a full-height strip, and at 1% its
+      // clear white text never reached the measure).
+      return lum[Math.floor(lum.length * 0.998)] - lum[Math.floor(lum.length * 0.002)];
+    }, png.toString("base64"));
+  };
+
+  // Roll counts as usable only when it can be clicked: a page that keeps Roll
+  // shut at the start of a game has a different fault, F61's, and comparing
+  // against it told run 1790769627 its greyed buttons were not greyed.
+  const clickable = (id: string) =>
+    page
+      .getByTestId(id)
+      .click({ trial: true, timeout: 1_500 })
+      .then(() => true, () => false);
+  const rollClickable = await clickable("rollBtn");
+  // WHICH BUTTONS CAN BE USED IS THE PAGE'S OWN ANSWER (run 1795547274 L3 a5,
+  // 2026-11-25): New Game was taken as usable at the start of every game, but
+  // the brief only has a button the player can't use greyed out — run
+  // 1795547274's page shut New Game on a fresh game and greyed it with Undo and
+  // End Turn, and was told twice its greyed buttons were no fainter than "the
+  // least clear usable one": New Game itself. A New Game that can't be clicked
+  // is judged with the buttons that can't be used.
+  const newGameClickable = await clickable("newGameBtn");
+  const usableIds = [...(newGameClickable ? ["newGameBtn"] : []), ...(rollClickable ? ["rollBtn"] : [])];
+  if (usableIds.length === 0) return; // nothing usable to compare against: Roll shut at the start is F61's
+  const unusableIds = ["undoBtn", "endTurnBtn", ...(newGameClickable ? [] : ["newGameBtn"])];
+  const usableEach: number[] = [];
+  for (const id of usableIds) usableEach.push(await clarity(id));
+  const unusableEach: number[] = [];
+  for (const id of unusableIds) unusableEach.push(await clarity(id));
+  const usable = Math.min(...usableEach);
+  const unusable = Math.max(...unusableEach);
+  const label = (id: string) => ({ rollBtn: "Roll", newGameBtn: "New Game", undoBtn: "Undo", endTurnBtn: "End Turn" })[id] ?? id;
+  const clearestUnusable = label(unusableIds[unusableEach.indexOf(unusable)]);
+  const leastUsable = label(usableIds[usableEach.indexOf(usable)]);
+  // Judged at the start of a game only: run 1793695155's page rolled the
+  // opening by itself a second after loading, the computer won it, and End Turn
+  // turned into a bright "play the computer's moves" button — measured as a
+  // greyed button that was not greyed. A game that left its start untouched is
+  // F61's finding.
+  const still = await readState(page);
+  if (still.phase !== "openingRoll" || (still.dice ?? []).length > 0) return;
+  // A button cut off or overlapped photographs whatever lies across it — F38's
+  // finding, and no reading of how greyed it is (a squeezed panel measured its
+  // greyed buttons at 230 against 140 for the usable ones).
+  expect(
+    unusable,
+    `[needs: F38] the clearest button that cannot be used yet (${clearestUnusable}) stands out from its own background by ${unusable.toFixed(0)} levels of brightness, against ${usable.toFixed(0)} for the least clear usable one (${leastUsable})`,
+  ).toBeLessThanOrEqual(0.6 * usable);
+});
+
+test("[F08] REQ-TESTID — difficulty selector", async ({ page }) => {
+  await openApp(page);
+
+  // The dropdown a player uses: the tagged element when it is one, else the
+  // <select> inside it (run 1790473524 tagged a box around its dropdown; the
+  // page worked, and was told "When i change the difficulty level nothing
+  // actually changes").
+  const tagged = page.getByTestId("difficulty");
+  const isSelect = await tagged.evaluate((el) => el.tagName === "SELECT").catch(() => false);
+  const difficulty = isSelect ? tagged : tagged.locator("select").first();
+  const newGameBtn = page.getByTestId("newGameBtn");
+  // A player changes the difficulty only through controls they can see and
+  // click: one the board is drawn over is the layout check's complaint (F38),
+  // not a difficulty that doesn't change (run 1790439223 timed out clicking a
+  // covered New Game and told "nothing actually changes").
+  const reachable = (id: string) =>
+    page.evaluate((testid) => {
+      const el = document.querySelector(`[data-testid="${testid}"]`);
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!hit && (hit === el || el.contains(hit));
+    }, id);
+  expect(
+    (await reachable("difficulty")) && (await reachable("newGameBtn")),
+    "[needs: F38] the difficulty control or New Game is covered or off screen",
+  ).toBe(true);
+
+  await difficulty.selectOption("hard");
+  await newGameBtn.click();
+  await expect
+    .poll(async () => {
+      const state = await readState(page);
+      return state.difficulty;
+    })
+    .toBe("hard");
+
+  // A player picks again once the new game shows. The page draws the server's
+  // reply a moment after the server has it, and a choice made inside that
+  // moment is set back when the reply is drawn: run 1790474431's second round
+  // set its dropdown from each reply, changed difficulty every time at a
+  // player's pace, and was told "nothing actually changes" when the grader
+  // chose again a few milliseconds after the server had the first game.
+  await page.waitForTimeout(1000);
+  await difficulty.selectOption("easy");
+  await newGameBtn.click();
+  await expect
+    .poll(async () => {
+      const state = await readState(page);
+      return state.difficulty;
+    })
+    .toBe("easy");
+});
+
+test("[F54] REQ-RELOAD — the difficulty control shows the level you're playing", async ({ page }) => {
+  // A player who chose a level reads it back on the control after a reload.
+  // Chosen the way a player chooses it — the difficulty control, then New
+  // Game — because that is what this check's line says happened. The same
+  // control read after a game started at Hard through the API is F68's (the
+  // team's): run 1790778770's page kept the player's choice in the browser,
+  // passed this path, and was told "I set the difficulty to Hard" of a
+  // setting it never made.
+  await openApp(page);
+  const control = async () => {
+    const tagged = page.getByTestId("difficulty");
+    const isSelect = await tagged.evaluate((el) => el.tagName === "SELECT").catch(() => false);
+    return isSelect ? tagged : tagged.locator("select").first();
+  };
+  // A control the player cannot reach — hidden, or covered by the board — is
+  // F38's "isn't showing" (and New Game's own is F08's); it timed out here with
+  // no message and was told as a level lost on reload, a reload this check
+  // never got to (run 1793119227 round 4).
+  // Each step names itself (run 1795547274 L3, 2026-11-25): a page that shuts New
+  // Game on a fresh game failed the click, and the step's one aspect-less line
+  // told the player "after a reload the difficulty box no longer shows Hard" —
+  // of a reload this check never got to.
+  const picked = await (await control())
+    .selectOption("hard", { timeout: 5_000 })
+    .then(() => true, () => false);
+  expect(picked, "[aspect: control] [needs: F38] the difficulty control could not be set to Hard").toBe(true);
+  const started = await page
+    .getByTestId("newGameBtn")
+    .click({ timeout: 5_000 })
+    .then(() => true, () => false);
+  expect(started, "[aspect: newgame] [needs: F38 F08] with Hard picked on a fresh game, New Game could not be clicked").toBe(true);
+  await expect
+    .poll(async () => (await readState(page)).difficulty, { message: "[needs: F08] New Game did not start a Hard game", timeout: 5_000 })
+    .toBe("hard");
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await expect(await control(), "after choosing Hard and reloading, the control no longer read hard").toHaveValue("hard");
+});
+
+test("[F69] REQ-PIPUI — the pip elements hold just the number", async ({ page }) => {
+  // The build prompt (chunk-04): "`pipWhite` and `pipBlack` contain just the
+  // number (e.g. `167`), with any label outside those elements". A label
+  // inside reads fine to a player — run 1790781911's "Pips: 167" did — so it is
+  // the integrating team's finding, not the tester's.
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  for (const id of ["pipWhite", "pipBlack"]) {
+    await expect(page.getByTestId(id), `[needs: REQ-TESTID/testid.pipWhite REQ-TESTID/testid.pipBlack] ${id} did not hold a bare number`).toHaveText(/^\s*-?\d+\s*$/);
+  }
+});
+
+test("[F68] REQ-RELOAD — on load the difficulty control reads the game's difficulty", async ({ page }) => {
+  // The build prompt (chunk-05): "On load, the difficulty control shows the
+  // difficulty the game is actually running at." A game started at Hard
+  // through the API, then the page opened: the control reads what the server
+  // is playing, not a choice the page kept for itself. The team's finding —
+  // a player who chose the level in the page is F54's.
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", { difficulty: "hard" });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  const tagged = page.getByTestId("difficulty");
+  const isSelect = await tagged.evaluate((el) => el.tagName === "SELECT").catch(() => false);
+  const select = isSelect ? tagged : tagged.locator("select").first();
+  await expect(select, "[needs: F54] a game started at Hard through the API loaded with the control on another level").toHaveValue("hard");
+});
+
+test("[F55] REQ-RELOAD — the computer finishes its turn after a reload", async ({ page }) => {
+  // A player who reloads mid-computer-turn comes back to the same game and
+  // the computer plays on — a page that waits forever for a human who is not
+  // there leaves the game stuck. Reached the way a player reaches it: their
+  // turn played out on the standard opening position, End Turn pressed, and
+  // the page reloaded as soon as the game has taken it. A computer's turn
+  // seeded straight in ("black" in a "roll" phase) is a state a build's own
+  // game may never make: run 1794513886's game keeps "move" through the
+  // computer's turn and resumed it on reload, while the seeded check told the
+  // player the turn "still never came back". "easy" never offers a double, so
+  // the computer's turn completes.
+  await openApp(page);
+  await playOwnFinishedTurn(page);
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  const endTurn = page.getByTestId("endTurnBtn");
+  await expect(endTurn, "[aspect: noend] [needs: F47] End Turn was not available with nothing left to play").toBeEnabled();
+  await waitForBoardSettled(page).catch(() => undefined);
+  const handedOver = page.waitForResponse(
+    (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/endturn",
+    { timeout: 10_000 },
+  ).catch(() => undefined); // a check that fails before End Turn leaves no stray error behind
+  await press(endTurn, "[aspect: noend] [needs: F47] End Turn was not available with nothing left to play");
+  await handedOver;
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  await expect.poll(async () => (await readState(page)).turn, {
+    message: "[needs: F01] [needs: G25] the computer never finished its turn after a reload",
+    timeout: 20_000,
+  }).toBe("white");
+});
+
+test("[F56] REQ-RELOAD — the pending double offer shows again after a reload", async ({ page }) => {
+  // A player faced with the computer's double offer who reloads comes back to
+  // the same question — a page that drops the offer leaves the game waiting
+  // for an answer nobody can give. Both choices must be on offer again.
+  // The offer is the build's own, reached as F49 reaches it: the prompt fixes
+  // neither whose turn it is while an offer waits nor when the cube turns, so
+  // an offer written straight into the state is one build's shape. Run
+  // 1794874583's offer stood on white's turn with the cube at 2; written in on
+  // black's turn at 1, its page showed no answer, and a player who reloaded
+  // during its real offer — who still had both buttons — was told they had none.
+  test.setTimeout(90_000);
+  await openApp(page);
+  const { points, off } = await offerRace(page, "first", [2, 1]);
+  await playRolledTurn(page, { points, bar: { white: 0, black: 0 }, off, cube: { value: 1, owner: null }, difficulty: "hard", winner: null, message: "" }, [2, 1]);
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await press(page.getByTestId("endTurnBtn"), "[aspect: noend] [needs: F47] End Turn was not available with nothing left to play");
+  await expect
+    .poll(async () => (await readState(page)).phase, {
+      message: "[needs: F49] the computer's offer never came",
+      timeout: 20_000,
+    })
+    .toBe("doubleOffered");
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  // The offer is answered with whatever buttons the page gives — the build prompt
+  // names no pop-up for a double, only that the offer shows again so the player
+  // can accept or decline it.
+  await expect(answerButton(page, TAKE), "[needs: F01] [needs: G12] [needs: F49] no way to take the double after the reload").toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(answerButton(page, PASS), "[needs: F01] [needs: G12] [needs: F49] no way to pass the double after the reload").toBeVisible();
+});
+
+test("[F16] REQ-RELOAD — whose turn survives a reload", async ({ page }) => {
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await setupState(page, { turn: "white" });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);
+  const state = await readState(page);
+  expect(state.turn).toBe("white");
+  // And the turn can be played: a page redrawn after a reload but dead answered
+  // every state read above (WO-LI-HIDDEN-FREEZE-SWEEP). Pressing Roll must roll;
+  // when it does not, the ROLL DEAD marker tells it as what happened.
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [6, 5] });
+  await rollAndCheck(page, [6, 5], () => page.getByTestId("rollBtn").click());
+});
+
+test("[F17] REQ-RELOAD — match score survives a reload", async ({ page }) => {
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await setupState(page, { score: { white: 3, black: 5 } });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);
+  // Judged on the screen, where a player reads it: the line is about the score
+  // at the top, and the server's number said nothing about what the page shows.
+  // "Went back to zero-zero" only when it reads 0-0; any other wrong score is
+  // the general line.
+  const read = async (id: string) =>
+    Number(((await page.getByTestId(id).innerText().catch(() => "")).match(/\d+/) ?? ["NaN"])[0]);
+  const shownScore = async () => ({ white: await read("scoreWhite"), black: await read("scoreBlack") });
+  await expect
+    .poll(async () => JSON.stringify(await shownScore()), { timeout: 5_000 })
+    .toBe(JSON.stringify({ white: 3, black: 5 }))
+    .catch(() => undefined);
+  const shown = await shownScore();
+  const wiped = shown.white === 0 && shown.black === 0;
+  expect(shown, `${wiped ? "[aspect: zero] " : ""}after the reload the score on screen reads ${shown.white}-${shown.black}, not 3-5`).toEqual({
+    white: 3,
+    black: 5,
+  });
+});
+
+test("[F18] REQ-RELOAD — dice values survive a reload", async ({ page }) => {
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await setupState(page, {
+    phase: "move",
+    turn: "white",
+    dice: [5, 2],
+    remainingDice: [5, 2],
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);
+  const state = await readState(page);
+  expect([...state.dice].sort((a, b) => a - b)).toEqual([2, 5]);
+});
+
+test("[F19] REQ-RELOAD — difficulty survives a reload", async ({ page }) => {
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await setupState(page, { difficulty: "hard" });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);
+  const state = await readState(page);
+  expect(state.difficulty).toBe("hard");
+});
+
+test("[F20] REQ-RELOAD — the doubling cube survives a reload", async ({ page }) => {
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await setupState(page, { cube: { value: 2, owner: "black" } });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);
+  const state = await readState(page);
+  expect(state.canDouble).toBe(false);
+});
+
+test("[F21] REQ-RELOAD — remaining dice survive a reload", async ({ page }) => {
+  await openApp(page);
+  await postJson<ApiState>(page, "/api/new", {});
+  await setupState(page, {
+    phase: "move",
+    turn: "white",
+    dice: [5, 2],
+    remainingDice: [2],
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);
+  const state = await readState(page);
+  expect([...state.remainingDice].sort((a, b) => a - b)).toEqual([2]);
+});
+
+// ── FAST FORWARD (F64-F67) ────────────────────────────────────────────────
+// In a pure race — nothing on the bar, every white piece past every black one
+// — a Fast Forward button plays the rest of the game out at the computer's
+// own pace; while running it reads Pause. A label that contains the word is
+// fine, as for every button. Where the pieces stand is read from the state.
+const FAST_FORWARD = /fast\s*-?\s*forward/i;
+const PAUSE = /pause/i;
+
+function positionOf(state: ApiState): string {
+  return JSON.stringify([state.points, state.bar, state.off]);
+}
+
+// Whether the page still answers: a page whose script has locked up never
+// returns from evaluate. Asked a few times after Fast Forward is clicked so a
+// frozen page fails at once instead of spinning a core for a whole check while
+// the checks beside it time out (run 1793625245 round 1: F09, F10, F33, F39 and
+// F72 timed out beside spinning Fast Forward pages and told false lines).
+async function pageKeepsAnswering(page: Page, message: string): Promise<void> {
+  for (let i = 0; i < 6; i++) {
+    const answered = await Promise.race([
+      page.evaluate(() => true).then(
+        () => true,
+        () => false,
+      ),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_500)),
+    ]);
+    if (!answered) await page.close().catch(() => undefined);
+    expect(answered, message).toBe(true);
+    await page.waitForTimeout(500);
+  }
+}
+
+test("[F64] REQ-FASTFORWARD-SHOW — the Fast Forward button appears only in a race", async ({ page }) => {
+  test.setTimeout(60_000);
+  // A new game is no race: the button is not on screen.
+  await openApp(page);
+  await expect(
+    page.getByTestId("fastForwardBtn"),
+    "[aspect: outside] a Fast Forward button showed at the start of a new game",
+  ).toBeHidden();
+
+  // A race on the player's turn, every piece home on both sides.
+  const points = emptyPoints();
+  points[1] = 2; points[2] = 3; points[3] = 5; points[4] = 3; points[5] = 2;
+  points[19] = -3; points[20] = -5; points[21] = -4; points[22] = -3;
+  await setupState(page, {
+    points, bar: { white: 0, black: 0 }, off: { white: 0, black: 0 },
+    turn: "white", phase: "roll", dice: [], remainingDice: [],
+    cube: { value: 1, owner: null }, difficulty: "easy", winner: null, message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  const button = page.getByTestId("fastForwardBtn");
+  await expect(button, "[aspect: shown] no Fast Forward button showed in a race").toBeVisible();
+  await expect(button, "[aspect: label] the button showed in a race did not read Fast Forward").toHaveText(FAST_FORWARD);
+
+  // The same size as the other buttons, by F82's measure (the operator, 2026-11-13:
+  // "the fast forward button is not the same size as the other buttons").
+  const sizes = (await page.evaluate(() =>
+    ["fastForwardBtn", "rollBtn", "doubleBtn", "undoBtn", "endTurnBtn"]
+      .map((id) => {
+        const r = document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect();
+        return r && r.width > 0 && r.height > 0 ? { id, width: r.width, height: r.height } : null;
+      })
+      .filter((b) => b !== null),
+  )) as { id: string; width: number; height: number }[];
+  const spread = (xs: number[]) => Math.max(...xs) / Math.min(...xs);
+  expect(
+    sizes.length === 5 && spread(sizes.map((b) => b.width)) <= 1.05 && spread(sizes.map((b) => b.height)) <= 1.2,
+    `[aspect: size] [needs: F82] the Fast Forward button is not the size of the other buttons: ${sizes.map((b) => `${b.id} ${Math.round(b.width)}×${Math.round(b.height)}`).join(", ")}`,
+  ).toBe(true);
+
+  // For the whole turn, not only its start (the operator, 2026-11-13): once the player
+  // has rolled, and once their moves are played. Run 1794560336's build showed
+  // the button before the roll only, and F67 — which starts from a turn whose
+  // moves are done — could not find it.
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [2, 1] });
+  await rollAndCheck(page, [2, 1], () => page.getByTestId("rollBtn").click());
+  // Judged once the page has drawn the roll: the server's answer comes before the
+  // redraw, and a button the redraw hides was read as still there (2026-11-25 class
+  // matrix sharedaspect, ff-gone-after-roll: told "once the moves were played").
+  await waitForBoardSettled(page);
+  await expect(button, "[aspect: shownrolled] no Fast Forward button showed in a race once the player had rolled").toBeVisible();
+  await playOutTheRoll(page);
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await expect(button, "[aspect: shownplayed] no Fast Forward button showed in a race once the player's moves were played").toBeVisible();
+});
+
+test("[F65] REQ-FASTFORWARD-PLAYOUT — Fast Forward plays the race out to a win", async ({ page }) => {
+  test.setTimeout(120_000);
+  // A short race both sides play: white one piece on each of 1, 2 and 3,
+  // black one on each of 22, 23 and 24, the rest borne off. The rolls are
+  // fixed — the player 2-1, the computer 2-1, the player 6-5 — so the
+  // play-out takes three turns, the computer's among them, and the player wins
+  // on their second. One click, then only watching. Who wins is not the
+  // point: a page whose rolls come out otherwise still has to finish.
+  await openApp(page);
+  const points = emptyPoints();
+  points[1] = 1; points[2] = 1; points[3] = 1;
+  points[22] = -1; points[23] = -1; points[24] = -1;
+  await setupState(page, {
+    points, bar: { white: 0, black: 0 }, off: { white: 12, black: 12 },
+    turn: "white", phase: "roll", dice: [], remainingDice: [],
+    cube: { value: 1, owner: null }, difficulty: "easy", winner: null, message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  for (const dice of [[2, 1], [2, 1], [6, 5]]) await postJson(page, "/api/debug/roll", { dice });
+  const button = page.getByTestId("fastForwardBtn");
+  await expect(button, "[needs: F64]").toBeVisible();
+  await waitForBoardSettled(page);
+
+  // Record every frame of the play-out: the dice drawn and the player's pieces.
+  await recordFrames(page, "white");
+  await page.waitForTimeout(200);
+  const { at: clickAt, dice: atClick } = await diceNow(page);
+  await button.click();
+  await pageKeepsAnswering(page, "[needs: F66] the page stopped answering after Fast Forward was clicked");
+
+  await expect
+    .poll(async () => (await readState(page)).phase, {
+      message: "[aspect: played] [needs: F64] a minute after one click the race had not finished",
+      timeout: 60_000,
+    })
+    .toBe("gameover");
+  await expect(
+    page.getByTestId("modalOverlay"),
+    "[aspect: popup] [needs: F51 F53] the race played out and no end-of-game pop-up showed",
+  ).toBeVisible();
+  const frames = await stopFrames(page);
+
+  // The player's own first turn, as they watched it: the computer's pace (F62's
+  // windows) — the roll up about a second before the first move, the moves
+  // about half a second apart. A page that never drew the player's pieces
+  // moving is not judged here.
+  const { starts, first } = moveStarts(frames, clickAt);
+  // No move of the player's in the frames although the race played out — never a
+  // pass with nothing tested (it used to `return` here: 2026-11-21 audit, the operator
+  // approved 11-23). F77 proves the recorder reads this page's moves (the
+  // computer's, drawn one at a time); past it, a playout with none of the
+  // player's moves drawn is what a player watching saw: the board jumping on.
+  expect(Number.isFinite(first), "[aspect: unseen] [needs: F77] none of the player's moves were drawn while Fast Forward played the race out").toBe(true);
+  const { shown, readable } = readableDice(frames, clickAt, first, atClick);
+  expect(shown, "[aspect: dice] the player's dice never showed before Fast Forward's first move").toBe(true);
+  expect(readable, `[aspect: first] the player's roll was up ${readable.toFixed(0)} ms before Fast Forward's first move`).toBeGreaterThanOrEqual(800);
+  const gaps = starts.slice(1).map((t, i) => t - starts[i]);
+  expect(
+    starts.length >= 2 && gaps.every((gap) => gap >= 350),
+    `[aspect: between] Fast Forward's moves for the player started ${starts.length < 2 ? "together" : gaps.map((g) => `${g.toFixed(0)} ms`).join(", ") + " apart"}`,
+  ).toBe(true);
+});
+
+test("[F66] REQ-FASTFORWARD-PAUSE — Pause stops Fast Forward and it carries on", async ({ page }) => {
+  test.setTimeout(120_000);
+  // A long race — fifteen a side, all home — so there is always more to play.
+  await openApp(page);
+  const points = emptyPoints();
+  points[5] = 7; points[6] = 8;
+  points[19] = -8; points[20] = -7;
+  await setupState(page, {
+    points, bar: { white: 0, black: 0 }, off: { white: 0, black: 0 },
+    turn: "white", phase: "roll", dice: [], remainingDice: [],
+    cube: { value: 1, owner: null }, difficulty: "easy", winner: null, message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  const button = page.getByTestId("fastForwardBtn");
+  await expect(button, "[needs: F64]").toBeVisible();
+  await button.click();
+  // The page keeps answering while Fast Forward runs. Run 1793620683's page
+  // locked its script thread about 2 s after the click and then crashed; with
+  // nothing answering, the next look timed the test out and its general line
+  // ("couldn't pause") was told about a page that had frozen outright.
+  await pageKeepsAnswering(page, "[aspect: hang] the page stopped answering after Fast Forward was clicked");
+  await expect(button, "[aspect: running] the running Fast Forward button never read Pause").toHaveText(PAUSE);
+
+  // Paused during the player's first roll, the turn stays theirs and the
+  // button stays on screen. A button gone from the screen is found at once,
+  // not by a click that waits out the test (run 1794523863: Fast Forward ended
+  // the turn, the button vanished, and the click waited 120 s).
+  await page.waitForTimeout(250);
+  // Named (run 1795608058 L3, 2026-11-25): aspect-less, this step was told the
+  // general line, then "Again I couldn't pause Fast Forward the way I wanted"
+  // three rounds running — never that the button itself was gone.
+  await expect(button, "[aspect: gone] the Fast Forward button had gone from the screen while it ran").toBeVisible({ timeout: 5_000 });
+  await button.click();
+  await expect(button, "[aspect: label] [needs: F64] after Pause the button never read Fast Forward again").toHaveText(FAST_FORWARD);
+
+  // Nothing of the player's plays by itself once paused. Where the pause lands
+  // is the build's pace, not the check's: the look above takes about 3 s, and
+  // run 1795119387's Fast Forward had played the player's roll and handed the
+  // computer its turn by then. The computer finishing its own turn after Pause
+  // is ordinary play — the reference does it too (runAi completes before its
+  // loop sees the pause) — and that build was told "pieces kept moving after
+  // Pause" three rounds running about its computer finishing a turn at the
+  // normal pace, then waiting on the player's roll (played by hand). Fast
+  // Forward still running shows in the PLAYER's pieces: after whatever was in
+  // flight has had 2 s to land, they never move again by themselves — long
+  // enough for the computer's turn to finish and a still-running loop to roll
+  // and move for the player.
+  const playersOf = (s: ApiState) => JSON.stringify([s.points.map((n) => Math.max(n, 0)), s.bar.white, s.off.white]);
+  await page.waitForTimeout(2_000);
+  const held = playersOf(await readState(page));
+  await page.waitForTimeout(7_000);
+  expect(playersOf(await readState(page)), "[aspect: paused] the player's pieces still moved 2-9 s after Pause").toBe(held);
+
+  // Clicked again, it carries on.
+  await press(button, "[aspect: again] after Pause, Fast Forward could not be pressed again");
+  await expect(button, "[aspect: running] Fast Forward clicked again never read Pause").toHaveText(PAUSE);
+  const carried = await expect
+    .poll(async () => positionOf(await readState(page)), { timeout: 15_000 })
+    .not.toBe(held)
+    .then(
+      () => true,
+      () => false,
+    );
+  if (carried) return;
+  // Still, and the player's roll is used up with the turn still theirs: Fast
+  // Forward stops at the end of every roll, paused or not, and that is the
+  // finding. Run 1794861279's did — it played the roll, never ended the turn —
+  // and "after pausing, nothing moved" sent its model to the pause code.
+  const still = await readState(page);
+  expect(
+    still.turn === "white" && still.phase === "move" && still.remainingDice.length === 0,
+    "[aspect: turnend] Fast Forward played the player's roll and stopped: the turn never passed to the computer",
+  ).toBe(false);
+  expect(carried, "[aspect: resume] after Fast Forward was clicked again no piece moved").toBe(true);
+});
+
+test("[F67] REQ-FASTFORWARD-DOUBLE — a computer double stops Fast Forward until you answer", async ({ page }) => {
+  test.setTimeout(240_000);
+  // The operator, 2026-11-13: "i click fast forward -> AI wants to double -> double
+  // message appears -> game pauses -> i accept -> game remains paused (its my
+  // turn anyways) -> i click fast forward again (no matter if i've clicked roll
+  // or not the game starts back into the fast forward state". Played through
+  // twice: carrying on before the player rolls, then after.
+  for (const rolledFirst of [false, true]) {
+    await openApp(page);
+    const { points, off } = await offerRace(page, "first", [2, 1]);
+    await playRolledTurn(page, { points, bar: { white: 0, black: 0 }, off, cube: { value: 1, owner: null }, difficulty: "hard", winner: null, message: "" }, [2, 1]);
+    await page.reload();
+    await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+    const button = page.getByTestId("fastForwardBtn");
+    await expect(button, "[needs: F64]").toBeVisible();
+    await button.click();
+    await pageKeepsAnswering(page, "[needs: F66] the page stopped answering after Fast Forward was clicked");
+
+    // An offer is the computer's, made in the game: words on screen alone are not
+    // one (run 1794568362's page said "double" on its own button and messages
+    // while its computer never offered, and F67 went on to judge a stop that had
+    // nothing to stop for). It waits on the computer offering at all (G24).
+    await expect
+      .poll(
+        async () =>
+          /double|offer/i.test(await shownDoubleText(page)) && (await readState(page)).phase === "doubleOffered",
+        {
+          message: "[aspect: offer] [needs: F49 G12 G24] nothing on screen said the computer was doubling",
+          timeout: 15_000,
+        },
+      )
+      .toBe(true);
+    // Stopped: while the offer waits, nothing plays on — a button the player can
+    // see does not read Pause. A hidden button's leftover text is not on screen
+    // (run 1793627441 hid it with "Pause" inside, and the player was told the
+    // button "still read Pause").
+    await page.waitForTimeout(1_500);
+    if (await button.isVisible()) {
+      await expect(button, "[aspect: stopped] the button still read Pause while the computer's double waited").not.toHaveText(PAUSE);
+    }
+
+    // The player takes the double; the computer finishes its turn.
+    const take = answerButton(page, TAKE);
+    await expect(take, "[aspect: answer] [needs: F49 F56] no button to take the computer's double showed").toBeVisible();
+    await playerClick(take);
+    await expect(page.getByTestId("modalOverlay"), "[needs: F90] after the double was taken its pop-up stayed on screen").toBeHidden({ timeout: 3_000 });
+    await expect
+      .poll(async () => (await readState(page)).turn, {
+        message: "[aspect: frozen] [needs: G20] after the double was taken the turn never came back to the player",
+        timeout: 20_000,
+      })
+      .toBe("white");
+
+    // Stays stopped: nothing plays by itself, and the button is back, reading Fast Forward.
+    await page.waitForTimeout(2_000);
+    const held = positionOf(await readState(page));
+    await page.waitForTimeout(3_000);
+    expect(positionOf(await readState(page)), "[aspect: stays] pieces moved by themselves after the double was taken").toBe(held);
+    await expect(button, "[aspect: back] after the double was taken no Fast Forward button showed").toBeVisible();
+    // Nothing plays and the button is there, so only its word is wrong: told as
+    // that, not "didn't come back" — run 1793743564 heard that line as "start
+    // playing again" and Fast Forward played the player's moves next round.
+    await expect(button, "[aspect: label] [needs: F64] after the double was taken nothing played, but the button still read Pause").toHaveText(FAST_FORWARD);
+
+    // Carries on when asked, from wherever the turn stands.
+    if (rolledFirst) {
+      await postJson<ApiState>(page, "/api/debug/roll", { dice: [2, 1] });
+      await rollAndCheck(page, [2, 1], () => page.getByTestId("rollBtn").click());
+    }
+    const paused = positionOf(await readState(page));
+    await expect(button, `after the double was taken${rolledFirst ? " and the player rolled" : ""} no Fast Forward button was there to carry on`).toBeVisible();
+    await press(button, `[aspect: carry] after the double was taken${rolledFirst ? " and the player rolled" : ""} Fast Forward could not be pressed to carry on`);
+    await expect
+      .poll(async () => positionOf(await readState(page)), {
+        message: `Fast Forward clicked again after the double${rolledFirst ? " and the roll" : ""} did not start the automatic play`,
+        timeout: 15_000,
+      })
+      .not.toBe(paused);
+  }
+});
+
+// ── F72: an offer is answered with Accept or Decline ──────────────────────────
+// The computer's offer is the player's to answer. A build that offered after every
+// turn and left End Turn live handed the turn straight back to the computer when
+// the player pressed it: the computer rolled, moved and offered again, and the
+// player never got a turn (run 1791408711, played by hand). The same race as F49
+// (a lead the hard computer doubles on) puts the offer on screen; then End Turn,
+// if the page lets it be pressed, must not give the computer another turn.
+test("[F72] REQ-DOUBLE-PENDING — the computer's offer holds the game", async ({ page }) => {
+  test.setTimeout(90_000);
+  await openApp(page);
+  const { points, off } = await offerRace(page, "first", [2, 1]);
+  await playRolledTurn(page, { points, bar: { white: 0, black: 0 }, off, cube: { value: 1, owner: null }, difficulty: "hard", winner: null, message: "" }, [2, 1]);
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await press(page.getByTestId("endTurnBtn"), "[aspect: noend] [needs: F47] End Turn was not available with nothing left to play");
+  // An offer that never shows is F49's finding (both stage 17 now): this check
+  // waits on it, never passes on it. It used to `return` here and record a PASS
+  // with nothing tested (2026-11-21 grader audit, the operator approved the fix 11-23).
+  const offerShown = await expect
+    .poll(async () => /double|offer/i.test(await shownDoubleText(page)), { timeout: 10_000 })
+    .toBe(true)
+    .then(() => true, () => false);
+  expect(offerShown, "[needs: F49] the computer's offer never showed, so nothing held the game").toBe(true);
+
+  // Let the computer finish whatever it is doing, then press End Turn the way a
+  // player does, if the button can be pressed at all.
+  await page.waitForTimeout(2_500);
+  const endTurn = page.getByTestId("endTurnBtn");
+  // Enabled is not pressable: run 1793668943's build enabled End Turn under the
+  // offer's pop-up, the click waited out the test, and the timeout was told as
+  // "End Turn made the computer play again". A button the player can't press
+  // leaves the offer holding.
+  const pressed =
+    (await endTurn.isEnabled()) &&
+    (await endTurn.click({ timeout: 3_000 }).then(
+      () => true,
+      () => false,
+    ));
+  if (pressed) {
+    let sawBlack = false;
+    const deadline = Date.now() + 4_000;
+    while (Date.now() < deadline && !sawBlack) {
+      const s = await readState(page);
+      if (s.turn === "black" && s.phase !== "doubleOffered") sawBlack = true;
+      await page.waitForTimeout(150);
+    }
+    expect(
+      sawBlack,
+      "[aspect: endturn] pressing End Turn with the double waiting gave the computer another turn",
+    ).toBe(false);
+  }
+});
+
+// ── F73: either number first ──────────────────────────────────────────────────
+// With two numbers a piece can play in either order, the game lists a move for
+// each and lets the player take either first. A build that drew both hints but
+// only played the bigger number's left the smaller one dead: clicking it did
+// nothing (run 1791408711, played by hand). F04 reads the hints, G05 the forced
+// case; this clicks the smaller number's.
+test("[F73] REQ-DIE-ORDER — the smaller number can be played first", async ({ page }) => {
+  test.setTimeout(60_000);
+  await openApp(page);
+  const points = emptyPoints();
+  points[24] = 2;
+  points[13] = 5;
+  points[8] = 3;
+  points[6] = 5;
+  points[1] = -2;
+  points[12] = -5;
+  points[17] = -3;
+  points[19] = -5;
+  await seedRolled(
+    page,
+    { points, bar: { white: 0, black: 0 }, off: { white: 0, black: 0 }, cube: { value: 1, owner: null }, message: "" },
+    [3, 5],
+  );
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await waitForBoardSettled(page).catch(() => undefined);
+
+  // From 13 a 3 reaches 10 and a 5 reaches 8, and either order plays both numbers.
+  const hints = page.getByTestId("hint");
+  const back = page.locator('[data-testid="checker"][data-color="white"][data-loc="13"]');
+  const backCount = await back.count();
+  expect(backCount, "[needs: F03 F25] no piece on 13 to pick up").toBeGreaterThan(0);
+  await playerClickUntilShown(back.last(), hints);
+  await expect.poll(async () => hints.count(), "[needs: REQ-HINT/hint F03 F60]").toBeGreaterThan(1);
+
+  // The 3's move is the hint drawn over point 10, read once the hints hold still
+  // and judged by the point under its centre (F75's rule), then clicked where a
+  // player sees it. A hint drawn anywhere else is the placement check's (F75).
+  const boxes = await readPointBoxes(page);
+  const over10 = (await settledHintPositions(page)).find((h) =>
+    boxes.some((pt) => pt.num === 10 && h.x >= pt.x && h.x <= pt.x + pt.width && h.y >= pt.y && h.y <= pt.y + pt.height),
+  );
+  expect(over10, "[needs: F75 F04] no hint was drawn over point 10 for the 3").toBeTruthy();
+  await page.mouse.click(over10!.x, over10!.y);
+
+  await expect
+    .poll(async () => (await readState(page)).points[10], {
+      message: "[needs: F25 F04] the piece did not go to 10 when the 3's move was clicked first",
+      timeout: 3_000,
+    })
+    .toBeGreaterThan(0);
+});
+
+test("[F78] REQ-DICE-USED — a played die stays on screen, greyed", async ({ page }) => {
+  test.setTimeout(60_000);
+  // The operator, run 1792224699 round 3: "the die disappears after i move it. what?
+  // ... it should grey out the die slightly to signal it has been played." A
+  // non-double 3-5 on the opening layout, the back piece on 13 moved by
+  // clicking it and a hint as a player does; then the dice on screen are read
+  // against themselves before the move: still two, and the faintest of them
+  // visibly fainter than either was (its dark and light pixels drawn closer
+  // together — dimmed or greyed, whatever colours the dice use).
+  await openApp(page);
+  const points = emptyPoints();
+  points[24] = 2;
+  points[13] = 5;
+  points[8] = 3;
+  points[6] = 5;
+  points[1] = -2;
+  points[12] = -5;
+  points[17] = -3;
+  points[19] = -5;
+  await seedRolled(
+    page,
+    { points, bar: { white: 0, black: 0 }, off: { white: 0, black: 0 }, cube: { value: 1, owner: null }, message: "" },
+    [3, 5],
+  );
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await waitForBoardSettled(page).catch(() => undefined);
+
+  const shownDice = async () =>
+    page.getByTestId("die").evaluateAll((els) =>
+      els
+        .filter((el) => (el as HTMLElement).checkVisibility())
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        }),
+    );
+  const before = await shownDice();
+  expect(before.length, "[needs: REQ-RENDER/die REQ-TESTID/die F39] the 3-5 roll did not show two dice").toBe(2);
+  const contrastBefore = (await sampleBoxContrast(page, before)) as number[];
+
+  const hints = page.getByTestId("hint");
+  const back = page.locator('[data-testid="checker"][data-color="white"][data-loc="13"]');
+  const backCount = await back.count();
+  expect(backCount, "[needs: F03 F25] no piece on 13 to pick up").toBeGreaterThan(0);
+  await playerClickUntilShown(back.last(), hints);
+  await expect.poll(async () => hints.count(), "[needs: REQ-HINT/hint F03 F60]").toBeGreaterThan(0);
+  await playerClick(hints.first());
+  await expect
+    .poll(async () => (await readState(page)).remainingDice.length, "[needs: F25 F45] the move did not use up a die")
+    .toBe(1);
+  // Any fade or slide the page plays on a used die has finished by now.
+  await page.waitForTimeout(1_500);
+
+  const after = await shownDice();
+  expect(after.length, `[aspect: gone] [needs: F45] after a move ${after.length} of the two dice are left on screen`).toBe(2);
+  const contrastAfter = (await sampleBoxContrast(page, after)) as number[];
+  const faintest = Math.min(...contrastAfter);
+  const was = Math.min(...contrastBefore);
+  // No change a player could see (under a twentieth) is the player's "looks the
+  // same"; a die dimmed, but by less than the fifth that reads as greyed out, is
+  // a measurement near its limit, told by the team with the numbers.
+  expect(
+    faintest <= 0.95 * was,
+    `[aspect: grey] [needs: F45] after a move the faintest die stands out ${faintest.toFixed(2)} against ${was.toFixed(2)} before it`,
+  ).toBe(true);
+  expect(
+    faintest <= 0.8 * was,
+    `[aspect: slight] [needs: F45] after a move the faintest die stands out ${faintest.toFixed(2)} against ${was.toFixed(2)} before it`,
+  ).toBe(true);
+});

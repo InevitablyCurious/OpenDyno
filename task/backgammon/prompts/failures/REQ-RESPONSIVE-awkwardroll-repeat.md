@@ -1,0 +1,1 @@
+I rolled a double with a piece on the bar again and it locked up again; {seconds} later it still hadn't come back.

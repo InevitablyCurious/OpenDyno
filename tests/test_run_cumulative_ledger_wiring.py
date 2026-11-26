@@ -1,0 +1,77 @@
+"""WO-43a regression guard: `_handle_run` must resolve `layout` in its own scope.
+
+The bug: `_handle_run` called `_append_results_ledger(args, layout)` with
+`layout` never bound in that function (it was only a local of `_build_context`),
+so a completed `status=="done"` run raised NameError at the call site — before
+the fail-open try/except inside `_append_results_ledger` could apply — crashing
+`_handle_run` after the result was already printed.
+
+This test monkeypatches `_build_context` and `_append_results_ledger` so the
+handler runs without any runtime, then asserts the `layout` argument reaching
+the ledger append is a `PathLayout` resolved from the handler's `--manifest`,
+and that the append is told which ONE cell it just ran (the appended ordinal —
+without it the ledger would re-record every sibling cell of the campaign).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import sys
+from typing import Any
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import run_cumulative  # noqa: E402
+
+
+class _StubSequencer:
+    def append_cell(self, variant: str) -> Any:
+        class _Appended:
+            sequence_index = 0
+
+        return _Appended()
+
+    def step_until_done(self) -> dict[str, Any]:
+        return {"status": "done", "convergence": {}}
+
+
+def test_handle_run_resolves_layout_for_ledger_append(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    manifest = tmp_path / "campaign" / "manifest.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        run_cumulative,
+        "_build_context",
+        lambda args, require_runtime: run_cumulative.CliContext(
+            sequencer=_StubSequencer()
+        ),
+    )
+
+    captured: dict[str, Any] = {}
+
+    def _capture_ledger(
+        args: argparse.Namespace, layout: Any, *, sequence_index: int
+    ) -> None:
+        captured["args"] = args
+        captured["layout"] = layout
+        captured["sequence_index"] = sequence_index
+
+    monkeypatch.setattr(run_cumulative, "_append_results_ledger", _capture_ledger)
+
+    args = argparse.Namespace(manifest=str(manifest), variant="a", org=None, seed=1)
+
+    rc = run_cumulative._handle_run(args)
+
+    assert rc == 0
+    layout = captured["layout"]
+    assert isinstance(layout, run_cumulative.PathLayout)
+    assert layout.manifest_path == manifest.resolve()
+    assert captured["args"] is args
+    assert captured["sequence_index"] == 0

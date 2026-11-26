@@ -1,0 +1,763 @@
+"""PLAYER ORDER: the model hears only the earliest failing stage's problems.
+
+Every check the grader can report must have a stage — which stage it is in
+decides whether the model hears about it (harness/adapters/challenge/stages.py).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+
+import pytest
+
+from harness.adapters.challenge import ChallengeRunner
+from harness.adapters.challenge.constants import _GRADER_DIR, _PACK
+from harness.adapters.challenge.feedback import (
+    gate_tokens_in_suite,
+    load_feedback_overrides_from_failures,
+)
+from harness.adapters.challenge.stages import (
+    UnstagedCheckError,
+    load_stages,
+    player_view,
+    stage_of,
+)
+
+STAGES = load_stages(_GRADER_DIR / "checks.json")
+
+
+def _infra(check: str) -> bool:
+    return ChallengeRunner._is_harness_infra_check(check)
+
+
+def test_every_gate_token_in_the_suite_has_a_stage() -> None:
+    for token in sorted(gate_tokens_in_suite(_GRADER_DIR)):
+        stage_of(f"[{token}] x", STAGES)
+
+
+def test_every_complaint_key_and_every_drawn_or_tagged_element_has_a_stage() -> None:
+    keys = list(json.loads((_GRADER_DIR / "feedback.json").read_text())["gates"])
+    for label in ("point", "checker", "bar", "off-tray", "die"):
+        keys += [f"REQ-RENDER/{label}", f"REQ-TESTID/{label}"]
+    keys += ["REQ-TESTID/testid.anything", "REQ-STATE/state.anything"]
+    for key in keys:
+        # An aspect line (`G01.pieces`) belongs to its gate: same stage.
+        check = key if key.startswith("REQ-") else f"[{key.split('.', 1)[0]}] x"
+        stage_of(check, STAGES)
+
+
+def test_the_most_specific_key_wins() -> None:
+    assert stage_of("conformance:REQ-TESTID/die — dice tagged", STAGES).number == 7
+    assert stage_of("conformance:REQ-TESTID/testid.board — tagged", STAGES).number == 1
+
+
+def test_an_undeclared_check_is_refused_not_guessed() -> None:
+    with pytest.raises(UnstagedCheckError):
+        stage_of("[Z99] nothing", STAGES)
+
+
+def test_only_the_earliest_failing_stage_is_told() -> None:
+    problems = [
+        {"check": "[G08] REQ-BEAROFF — bear-off"},  # stage 16
+        {"check": "[G01] REQ-INIT — initial position"},  # stage 6
+        {"check": "[F06] REQ-PIPUI — pips on screen"},  # stage 6
+        {"check": "[G14] REQ-AISTRENGTH — hard beats easy"},  # stage 12
+    ]
+    view = player_view(problems, STAGES, is_infra=_infra)
+    assert view.stage is not None and view.stage.number == 6
+    assert [p["check"][:5] for p in view.visible] == ["[G01]", "[F06]"]
+    assert len(view.withheld) == 2
+
+
+def test_the_board_as_it_opens_is_told_before_anything_played() -> None:
+    # the operator, 2026-10-28: run 1793189038 round 3 told "the computer never made
+    # its move" beside "pieces still run into each other" when the window
+    # changes. The opening look, layout and resize come first, alone.
+    view = player_view(
+        [
+            {
+                "check": "[F88] REQ-OPENING — the computer plays when it wins the opening"
+            },
+            {
+                "check": "[F87] REQ-LAYOUT — the board keeps its shape as the window changes"
+            },
+        ],
+        STAGES,
+        is_infra=_infra,
+    )
+    assert view.stage is not None and view.stage.number == 6
+    assert [p["check"][:5] for p in view.visible] == ["[F87]"]
+
+
+def test_a_stage_is_told_in_the_order_a_player_meets_it() -> None:
+    # the operator, 2026-10-28: app loads → board → pieces → buttons → resizing. The
+    # grader reports conformance, then backend, then frontend; the model must
+    # read the stage's own order instead (WO-LI-GRADER-ORIENTATION).
+    view = player_view(
+        [
+            {
+                "check": "[F87] REQ-LAYOUT — the board keeps its shape as the window changes"
+            },
+            {"check": "[G01] REQ-INIT — initial position"},
+            {
+                "check": "[F41] REQ-GEOMETRY — checkers drawn as circles sized to their points"
+            },
+        ],
+        STAGES,
+        is_infra=_infra,
+    )
+    assert [p["check"][:5] for p in view.visible] == [
+        "[F41]",
+        "[G01]",
+        "[F87]",
+    ]
+
+
+def test_the_first_look_is_told_big_picture_first() -> None:
+    # the operator, 2026-11-11, on a build with its board centred, its buttons stacked
+    # underneath, faint triangles and pieces already drawn: "the board and the
+    # buttons aren't positioned correctly, i expect to see the board on the left
+    # and the buttons on the right" — and nothing about the triangles or the
+    # pieces. Placement is told alone; the board's drawing, the buttons' details
+    # and the pieces each wait for the stage before them to be clean (a button
+    # 4 px shorter than the rest is not told over points squeezed into a corner).
+    told = [
+        {"check": "[F91] REQ-RENDER — no pieces before the pieces layer"},
+        {"check": "[F30] REQ-GEOMETRY — triangles point inward"},
+        {"check": "[F36] REQ-LAYOUT — the board takes about 80% of the width"},
+        {"check": "[F38] REQ-LAYOUT — the buttons and game info show properly"},
+        {"check": "[F35] REQ-LAYOUT — board and controls placement"},
+    ]
+    order = []
+    while told:
+        view = player_view(told, STAGES, is_infra=_infra)
+        assert view.stage is not None
+        order.append([p["check"][:5] for p in view.visible])
+        shown = {p["check"] for p in view.visible}
+        told = [p for p in told if p["check"] not in shown]
+    assert order == [["[F35]"], ["[F36]", "[F30]"], ["[F38]"], ["[F91]"]]
+
+
+def test_a_clean_stage_unlocks_the_next_failing_one_skipping_clean_stages() -> None:
+    view = player_view(
+        [{"check": "[G10] REQ-WINCLASS — x"}, {"check": "[G14] x"}],
+        STAGES,
+        is_infra=_infra,
+    )
+    assert view.stage is not None and view.stage.number == 12
+
+
+def test_runner_deaths_are_never_staged_or_told() -> None:
+    view = player_view(
+        [{"check": "backend:runner backend/gates-13-16.test.ts"}],
+        STAGES,
+        is_infra=_infra,
+    )
+    assert view.stage is None and view.visible == [] and view.withheld == []
+
+
+def test_a_check_the_grader_never_reached_is_told_to_no_one() -> None:
+    # Run 1790183923, attempt 4: POST /api/new returned 500, the pre-gate
+    # skipped everything after it, and 30 skipped checks each became a specific
+    # complaint ("their automation can't find the board"). Nobody observed any
+    # of them; only the check that actually failed may be told.
+    skipped = "never evaluated — an earlier step failed and skipped it"
+    problems = [
+        {
+            "check": "conformance:REQ-TESTID/testid.board",
+            "expected": "this check is evaluated",
+            "observed": skipped,
+        },
+        {
+            "check": "conformance:REQ-RENDER/checker",
+            "expected": "this check is evaluated",
+            "observed": skipped,
+        },
+        {
+            "check": "conformance:REQ-TESTID/dom — page DOM exposes the required testids",
+            "observed": "HTTP 500 from POST /api/new",
+        },
+    ]
+    view = player_view(problems, STAGES, is_infra=_infra)
+    assert [p["check"].split(" ")[0] for p in view.visible] == [
+        "conformance:REQ-TESTID/dom"
+    ]
+    assert sorted(view.unevaluated) == [
+        "conformance:REQ-RENDER/checker",
+        "conformance:REQ-TESTID/testid.board",
+    ]
+    assert view.withheld == []
+    only_skipped = player_view(problems[:2], STAGES, is_infra=_infra)
+    assert (
+        only_skipped.stage is None
+        and only_skipped.visible == []
+        and len(only_skipped.unevaluated) == 2
+    )
+
+
+def test_the_report_runners_own_death_is_never_staged_or_told() -> None:
+    # grader/report.mjs publishes `runner:exception` when it throws (gradable
+    # false). Unrecognised, it reached stage_of, which raises for an unstaged
+    # check and aborts the campaign.
+    view = player_view(
+        [{"check": "runner:exception", "observed": "TypeError"}],
+        STAGES,
+        is_infra=_infra,
+    )
+    assert view.stage is None and view.visible == [] and view.withheld == []
+
+
+# ── A CHECK THAT CANNOT GET STARTED IS NOT TOLD (the operator, 2026-09-24) ──
+
+
+def _doubles(observed: str) -> dict[str, str]:
+    return {
+        "check": "[F33] REQ-DOUBLES — a double lets the player make four moves",
+        "observed": observed,
+    }
+
+
+def test_a_stuck_check_is_not_told_when_the_check_for_that_step_failed_too() -> None:
+    # FIX-2 mutation M27, no hints anywhere: the doubles gate told "I rolled a
+    # double and could only make two moves" to a player who could make none.
+    problems = [
+        _doubles(
+            "Error: move 1: no hint appeared [aspect: nomove] [needs: REQ-HINT/hint F03 F25]"
+        ),
+        {
+            "check": "[F03] REQ-HINT — clicking a piece shows its moves",
+            "observed": "Error: Could not reveal hints",
+        },
+    ]
+    view = player_view(problems, STAGES, is_infra=_infra)
+    assert [p["check"][:5] for p in view.visible] == ["[F03]"]
+    assert [c[:5] for c in view.unevaluated] == ["[F33]"]
+
+
+def test_a_stuck_check_is_told_when_the_step_failed_only_in_its_own_situation() -> None:
+    # Hints vanish only on a double: every ordinary-roll check passes, so the
+    # double's own line is what the player saw — hiding it would skip stage 6.
+    view = player_view(
+        [_doubles("Error: move 1: no hint appeared [aspect: nomove] [needs: F25]")],
+        STAGES,
+        is_infra=_infra,
+    )
+    assert view.stage is not None and view.stage.number == 11
+    assert [p["check"][:5] for p in view.visible] == [
+        "[F33]"
+    ] and view.unevaluated == []
+    label, _ = ChallengeRunner._told_label(view.visible[0], pass_kind="first")
+    assert label == ChallengeRunner._feedback_overrides()["F33.nomove"]["first"]
+
+
+def test_a_stuck_check_is_told_when_the_check_it_needs_was_never_evaluated() -> None:
+    # The needed check never ran, so no player complaint stands in for this one:
+    # withholding both would tell nobody (WO-AUDIT-A class g, S4).
+    problems = [
+        _doubles("Error: move 1: no hint appeared [aspect: nomove] [needs: F03]"),
+        {
+            "check": "[F03] REQ-HINT — clicking a piece shows its moves",
+            "observed": "never evaluated — an earlier step failed and skipped it",
+        },
+    ]
+    view = player_view(problems, STAGES, is_infra=_infra)
+    assert [p["check"][:5] for p in view.visible] == ["[F33]"]
+    assert [c[:5] for c in view.unevaluated] == ["[F03]"]
+
+
+def test_a_chain_of_stuck_checks_is_told_as_the_one_step_that_failed() -> None:
+    problems = [
+        _doubles("move 1: no checker to pick up [aspect: nomove] [needs: F25]"),
+        {
+            "check": "[F25] REQ-HINT — a played move consumes a die",
+            "observed": "[needs: REQ-HINT/hint F03]",
+        },
+        {
+            "check": "conformance:REQ-HINT/hint — selecting a movable checker shows move hints",
+            "observed": "none",
+        },
+    ]
+    view = player_view(problems, STAGES, is_infra=_infra)
+    assert [p["check"].split(" ")[0] for p in view.visible] == [
+        "conformance:REQ-HINT/hint"
+    ]
+    assert sorted(c[:5] for c in view.unevaluated) == ["[F25]", "[F33]"]
+
+
+def test_moves_after_the_first_are_the_doubles_checks_own_finding() -> None:
+    # The player has made moves, so how many is the complaint. Moving a piece is
+    # an earlier step than using the dice (the operator, 2026-10-28), so while F25 fails
+    # the doubles line waits behind it; on its own it is told.
+    problems = [
+        _doubles("move 3: no hint appeared [aspect: two]"),
+        {"check": "[F25] REQ-HINT — x", "observed": "x"},
+    ]
+    view = player_view(problems, STAGES, is_infra=_infra)
+    assert [p["check"][:5] for p in view.visible] == ["[F25]"]
+    assert [c[:5] for c in view.withheld] == ["[F33]"]
+    alone = player_view(problems[:1], STAGES, is_infra=_infra)
+    assert [p["check"][:5] for p in alone.visible] == ["[F33]"]
+    label, _ = ChallengeRunner._told_label(
+        _doubles("move 3: no hint appeared [aspect: two]"), pass_kind="first"
+    )
+    assert label == "I rolled a double and could only make two moves."
+
+
+# ── Every marker in the graded suite resolves ────────────────────────────────
+#
+# Markers live in assertion messages, so nothing checks them at run time: an
+# aspect with no line silently falls back to the gate's general line, and a
+# needs marker naming a later stage, a check that does not exist, or a cycle
+# would hide a fault the player meets. These read the graded sources the way
+# gate_tokens_in_suite does and refuse all of those.
+
+_TITLE = re.compile(r"\b(?:test|it)\(\s*[\"'`]\[([A-Z]+[0-9]*)\]")
+_MARKER = re.compile(r"\[(aspect|needs): ([^\]]+)\]")
+# A marker in a shared helper sits in no test: each is listed with the gates
+# whose tests call the helper, so it is checked for each of them.
+_LAYOUT = ("F35", "F36", "F37", "F38")  # layout.spec.ts openAt / drawnBoard
+# fixtures.ts waits for the drawn game on every open and reload of every
+# frontend gate.
+_FRONTEND = tuple(
+    sorted(
+        {
+            m.group(1)
+            for path in (_GRADER_DIR / "frontend").glob("*.spec.ts")
+            for m in re.finditer(
+                r"\b(?:test|it)\(\s*[\"'`]\[([A-Z]+[0-9]*)\]",
+                path.read_text(encoding="utf-8"),
+            )
+        }
+    )
+)
+_STATIC_TESTIDS = (
+    "scoreWhite",
+    "scoreBlack",
+    "difficulty",
+    "newGameBtn",
+    "board",
+    "playfield",
+    "checkerLayer",
+    "pointHints",
+    "turnIndicator",
+    "pipWhite",
+    "pipBlack",
+    "cube",
+    "cubeVal",
+    "cubeOwner",
+    "dice",
+    "rollBtn",
+    "doubleBtn",
+    "undoBtn",
+    "endTurnBtn",
+    "message",
+    "modalOverlay",
+    "modalTitle",
+    "modalBody",
+    "modalBtns",
+)
+_HELPER_MARKERS = {
+    # playOwnFinishedTurn (core.spec.ts): a 3-1 played through the server that does
+    # not finish the turn waits on the move and turn-end checks (2026-11-20). Its
+    # users: the computer's-turn watcher (F62, F77) and F55.
+    # playOutTheRoll / playRolledTurn (core.spec.ts): the player's roll played out
+    # through the server, for checks that need the finished turn to stay theirs
+    # (2026-11-21): F64's "after your moves", F67's race before the offer.
+    ("frontend/core.spec.ts", "[needs: F25 G23 F47]"): (
+        "F55",
+        "F62",
+        "F64",
+        "F67",
+        "F77",
+    ),
+    # playParkedCubeTurn (server-path-integrity.test.ts): a computer turn run with
+    # the cube parked in the player's hands, told as the cube when the computer
+    # doubles anyway and the turn goes unplayed (2026-11-21). Its users: G30, G39.
+    ("backend/server-path-integrity.test.ts", "[aspect: cubeheld]"): ("G30", "G39"),
+    ("backend/server-path-integrity.test.ts", "[needs: G25]"): ("G30", "G39"),
+    # choose (gates-14-30.test.ts): a chooser that throws waits on G38, the
+    # check that asks it a turn with no move (2026-11-16).
+    ("backend/gates-14-30.test.ts", "[needs: G38]"): ("G14",),
+    # rollAndCheck (fixtures.ts): a press of Roll that made no roll waits on F89.
+    ("frontend/fixtures.ts", "[needs: F89]"): (
+        "F03",
+        "F04",
+        "F05",
+        "F10",
+        "F24",
+        "F25",
+        "F33",
+        "F39",
+        "F45",
+        "F47",
+        "F48",
+        "F58",
+        "F60",
+        "F61",
+        "F63",
+        "F75",
+        "F76",
+        "F84",
+    ),
+    # rollAndCheck (fixtures.ts): Roll greyed out because the game was past the
+    # player's roll (the opening played itself) waits on F61's autoroll and F89.
+    # F61 itself asserts autoroll before it ever presses Roll, so it is not here.
+    ("frontend/fixtures.ts", "[needs: F61 F89]"): (
+        "F03",
+        "F04",
+        "F05",
+        "F10",
+        "F24",
+        "F25",
+        "F33",
+        "F39",
+        "F45",
+        "F47",
+        "F48",
+        "F58",
+        "F60",
+        "F63",
+        "F75",
+        "F76",
+        "F84",
+    ),
+    ("frontend/core.spec.ts", "[aspect: format]"): ("F06",),  # readInt
+    ("frontend/core.spec.ts", "[needs: F69]"): ("F06",),  # readInt
+    # bearOffTheLastPiece: the player's own last bear-off, shared by the end-of-game checks.
+    ("frontend/core.spec.ts", "[needs: F03]"): ("F51", "F53"),
+    ("frontend/core.spec.ts", "[needs: F04]"): ("F51", "F53"),
+    ("frontend/doubles.spec.ts", "[needs: REQ-RENDER/die F61]"): (
+        "F39",
+    ),  # rollThroughThePage
+    ("frontend/doubles.spec.ts", "[needs: F61]"): ("F39",),  # rollThroughThePage
+    ("frontend/core.spec.ts", "[needs: F61]"): (
+        "F03",
+        "F25",
+        "F04",
+        "F45",
+        "F60",
+        "F63",
+    ),  # clickOpeningRoll
+    (
+        "frontend/fixtures.ts",
+        "[needs: REQ-RENDER/point REQ-TESTID/point]",
+    ): _FRONTEND,
+    ("frontend/fixtures.ts", "[needs: REQ-RENDER/point]"): _FRONTEND,
+    ("frontend/layout.spec.ts", "[needs: F01]"): _LAYOUT,
+    ("frontend/layout.spec.ts", "[needs: REQ-RENDER/point]"): _LAYOUT,
+    # Every spec's shared open-the-page helper waits on the board check: with no
+    # board, the checks that read it defer to F01 (run 1790452916).
+    **{
+        (f"frontend/{spec}", "[needs: F01]"): tuple(
+            sorted(
+                {
+                    m.group(1)
+                    for m in _TITLE.finditer(
+                        (_GRADER_DIR / "frontend" / spec).read_text(encoding="utf-8")
+                    )
+                }
+                - {"F01"}
+            )
+        )
+        for spec in (
+            "core.spec.ts",
+            "board-geometry.spec.ts",
+            "edges.spec.ts",
+            "doubles.spec.ts",
+        )
+    },
+    # layout.spec.ts ASPECT_OF: F38 names the item on the right that isn't showing.
+    **{
+        ("frontend/layout.spec.ts", f"[aspect: {a}]"): ("F38",)
+        for a in (
+            "roll",
+            "double",
+            "undo",
+            "endturn",
+            "newgame",
+            "difficulty",
+            "cube",
+            "pipwhite",
+            "pipblack",
+            "turn",
+            "message",
+        )
+    },
+    # pregate.ts flags a duplicated data-testid with an [aspect: dup] marker on
+    # the same REQ-TESTID/testid.<tag> id; each tag owns the dup line.
+    ("conformance/pregate.ts", "[aspect: dup]"): tuple(
+        f"REQ-TESTID/testid.{t}" for t in _STATIC_TESTIDS
+    ),
+}
+
+
+def _string_end(src: str, i: int) -> int:
+    quote, j, n = src[i], i + 1, len(src)
+    while j < n and src[j] != quote:
+        if src[j] == "\\":
+            j += 2
+            continue
+        if quote == "`" and src.startswith("${", j):
+            depth, j = 1, j + 2
+            while j < n and depth:
+                depth += {"{": 1, "}": -1}.get(src[j], 0)
+                j += 1
+            continue
+        j += 1
+    return j + 1
+
+
+def _blank_comments(src: str) -> str:
+    out, i, n = list(src), 0, len(src)
+    while i < n:
+        if src[i] in "\"'`":
+            i = _string_end(src, i)
+        elif src.startswith("//", i) or src.startswith("/*", i):
+            end = src.find("\n", i) if src[i + 1] == "/" else src.find("*/", i) + 2
+            end = n if end < 0 else end
+            out[i:end] = " " * (end - i)
+            i = end
+        else:
+            i += 1
+    return "".join(out)
+
+
+def _call_end(code: str, open_paren: int) -> int:
+    depth, i = 0, open_paren
+    while i < len(code):
+        if code[i] in "\"'`":
+            i = _string_end(code, i)
+            continue
+        depth += {"(": 1, "[": 1, "{": 1, ")": -1, "]": -1, "}": -1}.get(code[i], 0)
+        if depth == 0:
+            return i + 1
+        i += 1
+    raise AssertionError(f"unbalanced test call at offset {open_paren}")
+
+
+def _suite_markers() -> list[tuple[str, str, str, str]]:
+    """(file, owning gate token, marker kind, marker value) across the graded suite."""
+    found = []
+    for directory in ("backend", "frontend", "conformance"):
+        for path in sorted((_GRADER_DIR / directory).rglob("*.ts")):
+            code = _blank_comments(path.read_text(encoding="utf-8"))
+            spans = [
+                (m.group(1), m.start(), _call_end(code, code.index("(", m.start())))
+                for m in _TITLE.finditer(code)
+            ]
+            rel = path.relative_to(_GRADER_DIR).as_posix()
+            for mark in _MARKER.finditer(code):
+                owners = [
+                    token for token, start, end in spans if start <= mark.start() < end
+                ]
+                gates = owners[-1:] or _HELPER_MARKERS.get((rel, mark.group(0)))
+                assert gates, (
+                    f"{rel}: {mark.group(0)} sits in no gate's test — list it in _HELPER_MARKERS"
+                )
+                # A `[setup]` step's needs (stages.py is_setup) are read apart:
+                # the step is never told, so the stage order below does not bind it.
+                line_start = code.rfind("\n", 0, mark.start()) + 1
+                line_end = code.find("\n", mark.start())
+                kind = mark.group(1)
+                if kind == "needs" and "[setup]" in code[line_start:line_end]:
+                    kind = "setupneeds"
+                found.extend((rel, gate, kind, mark.group(2)) for gate in gates)
+    return found
+
+
+def test_every_aspect_marker_has_its_gates_first_and_repeat_lines() -> None:
+    lines = load_feedback_overrides_from_failures(_PACK.dir)
+    aspects = {
+        f"{owner}.{value}"
+        for _, owner, kind, value in _suite_markers()
+        if kind == "aspect"
+    }
+    assert (
+        "F33.nomove" in aspects and "G03.plainmoves" in aspects
+    )  # the scan sees the suite
+    assert sorted(a for a in aspects if a not in lines) == []
+    # The runtime reads an aspect name as letters only (feedback.py _ASPECT_RE): a
+    # name with a hyphen or digit is not seen, and the player is told the gate's
+    # general line instead (run 1791314511: "someundrawn-left" told "the triangles
+    # point outward").
+    unreadable = sorted(
+        {
+            v
+            for _, _, kind, v in _suite_markers()
+            if kind == "aspect" and not re.fullmatch(r"[a-z]+", v)
+        }
+    )
+    assert unreadable == []
+
+
+def _message_after(code: str, at: int) -> str:
+    """The rest of the string literal a marker sits in: the failure's own words."""
+    start = max(code.rfind(q, 0, at) for q in "\"'`")
+    quote = code[start]
+    out, i, n = [], at, len(code)
+    while i < n and code[i] != quote:
+        if code[i] == "\\":
+            out.append(code[i + 1 : i + 2])
+            i += 2
+            continue
+        if quote == "`" and code.startswith("${", i):
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if code[i] in "\"'`":
+                    i = _string_end(code, i)
+                    continue
+                depth += {"{": 1, "}": -1}.get(code[i], 0)
+                i += 1
+            out.append("{…}")
+            continue
+        out.append(code[i])
+        i += 1
+    words = re.sub(r"\[(?:needs|brief|setup)[^\]]*\]", "", "".join(out))
+    return re.sub(r"\s+", " ", words).strip(" :,.")
+
+
+def _branch_messages() -> dict[str, set[str]]:
+    """gate.aspect → the distinct failure messages its asserts carry."""
+    found: dict[str, set[str]] = {}
+    for directory in ("backend", "frontend", "conformance"):
+        for path in sorted((_GRADER_DIR / directory).rglob("*.ts")):
+            code = _blank_comments(path.read_text(encoding="utf-8"))
+            spans = [
+                (m.group(1), m.start(), _call_end(code, code.index("(", m.start())))
+                for m in _TITLE.finditer(code)
+            ]
+            rel = path.relative_to(_GRADER_DIR).as_posix()
+            for mark in _MARKER.finditer(code):
+                if mark.group(1) != "aspect":
+                    continue
+                owners = [t for t, start, end in spans if start <= mark.start() < end]
+                gates = owners[-1:] or _HELPER_MARKERS.get((rel, mark.group(0))) or ()
+                words = _message_after(code, mark.end())
+                if not words:
+                    continue
+                for gate in gates:
+                    found.setdefault(f"{gate}.{mark.group(2)}", set()).add(words)
+    return found
+
+
+# Keys whose failures carry different messages and whose one line was judged true for
+# every one of them. Anything else with more than one failure message needs its own
+# aspect per failure, or a line that quotes {measured}.
+_ONE_LINE_FITS_EVERY_BRANCH: dict[str, str] = {
+    "F04.label": "both failures are hints that name no die; the line says the suggestions don't tell which die",
+    "F07.owner": "the page is judged against the server's cube on purpose (run 1795107958): wrong either way, "
+    "the cube on screen does not show the computer owning it",
+    "F07.value": "the same: wrong either way, the cube on screen does not read 2",
+    "F49.answer": "the line names both answers, Accept (or Take) and Decline (or Pass)",
+    "F61.dice": "a tied opening roll is an opening roll; the line says fewer than two dice stayed",
+    "F66.running": "both are the running Fast Forward button never reading Pause",
+    "G33.early": "both are the computer doubling on its first turn from the even start",
+}
+
+
+def test_a_key_shared_by_different_failures_has_a_line_true_for_each() -> None:
+    # One aspect is one told line. When a check's failures share an aspect, the line
+    # must be true for every one of them, or it points the model at the wrong fault.
+    # Run 1795650041 L3 (2026-11-25): F50's "took" and "passed" failures shared
+    # [aspect: shown]; a build whose computer PASSED (its "AI declined your double."
+    # overwritten by the win message) was told three rounds running that "nothing on
+    # screen told me whether the computer took it", and kept working on the take.
+    lines = load_feedback_overrides_from_failures(_PACK.dir)
+    shared = {
+        key: msgs
+        for key, msgs in _branch_messages().items()
+        if len(msgs) > 1
+        and "{measured}" not in (lines.get(key) or {}).get("first", "")
+        and key not in _ONE_LINE_FITS_EVERY_BRANCH
+    }
+    assert shared == {}, "\n".join(
+        f"{key}: {sorted(msgs)}" for key, msgs in sorted(shared.items())
+    )
+
+
+# Needs edges that can never apply together with the reverse edge, so they form no
+# real cycle. F30's boardcolours waits on F29 only when the bar is drawn over a
+# point box; F29 fails its overlap aspect in exactly that case, before it reaches
+# its blend aspect, the only place it waits on F30 (run 1793876536 cell 1).
+_EXCLUSIVE_NEEDS: frozenset[tuple[str, str]] = frozenset({("F30", "F29")})
+
+
+def test_a_needed_check_exists_in_the_same_or_an_earlier_stage_and_never_in_a_cycle() -> (
+    None
+):
+    # A needed check must be one the player can hear: withholding a stuck check
+    # is only honest when the check it names has a complaint line of its own.
+    known = set(load_feedback_overrides_from_failures(_PACK.dir))
+    graph: dict[str, set[str]] = {}
+    for rel, owner, kind, value in _suite_markers():
+        if kind not in ("needs", "setupneeds"):
+            continue
+        own_stage = stage_of(f"[{owner}] x", STAGES).number
+        for ident in value.split():
+            assert ident != owner, f"{rel}: {owner} needs itself"
+            assert ident in known, (
+                f"{rel}: {owner} needs {ident}, which has no complaint line"
+            )
+            needed = stage_of(
+                ident if ident.startswith("REQ-") else f"[{ident}] x", STAGES
+            ).number
+            # A setup step is never told: when its owner fails, the owner is told
+            # at its own moment, so a conformance check at the first moment may
+            # wait on a gameplay check (G35's played turn waits on G11).
+            assert kind == "setupneeds" or needed <= own_stage, (
+                f"{rel}: {owner} (stage {own_stage}) needs {ident} (stage {needed})"
+            )
+            if (owner, ident) in _EXCLUSIVE_NEEDS:
+                continue
+            graph.setdefault(owner, set()).add(ident)
+    assert graph, "no needs markers found — the scan is not reading the suite"
+
+    def visit(node: str, path: tuple[str, ...]) -> None:
+        assert node not in path, f"needs cycle: {' -> '.join(path + (node,))}"
+        for nxt in graph.get(node, ()):
+            visit(nxt, path + (node,))
+
+    for start in graph:
+        visit(start, ())
+
+
+def test_a_new_complaint_from_a_check_already_told_is_a_first_sighting() -> None:
+    # Run 1790345941: F32 told "The off tray isn't showing", then — the model
+    # drew the tray over the points — "The off tray is STILL drawn over some of
+    # the points.", a complaint the player had never made. Repeats are per
+    # complaint (check + aspect), not per check.
+    check = "[F32] REQ-GEOMETRY — off tray is visible"
+    told_before = {
+        ChallengeRunner._complaint_id(
+            {"check": check, "observed": "expected the off tray to be drawn"}
+        )
+    }
+    record = {
+        "check": check,
+        "observed": "[aspect: overlap] the off tray is drawn over points",
+    }
+    message = ChallengeRunner._build_feedback_prompt(
+        problems=[record], repeat_complaints=told_before
+    )
+    lines = ChallengeRunner._feedback_overrides()["F32.overlap"]
+    assert lines["first"] in message and lines["repeat"] not in message
+    again = ChallengeRunner._build_feedback_prompt(
+        problems=[record],
+        repeat_complaints=told_before | {ChallengeRunner._complaint_id(record)},
+    )
+    assert lines["repeat"] in again
+
+
+def test_every_needs_marker_in_one_message_counts() -> None:
+    # Fourteen assertions write two markers; the runtime once read only the first.
+    from harness.adapters.challenge.stages import needs_of
+
+    assert needs_of(
+        {"observed": "[needs: F01] [needs: G12] no way to take the double"}
+    ) == ("F01", "G12")
+    assert needs_of({"observed": "[aspect: shown] [needs: F01 G25] x"}) == (
+        "F01",
+        "G25",
+    )
+    assert needs_of({"observed": "nothing needed"}) == ()

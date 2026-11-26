@@ -1,0 +1,1 @@
+It locked up on me when I rolled a double with a piece on the bar — nothing responded after that. I gave it {seconds}.

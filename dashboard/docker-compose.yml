@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Bench Dashboard
+#
+#   cd dashboard && docker compose up -d
+#   open http://localhost:8717
+#
+# In Docker Desktop the container appears as `opendyno-dashboard` with
+# 8717 as a clickable link, and the health dot goes green once the board
+# assembles.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The project name is pinned, never left to compose's folder-name default: this
+# directory is called `dashboard`, and any other checkout with the same folder
+# name would otherwise share the project and replace this board's container.
+name: opendyno-dashboard
+
+services:
+  opendyno-dashboard:
+    build: .
+    image: opendyno-dashboard:v1
+    container_name: opendyno-dashboard
+    restart: unless-stopped
+
+    ports:
+      # This machine only. Remote viewing adds the LAN address on top — see
+      # docker-compose.lan.yml.
+      - "127.0.0.1:8717:8717"
+
+    environment:
+      # The control plane runs on the host and binds loopback only; Docker
+      # Desktop presents host.docker.internal traffic to it as loopback.
+      BENCH_DASH_CONTROL_URL: "http://host.docker.internal:8718"
+
+    extra_hosts:
+      # Makes host.docker.internal resolve on Linux too, where it is not
+      # automatic as it is on Docker Desktop.
+      - "host.docker.internal:host-gateway"

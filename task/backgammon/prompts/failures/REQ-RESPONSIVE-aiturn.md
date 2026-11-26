@@ -1,0 +1,1 @@
+It locked up on me while the computer was taking its turn — it never finished. I gave it {seconds}.

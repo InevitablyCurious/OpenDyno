@@ -1,0 +1,10 @@
+# Only the board's own source goes into the image; it reads no run data.
+**/node_modules
+**/.git
+**/runs
+**/data
+**/*.log
+README.md
+Dockerfile
+docker-compose.yml
+.dockerignore

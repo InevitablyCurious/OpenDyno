@@ -1,0 +1,279 @@
+import fs from "node:fs";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  PORT,
+  api,
+  debugRollVerified,
+  debugSetState,
+  emptyPoints,
+  freePort,
+  freshCheckout,
+  getState,
+  loadEngine,
+  makeState,
+  openingPoints,
+  resolveStartCommand,
+  startServer,
+  stopServer,
+  ordinaryTurn,
+} from "../lib/harness.ts";
+
+type Player = "white" | "black";
+type Difficulty = "easy" | "medium" | "hard";
+type Move = { from: number; to: number; die: number };
+type Board = {
+  points: number[];
+  bar: { white: number; black: number };
+  off: { white: number; black: number };
+};
+
+const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
+
+const sortedDice = (dice: number[]) => [...dice].sort((a, b) => a - b);
+
+function sameMove(a: Move, b: Move): boolean {
+  return a.from === b.from && a.to === b.to && a.die === b.die;
+}
+
+function removeDie(remaining: number[], die: number): void {
+  const idx = remaining.indexOf(die);
+  expect(idx).toBeGreaterThanOrEqual(0);
+  if (idx >= 0) {
+    remaining.splice(idx, 1);
+  }
+}
+
+function cloneBoardFromState(state: any): Board {
+  return {
+    points: [...state.points],
+    bar: { ...state.bar },
+    off: { ...state.off },
+  };
+}
+
+function mulberry32(seed: number): () => number {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6d2b79f5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function rollDice(rng: () => number): number[] {
+  const d1 = 1 + Math.floor(rng() * 6);
+  const d2 = 1 + Math.floor(rng() * 6);
+  return d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
+}
+
+function waitForExitWithTimeout(
+  proc: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null; timedOut: boolean }> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // best-effort cleanup only
+      }
+      resolve({ code: proc.exitCode, signal: proc.signalCode, timedOut: true });
+    }, timeoutMs);
+
+    // `close`, not `exit`: `exit` can fire before the piped stdout/stderr are
+    // drained, so the port-in-use message the gate reads could still be in
+    // flight — a correct app failing on a partial read (lib/harness.ts waits
+    // on `close` for the same reason).
+    proc.once("close", (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, timedOut: false });
+    });
+  });
+}
+
+describe("Backgammon backend gates 14-30 (the computer's engine)", () => {
+  describe("[G14] REQ-AILEGAL — AI legality + hard beats easy (seeded self-play)", () => {
+    let game: any;
+    let ai: any;
+    const originalRandom = Math.random;
+
+    function randomReachablePosition(rng: () => number): { board: Board; player: Player } {
+      let board: Board = {
+        points: [...game.startingPoints()],
+        bar: { white: 0, black: 0 },
+        off: { white: 0, black: 0 },
+      };
+      let player: Player = "white";
+
+      const prepHalfTurns = 1 + Math.floor(rng() * 7);
+      for (let i = 0; i < prepHalfTurns; i++) {
+        const dice = rollDice(rng);
+        const remaining = [...dice];
+
+        while (remaining.length > 0) {
+          const legal = game.legalMovesNow(board, player, remaining) as Move[];
+          if (legal.length === 0) break;
+
+          const pick = legal[Math.floor(rng() * legal.length)];
+          game.applyMove(board, player, pick);
+          removeDie(remaining, pick.die);
+        }
+
+        const win = game.checkWin(board, player);
+        if (win.won) {
+          board = {
+            points: [...game.startingPoints()],
+            bar: { white: 0, black: 0 },
+            off: { white: 0, black: 0 },
+          };
+          player = "white";
+          continue;
+        }
+
+        player = game.opponent(player);
+      }
+
+      return { board: game.cloneBoard(board), player };
+    }
+
+    function replayAndAssertLegal(
+      startBoard: Board,
+      player: Player,
+      dice: number[],
+      moves: Move[],
+    ): Board {
+      const board = game.cloneBoard(startBoard);
+      const remaining = [...dice];
+
+      for (const move of moves) {
+        const legalNow = game.legalMovesNow(board, player, remaining) as Move[];
+        const legal = legalNow.some((candidate) => sameMove(candidate, move));
+        expect(legal).toBe(true);
+
+        game.applyMove(board, player, move);
+        removeDie(remaining, move.die);
+      }
+
+      return board;
+    }
+
+    beforeAll(async () => {
+      ({ game, ai } = await loadEngine());
+    });
+
+    afterAll(() => {
+      Math.random = originalRandom;
+    });
+
+    // The computer's choice, as a check reaches it: a chooser that throws has
+    // no move to judge, and its crash is G38's finding, not G14's (run
+    // 1794856383 round 1: hard's chooseMoves threw on a no-move position in
+    // self-play, and G14 told a player "the skill setting doesn't seem to
+    // change anything" — the build's server never asks it with no move).
+    function choose(board: Board, player: Player, dice: number[], difficulty: Difficulty) {
+      try {
+        return ai.chooseMoves(game.cloneBoard(board), player, [...dice], difficulty) as {
+          moves: Move[];
+          board: Board;
+        };
+      } catch (err) {
+        throw new Error(`[needs: G38] chooseMoves threw at ${difficulty}: ${(err as Error).message}`);
+      }
+    }
+
+    // A position with no legal move for black: its one piece on 18, outside its
+    // home board, and every point from 19 to 24 held by two white pieces.
+    it("[G38] REQ-AILEGAL — the computer's chooser answers a turn with no move", () => {
+      const points = new Array(26).fill(0);
+      points[18] = -1;
+      for (let p = 19; p <= 24; p++) points[p] = 2;
+      const board: Board = { points, bar: { white: 0, black: 0 }, off: { white: 3, black: 14 } };
+      for (const difficulty of DIFFICULTIES) {
+        const before = JSON.stringify(board);
+        let result: { moves: Move[]; board: Board } | null = null;
+        let threw: string | null = null;
+        try {
+          result = ai.chooseMoves(game.cloneBoard(board), "black", [6, 5], difficulty);
+        } catch (err) {
+          threw = (err as Error).message;
+        }
+        expect(threw, `[brief] [aspect: throws] chooseMoves threw at ${difficulty} with no legal move: ${threw}`).toBeNull();
+        expect(result?.moves ?? null, `[brief] [aspect: moves] chooseMoves returned moves at ${difficulty} with no legal move`).toEqual([]);
+        expect(JSON.stringify(result?.board), `[brief] [aspect: board] chooseMoves changed the board at ${difficulty} with no legal move`).toBe(before);
+      }
+    });
+
+    it("[G14] REQ-AILEGAL — chooseMoves always returns legal move sequences", () => {
+      const seed = 0x13a4b6c8;
+      Math.random = mulberry32(seed);
+
+      const samples = 200;
+      for (let i = 0; i < samples; i++) {
+        const { board, player } = randomReachablePosition(Math.random);
+        const dice = rollDice(Math.random);
+
+        for (const difficulty of DIFFICULTIES) {
+          const start = game.cloneBoard(board);
+          const result = choose(board, player, dice, difficulty);
+
+          const replayed = replayAndAssertLegal(start, player, [...dice], result.moves);
+          expect(result.board).toEqual(replayed);
+        }
+      }
+    });
+
+    it("[G14] REQ-AISTRENGTH — hard(black) wins more than easy(white) in seeded self-play", () => {
+      const seed = 0x5eed1337;
+      Math.random = mulberry32(seed);
+
+      const games = 25;
+      let hardWins = 0;
+      let easyWins = 0;
+      let noResult = 0;
+
+      for (let g = 0; g < games; g++) {
+        const start = game.createGame("medium");
+        const board = cloneBoardFromState(start);
+        let player: Player = "white";
+        let winner: Player | null = null;
+
+        for (let halfTurns = 0; halfTurns < 400; halfTurns++) {
+          const dice = rollDice(Math.random);
+          const difficulty: Difficulty = player === "black" ? "hard" : "easy";
+          const choice = choose(board, player, dice, difficulty);
+          board.points = [...choice.board.points];
+          board.bar = { ...choice.board.bar };
+          board.off = { ...choice.board.off };
+
+          const win = game.checkWin(board, player);
+          if (win.won) {
+            winner = player;
+            break;
+          }
+
+          player = game.opponent(player);
+        }
+
+        if (winner === "black") hardWins++;
+        else if (winner === "white") easyWins++;
+        else noResult++;
+      }
+
+      expect(hardWins + easyWins + noResult).toBe(games);
+      expect(hardWins + easyWins, `[aspect: unfinished] none of ${games} games of hard against easy came to an end`).toBeGreaterThan(0);
+      expect(hardWins, `[aspect: strength] hard won ${hardWins} of ${games} games against easy's ${easyWins} (${noResult} unfinished)`).toBeGreaterThan(
+        easyWins,
+      );
+      // Bounded by the runner's deadline for this file (report.mjs
+      // runnerBudgetMs), not by vitest's 60 s: the self-play is synchronous, so
+      // vitest's timer only fires after it returns — and then fails a skill check
+      // that passed. Run 1794897794's hard chooser (p99 0.5 s, max 1.3 s a move)
+      // played its 25 games in 119 s, hard winning, and was told "the skill
+      // setting doesn't seem to change anything". Code that does not return is
+      // stopped by the runner's deadline and comes back not_run, told to no one.
+    }, 600_000);
+  });
+
+});

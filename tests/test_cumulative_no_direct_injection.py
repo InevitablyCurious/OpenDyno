@@ -1,0 +1,129 @@
+"""No direct injection: the harness has NO injection mechanism at all.
+
+The variant reaches the worker through the plugin substrate (worker-side recall
+auto-inject), never through the harness prompt path. These tests pin that
+absence: chunk prompts are the raw on-disk bytes, `run_cell` forwards only
+cell identity into `_run_cell_impl`, and the removed seam's symbols do not
+reappear in the source.
+"""
+
+import inspect
+from pathlib import Path
+
+import pytest
+
+from harness.adapters.challenge import (
+    ChallengeCellResult,
+    ChallengeRunner,
+)
+from harness.prompt_pack import PromptPack
+
+
+TASK_DIR = (Path(__file__).resolve().parents[1] / "task" / "backgammon").resolve()
+
+
+def _make_runner(tmp_path: Path, *, variant: str = "b") -> ChallengeRunner:
+    return ChallengeRunner(
+        task_dir=TASK_DIR,
+        work_root=tmp_path / "work-root",
+        model="openrouter/anthropic/claude-opus-4.8",
+        variant=variant,
+        progress=lambda _line: None,
+    )
+
+
+def test_the_pack_serves_exactly_the_on_disk_chunk_bytes() -> None:
+    """The build text is the raw on-disk bytes — nothing is formatted in.
+
+    The loader is `PromptPack` now (harness/prompt_pack.py): the runner reads
+    `phases()` and builds one phase at a time, so the invariant that used to
+    sit on a runner method sits on the pack. The signature IS the invariant
+    too — the removed injection kwarg cannot come back without failing here.
+    """
+    params = list(inspect.signature(PromptPack.__init__).parameters)
+    assert params == ["self", "prompts_dir"]
+
+    pack = PromptPack(TASK_DIR / "prompts")
+    phases = pack.phases()
+
+    assert len(phases) == 7
+    for phase in phases:
+        on_disk = (TASK_DIR / "prompts" / phase.file).read_text(encoding="utf-8")
+        # Byte-identical to disk: nothing is prepended, appended, or formatted in.
+        assert phase.text == on_disk.rstrip("\n")
+        assert "# OKP MEMORY CONTEXT" not in phase.text
+
+
+def test_run_cell_forwards_cell_identity_and_no_variant(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _make_runner(tmp_path, variant="b")
+    captured: dict[str, object] = {}
+
+    # The fake's signature no longer ACCEPTS the removed injection kwarg: if
+    # `run_cell` tried to pass one, this would raise TypeError and fail here.
+    # `run_identity` IS legitimate cell identity (normalized once per cell by
+    # `run_cell`), so the strict keyword-only signature accepts it — and only
+    # it, run_label, run_dir, task_id.
+    def _fake_run_cell_impl(
+        *,
+        run_label: str,
+        run_dir: Path,
+        task_id: str,
+        run_identity: str | None = None,
+    ) -> ChallengeCellResult:
+        captured["run_label"] = run_label
+        captured["run_dir"] = run_dir
+        captured["task_id"] = task_id
+        captured["run_identity"] = run_identity
+        return ChallengeCellResult(
+            verdict="PASS",
+            attempts_to_green=0,
+            termination_reason="gates_green",
+            conformed=True,
+            input_tokens=0,
+            output_tokens=0,
+            turns=0,
+            wall_seconds=0.0,
+            delivery="N/A",
+            failed_gates=[],
+            problems_final=[],
+            attempt_reports=[],
+            worktree=str(run_dir / "worktree"),
+            session_id="sid-no-direct-injection",
+            variant="b",
+            model=runner.model,
+        )
+
+    monkeypatch.setattr(runner, "_run_cell_impl", _fake_run_cell_impl)
+
+    run_dir = tmp_path / "run-no-direct-injection"
+    result = runner.run_cell("run-no-direct-injection", run_dir)
+
+    assert captured["run_label"] == "run-no-direct-injection"
+    assert captured["task_id"] == "backgammon"
+    assert captured["run_dir"] == run_dir
+    # run_identity is normalized by run_cell before forwarding: never None.
+    assert isinstance(captured["run_identity"], str) and captured["run_identity"]
+    assert result.verdict == "PASS"
+
+
+def test_challenge_source_has_no_direct_injection_seam() -> None:
+    # The removed seam symbols, spelled by concatenation so THIS file stays
+    # clean under the repo-wide grep for them — a test asserting their absence
+    # must not reintroduce the literals. At runtime these are the exact
+    # strings that were removed from the adapter.
+    seam_param = "injected" + "_memory"
+    seam_helper = "_format" + "_memory"
+
+    prompt_source = inspect.getsource(PromptPack)
+    run_cell_source = inspect.getsource(ChallengeRunner.run_cell)
+
+    for source in (prompt_source, run_cell_source):
+        assert seam_param not in source
+        assert seam_helper not in source
+
+    # The harness also never writes variant state into the worktree as a file.
+    assert "OKP_MEMORY.md" not in prompt_source
+    assert "write_text(" not in prompt_source

@@ -1,0 +1,1 @@
+It locked up again while I was moving my pieces, and {seconds} later it still hadn't come back.

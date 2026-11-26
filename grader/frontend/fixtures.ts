@@ -1,0 +1,481 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// ONE SERVER PER TEST — parallel across workers, isolated between tests.
+//
+// ── WHAT THIS REPLACES ──────────────────────────────────────────────────────
+//
+// `playwright.config.ts` used to declare a `webServer`: Playwright booted ONE
+// copy of the candidate before the run and every test shared it. That is why
+// the config carried `workers: 1, fullyParallel: false` — two tests at once
+// would overwrite each other's position through the debug API.
+//
+// The tests were never sequential in themselves. Each builds its own state from
+// nothing: F03 starts a new game and forces its own dice, F09 constructs an
+// entire board and pushes it in. They needed to not be DISTURBED, not to run in
+// order. A server each gives them that, and the ordering constraint disappears.
+//
+// ── ONE SERVER PER TEST, NOT PER WORKER ─────────────────────────────────────
+//
+// It was one server per worker PROCESS, reused across every test that worker
+// ran, on the belief that consecutive tests were fine sharing one. They were
+// not: the page shows whatever game the server holds (the spec: load the
+// current state, never start one on load), so a test read what the test
+// before it left. F15 counted F12's finished board (13 checkers) and blamed the
+// host name; F09 passed or failed on the same code depending on whether F08
+// had changed the difficulty first (run 1790194347). Each test now gets its
+// own server from its own clean checkout — about a second of boot per test,
+// and no result depends on what ran before it.
+//
+// ── WHY baseURL IS OVERRIDDEN HERE ──────────────────────────────────────────
+//
+// `lib/harness.ts` derives its port from the worker index and is evaluated per
+// process, so `BASE_URL` is already right inside a worker — which is why F15,
+// importing it directly, needs no change. But `use.baseURL` in the config is
+// read in the MAIN process, where the index is 0. Left alone it would point
+// every worker at worker 0's server. It is overridden per worker instead.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { test as base, expect, type Locator, type Page } from "@playwright/test";
+
+import { BASE_URL, PORT, ROLL_DEAD, SETUP_REFUSED, assertRollTook, assertSetupTook, startServer, stopServer, type ServerHandle } from "../lib/harness.ts";
+import { boardGeometryDrawn, waitForBoardSettled } from "./board-geometry.ts";
+
+export const test = base.extend<{ gameServer: ServerHandle }>({
+  gameServer: [
+    async ({}, use) => {
+      // DEBUG_API on: the gates drive positions and dice through it, exactly as
+      // the conformance and backend runners do.
+      const handle = await startServer({ debug: true });
+      await use(handle);
+      await stopServer(handle);
+    },
+    { scope: "test", auto: true },
+  ],
+
+  // Every worker talks to its OWN server. `PORT` already carries the worker
+  // index; this is only here because the config's copy cannot.
+  baseURL: [
+    async ({ gameServer }, use) => {
+      void gameServer; // ordering: the server must exist before a URL means anything
+      await use(BASE_URL);
+    },
+    { scope: "test" },
+  ],
+
+  // THE GAME READY, BEFORE ANY GATE TOUCHES IT. The spec has the page load its
+  // game from the server when it opens, so a correct page draws its pieces —
+  // and wires its buttons — a moment after the frame appears. Gates that
+  // clicked or read in that moment judged page-load speed, not the game: the
+  // reference delayed by 400 ms (mutation M49, a legal page) failed 9 of 37
+  // frontend gates, and run 1790329339's first Roll click was ignored ("no dice
+  // after a roll") where a player's, a moment later, rolled. Every open and
+  // reload now waits, as a player does, for the drawn board to hold still.
+  page: async ({ page }, use) => {
+    const goto = page.goto.bind(page);
+    const reload = page.reload.bind(page);
+    page.goto = async (...args: Parameters<Page["goto"]>) => {
+      const response = await goto(...args);
+      await gameReady(page);
+      return response;
+    };
+    page.reload = async (...args: Parameters<Page["reload"]>) => {
+      const response = await reload(...args);
+      await gameReady(page);
+      return response;
+    };
+    await use(page);
+  },
+});
+
+/** A board that never draws or never settles is the render checks' complaint
+ *  (a needs marker, harness/adapters/challenge/stages.py) — and a board whose
+ *  points or pieces are drawn but untagged is the tag checks' complaint: the
+ *  settle wait finds them by tag, and run 1790597957's untagged page read as a
+ *  board that never settled, told in the player's voice through every check. */
+async function gameReady(page: Page): Promise<void> {
+  try {
+    await waitForBoardSettled(page);
+  } catch (err) {
+    throw new Error(
+      `[needs: REQ-RENDER/point REQ-TESTID/point] ${(err as Error).message}`,
+    );
+  }
+  if (!(await boardGeometryDrawn(page))) {
+    // How many pieces a player can actually see: the report words the board
+    // that never drew as "I can see the pieces, but…" only when some show.
+    // Placed is not shown — a saved build (test set r102) placed its pieces but drew
+    // nothing, and it was told "I can see the pieces" (test set, 2026-11-11).
+    const showing = await page.locator('[data-testid="checker"]').evaluateAll(
+      (els) =>
+        els.filter((el) => {
+          const r = el.getBoundingClientRect();
+          return (el as HTMLElement).checkVisibility() && r.width > 2 && r.height > 2;
+        }).length,
+    );
+    throw new Error(
+      `[needs: REQ-RENDER/point] board geometry never drew: no point renders a visible triangle within 5000ms (${showing} pieces showing)`,
+    );
+  }
+}
+
+export { expect, PORT, BASE_URL };
+
+/**
+ * Put the server into a position through the candidate's debug endpoint, and
+ * fail with the SETUP_REFUSED marker when it did not take (see lib/harness.ts
+ * assertSetupTook) — so a refused setup is never reported as the behaviour
+ * the gate goes on to judge.
+ */
+export async function setupState(page: Page, body: Record<string, any>): Promise<any> {
+  const response = await page.request.post("/api/debug/state", { data: body });
+  if (!response.ok()) {
+    throw new Error(`${SETUP_REFUSED}: /api/debug/state answered HTTP ${response.status()}`);
+  }
+  const echo = await response.json().catch(() => null);
+  assertSetupTook(body, echo);
+  return echo;
+}
+
+/**
+ * Roll through the page and prove the roll used the dice queued for it through
+ * /api/debug/roll. The proof is the page's own POST /api/roll and its answer —
+ * the dice that roll produced — not a later read of the state: a roll with no
+ * move hands the turn to the computer, whose roll a later read would show
+ * (lib/harness.ts assertRollTook). A roll whose answer shows other dice fails
+ * with the SETUP_REFUSED marker, never as the behaviour the gate goes on to
+ * judge; an answer with no dice, or none at all, can't be checked and isn't.
+ */
+export async function rollAndCheck(page: Page, dice: number[], click: () => Promise<unknown>): Promise<any> {
+  // Where the computer's checkers stood before the press: a computer that moves
+  // inside the roll's own call answers with its own dice (lib/harness.ts assertRollTook).
+  const before = await page.request
+    .post("/api/state", { data: {} })
+    .then((r) => r.json())
+    .catch(() => null);
+  const answered = page
+    .waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/roll", {
+      timeout: 15_000,
+    })
+    .catch(() => null);
+  let pressed = true;
+  try {
+    await click();
+  } catch {
+    pressed = false;
+  }
+  const response = await answered;
+  if (!response) {
+    // A greyed-out Roll is dead only when it is the player's roll. When the game
+    // has moved past it — the opening played itself on load (run 1793897465
+    // round 10) — the press was never the player's to make: that is F61's
+    // autoroll finding, not "I pressed Roll and nothing happened".
+    if (!pressed) {
+      const state = await page.request
+        .post("/api/state", { data: {} })
+        .then((r) => r.json())
+        .catch(() => null);
+      const rollable = state?.turn === "white" && (state?.phase === "openingRoll" || state?.phase === "roll");
+      if (state && !rollable) {
+        throw new Error(
+          `[needs: F61 F89] Roll was not the player's to press: the game was at phase ${state.phase}, ${state.turn} to play`,
+        );
+      }
+    }
+    throw new Error(`${ROLL_DEAD} [needs: F89]: ${pressed ? "pressing Roll made no roll" : "Roll could not be pressed"}`);
+  }
+  const body = await response.json().catch(() => null);
+  assertRollTook(dice, body, before);
+  return body;
+}
+
+/**
+ * The player holding `dice` in a position, reached the way a player reaches it:
+ * the position is seeded at the player's roll and the build's own roll deals the
+ * dice. Dice seeded straight into the move phase arrive in the check's order,
+ * which the build's own game may never make: run 1794497751's round 4 kept every
+ * roll larger-first and read the first die as the larger, so a real 3-5 refused
+ * the 3 while F73, seeded [3, 5], passed; and G05, seeded [3, 4], played a 3 that
+ * a real roll refused — the player was told what no player could meet, and the
+ * model looked for it for a whole round. A check whose player plays a move with
+ * two different numbers gets them this way.
+ */
+export async function seedRolled(page: Page, body: Record<string, any>, dice: number[]): Promise<any> {
+  await setupState(page, { ...body, turn: "white", phase: "roll", dice: [], remainingDice: [] });
+  await page.request.post("/api/debug/roll", { data: { dice } });
+  const before = await page.request
+    .post("/api/state", { data: {} })
+    .then((r) => r.json())
+    .catch(() => null);
+  const rolled = await page.request
+    .post("/api/roll", { data: {} })
+    .then((r) => r.json())
+    .catch(() => null);
+  assertRollTook(dice, rolled, before);
+  return rolled;
+}
+
+// ── PRESS A BUTTON THE CHECK NEEDS: BOUNDED, AND NAMED ──────────────────────
+//
+// `locator.click()` on a button that is on screen but disabled waits for it to
+// come alive until the TEST's own timeout. The check never finishes, a check
+// that never finishes is told to no one (stages.py did_not_finish), and its
+// finding is lost. Run 1795113327's Fast Forward was disabled after the player
+// took the computer's double: F67 timed out every round, and once the rest was
+// fixed the model would have heard only "something is still broken". Across
+// the 264-build corpus ~120 of 132 timed-out checks were a click on a disabled
+// button. A press waits a bounded time for the button to be shown and
+// pressable, and fails with the check's own message — its markers and aspect
+// — when it is not, including when it goes dead between the wait and the click.
+export async function press(button: Locator, message: string, timeout = 5_000): Promise<void> {
+  await expect(button, message).toBeVisible({ timeout });
+  await expect(button, message).toBeEnabled({ timeout });
+  try {
+    await button.click({ timeout });
+  } catch (error) {
+    await expect(button, message).toBeVisible({ timeout: 1_000 });
+    await expect(button, message).toBeEnabled({ timeout: 1_000 });
+    throw error;
+  }
+}
+
+// ── CLICK WHERE A PLAYER CLICKS ─────────────────────────────────────────────
+//
+// `locator.click()` insists that the element ITSELF receives the click, and
+// times out when it does not. A player's mouse has no such rule: it lands on
+// whatever is drawn on top at that spot. Run 1789564423's page set
+// `pointer-events: none` on its checkers and handled the click on the point
+// underneath — playable by hand, and four gates (F03, F04, F10, F14) timed out
+// on the click alone. The checker must still be on screen; what receives the
+// click is the page's own business.
+export async function playerClick(target: Locator): Promise<void> {
+  await expect(target).toBeVisible();
+  // WAIT FOR IT TO HOLD STILL, THEN CLICK WHERE IT IS. A checker slides into
+  // place after a redraw; reading its position mid-slide clicks where it WAS.
+  // That is the stability wait `locator.click()` does for itself, and leaving
+  // it out made the reference solution fail F10 and F14 (grader image of
+  // 2026-09-16). Its centre must match on two consecutive animation frames.
+  //
+  // Pages also redraw checkers by replacing their elements, so an element found
+  // a moment ago can be gone: each try looks it up afresh, and a replaced
+  // element (zero size, or never still) simply gets another try.
+  //
+  // Held still means its CENTRE stayed put: a hint pulsing in place (the prompt
+  // asks for animated hints) never keeps one box, and a player clicks it anyway.
+  //
+  // And a player clicks the part of it that shows. A hint drawn on top of a
+  // stack can have the stack's last checker over its centre — the reference at
+  // 1280x800 with checkers a few px wider (FIX-17: M59, M63, M66) — and a click
+  // aimed at the centre went to the checker, told as "could make only one
+  // move". When no part of it shows, the click lands on whatever covers it, as
+  // a player's would.
+  let point: { x: number; y: number } | null = null;
+  for (let tries = 0; tries < 20 && !point; tries++) {
+    try {
+      point = await target.evaluate(
+        async (el) => {
+          el.scrollIntoView({ block: "center", inline: "center" });
+          const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+          let prev = "";
+          let box: DOMRect | null = null;
+          for (let i = 0; i < 120 && !box; i++) {
+            await frame();
+            if (!el.isConnected) return null;
+            const r = el.getBoundingClientRect();
+            const cur = [r.x + r.width / 2, r.y + r.height / 2].map((v) => v.toFixed(1)).join(",");
+            if (cur === prev && r.width > 0 && r.height > 0) box = r;
+            prev = cur;
+          }
+          if (!box) return null;
+          const shows = (x: number, y: number) => {
+            const hit = document.elementFromPoint(x, y);
+            return !!hit && (hit === el || el.contains(hit));
+          };
+          const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+          if (shows(centre.x, centre.y)) return centre;
+          for (const fy of [0.5, 0.3, 0.7, 0.2, 0.8]) {
+            for (const fx of [0.5, 0.3, 0.7, 0.2, 0.8]) {
+              const x = box.x + box.width * fx;
+              const y = box.y + box.height * fy;
+              if (shows(x, y)) return { x, y };
+            }
+          }
+          return centre;
+        },
+        undefined,
+        { timeout: 5000 },
+      );
+    } catch {
+      point = null;
+    }
+    if (!point) await target.page().waitForTimeout(100);
+  }
+  if (!point) throw new Error("the element never held still on screen long enough to click");
+  await target.page().mouse.click(point.x, point.y);
+}
+
+// ── PICK UP A PIECE THE WAY A PLAYER DOES ───────────────────────────────────
+//
+// A movable piece is one that answers a click with its move hints. The build
+// prompt names no class for it, so the page's own markings are never read:
+// run 1790414346's pieces picked up fine with none, and the model was told
+// "After I rolled, there was no checker I could pick up to move" (FIX-26).
+// The top white piece of each point the game has a legal move from (its own
+// /api/state list) is tried first, then every other white stack: a player
+// tries the pieces they see. True once a click brought hints up.
+export async function pickUpAPiece(page: Page, hints: Locator): Promise<boolean> {
+  // A player picks up what is drawn once it holds still: every pick-up waits for
+  // the board to settle, so no check can skip it (the operator, 2026-11-17 audit, class
+  // 3 — runs 1791403718 and 1794892305 picked up during a redraw under load and
+  // were told no checker could be picked up).
+  await waitForBoardSettled(page).catch(() => undefined);
+  const response = await page.request.post("/api/state", { data: {} });
+  const state = response.ok()
+    ? ((await response.json().catch(() => ({}))) as { legalMoves?: { from: number }[] })
+    : {};
+  const legal = [...new Set((state.legalMoves ?? []).map((m) => (m.from === 0 ? "bar" : String(m.from))))];
+  const occupied = await page
+    .locator('[data-testid="checker"][data-color="white"]')
+    .evaluateAll((els) => [...new Set(els.map((el) => (el as HTMLElement).dataset.loc ?? ""))]);
+  const others = occupied.filter((loc) => loc !== "" && loc !== "off" && !legal.includes(loc));
+  for (const [locs, tries] of [
+    [legal, 3],
+    [others, 1],
+  ] as const) {
+    for (const loc of locs) {
+      const pieces = page.locator(`[data-testid="checker"][data-color="white"][data-loc="${loc}"]`);
+      // The highest piece a player can see: a tall stack can run past the
+      // window's edge (run 1790608868 drew fifteen pieces on one point up past
+      // the top of the screen, the top piece's click landed nowhere, and the
+      // model was told "no checker I could pick up" of a stack that picked up
+      // at a click on any piece in view).
+      const onScreen = await pieces.evaluateAll((els) =>
+        els.map((el) => {
+          const r = el.getBoundingClientRect();
+          const x = r.left + r.width / 2;
+          const y = r.top + r.height / 2;
+          return r.width > 0 && r.height > 0 && x >= 0 && y >= 0 && x <= innerWidth && y <= innerHeight;
+        }),
+      );
+      const top = onScreen.lastIndexOf(true);
+      if (top < 0) continue;
+      // The last piece is named at click time, not by a number read a moment
+      // before: the board redraws after a move, and a stack that just lost a
+      // piece left "piece 3 of 3" naming nothing — the click waited for it,
+      // 5 s a try, until the move's time ran out, and the model was told it
+      // "got the wrong number of moves" of a 6-5 it could play (run 1794845176
+      // round 4, F39; it reproduced one run in two). A numbered piece only
+      // when the last one is past the window's edge.
+      const target = top === onScreen.length - 1 ? pieces.last() : pieces.nth(top);
+      await playerClickUntilShown(target, hints, tries);
+      if ((await hints.count()) > 0) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Click a checker the way a player does when the game is not ready yet: click,
+ * look for the move hints, and click again if none came up. The reference
+ * solution makes a checker clickable only after the dice finish rolling — a
+ * player just clicks again, and `locator.click()` used to hide that by waiting
+ * for the element to accept clicks. Stops as soon as `shown` appears; if it
+ * never does, the caller's own assertion reports it.
+ */
+export async function playerClickUntilShown(target: Locator, shown: Locator, tries = 8): Promise<void> {
+  for (let i = 0; i < tries; i++) {
+    await playerClick(target);
+    try {
+      await expect(shown.first()).toBeAttached({ timeout: 1500 });
+      return;
+    } catch {
+      // not ready yet — a player would click again
+    }
+  }
+}
+
+
+/**
+ * The share of a picture that looks different in a second one (0..1): two PNG
+ * screenshots of the same region, decoded in the page and reduced to luminance,
+ * every fourth pixel, and a pixel counts when it moved by more than a twelfth of
+ * full brightness (a stale copy a redraw leaves is about a sixth darker — run
+ * 1792491065's bar). Pictures of different sizes are wholly different (1).
+ * ONE rule for every check that compares what a player sees before and after:
+ * F87 (back at full size after the window changed) and F03 (a clicked piece).
+ */
+/** A pop-up's words are read only once a player can see the pop-up: its
+ *  presence and its words are two lines. Run 1795273094 (a4): after the
+ *  computer declined, no pop-up ever came up (the page's game-over modal stayed
+ *  hidden), and F46 read the hidden #modalTitle as "the pop-up's title doesn't
+ *  say I won"; F53 told "the win pop-up never appears" of any title without
+ *  "win", shown or not. */
+export async function expectPopupShown(page: Page, message: string, timeout = 5_000): Promise<void> {
+  await expect(page.getByTestId("modalOverlay"), message).toBeVisible({ timeout });
+}
+
+export async function pictureChange(page: Page, a: Buffer, b: Buffer): Promise<number> {
+  return page.evaluate(
+    async ({ a, b }) => {
+      const load = (src: string) =>
+        new Promise<HTMLImageElement>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("screenshot PNG failed to decode in-browser"));
+          img.src = `data:image/png;base64,${src}`;
+        });
+      const [ia, ib] = await Promise.all([load(a), load(b)]);
+      const lum = (img: HTMLImageElement) => {
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const ctx = c.getContext("2d")!;
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, c.width, c.height).data;
+        const out = new Float32Array(c.width * c.height);
+        for (let i = 0; i < out.length; i++) out[i] = (0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2]) / 255;
+        return out;
+      };
+      const la = lum(ia);
+      const lb = lum(ib);
+      if (la.length !== lb.length) return 1;
+      let n = 0;
+      for (let i = 0; i < la.length; i += 4) if (Math.abs(la[i] - lb[i]) > 0.08) n++;
+      return n / (la.length / 4);
+    },
+    { a: a.toString("base64"), b: b.toString("base64") },
+  );
+}
+
+// Where the visible move hints sit on screen, as a list of their centres.
+// Two selections with different destinations place their hints in different
+// spots, so a change of piece is a change of these — read from the page, not
+// from any server-side source.
+export async function hintPositions(page: Page): Promise<{ x: number; y: number }[]> {
+  return page.getByTestId("hint").evaluateAll((els) =>
+    els
+      .filter((el) => (el as HTMLElement).checkVisibility())
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      }),
+  );
+}
+
+// The visible hints once they hold still: two reads 250 ms apart the same (at
+// most 3 s). A page that shows hints before a pick redraws them when a piece is
+// picked up; read in between, an old hint stands where the new ones are going.
+// Run 1795223874 (a2): F73 chose "the hint nearest point 10" mid-redraw, clicked
+// the 5's, and told "the game made me play the bigger one first" of a build that
+// played the 3 first when a player did it (2 of 6 runs alone). For any check that
+// decides from where the hints are; never for one that times how fast they move.
+export async function settledHintPositions(page: Page): Promise<{ x: number; y: number }[]> {
+  const key = (hs: { x: number; y: number }[]) => JSON.stringify(hs.map((h) => [Math.round(h.x), Math.round(h.y)]));
+  let last = await hintPositions(page);
+  for (const end = Date.now() + 3_000; Date.now() < end; ) {
+    await page.waitForTimeout(250);
+    const now = await hintPositions(page);
+    if (key(now) === key(last)) return now;
+    last = now;
+  }
+  return last;
+}
+

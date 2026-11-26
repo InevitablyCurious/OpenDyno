@@ -1,0 +1,2419 @@
+{
+  "schema_version": 2,
+  "_comment": [
+    "HUMAN-WRITTEN SYMPTOM LINES — what the model is told after a failed attempt.",
+    "",
+    "WHY THIS FILE EXISTS. The repair loop used to derive its message from the",
+    "TEST TITLE. A test title states the RULE, so the message stated the rule:",
+    "gate E08 was reported as 'full-turn sequences are distinct by RESULTING",
+    "BOARD', which is the requirement verbatim. Measured on run 1788099503, the",
+    "model failed E08 on attempt 1 and passed it on attempt 2 — it was told. A",
+    "gate answered by its own failure message measures attempt count, not",
+    "capability.",
+    "",
+    "THE VOICES. Two people report after a failure, and which one owns a line",
+    "depends on what kind of fault it is. The tester is a player of the",
+    "finished game who has noticed something wrong: they describe WHAT THEY",
+    "SAW, and they do not know the function names, the requirement ids, or the",
+    "fix — a user, not a reviewer. The integration team is a customer wiring",
+    "software against the app, reporting in \"they/their\" terms what their API",
+    "reads, health checks, and automation could not find or got wrong.",
+    "",
+    "THE TEST: could a reader who has never seen the spec derive the fix from",
+    "this sentence alone? If yes, it is too specific. Name the surface (the",
+    "board, the dice, the pip numbers, the computer's move) and the wrongness.",
+    "Never name the rule.",
+    "",
+    "  BAD  'a checker on the bar counts a full 25 pips'   — states the rule",
+    "  GOOD 'my counter barely moved while my piece sat on the bar'",
+    "",
+    "── TWO PASSES (schema 2, 2026-09-02) ────────────────────────────────────",
+    "",
+    "Each gate carries TWO lines, and which one is sent depends on whether this",
+    "is the first time the model is hearing about that gate or a repeat.",
+    "",
+    "  first   — the player's first report, after their first playthrough.",
+    "  repeat  — the SAME fault, seen again on a replay, after the model has",
+    "            already tried to fix it and failed.",
+    "",
+    "WHY TWO AND NOT ONE. Byte-identical text across attempts returns ZERO new",
+    "information: a failed fix reads exactly like a fix never attempted, and the",
+    "repair loop has no gradient. That is the defect WO-FEEDBACK-1 fixed by",
+    "appending the grader's own assertion text on a repeat — which worked, and",
+    "leaked. The assertion states the rule, which is the one thing this file",
+    "exists to withhold. The second line replaces it.",
+    "",
+    "WHAT A REPEAT LINE IS ALLOWED TO ADD. A SECOND SIGHTING, not a rephrase:",
+    "the player went back and played again, and reports the same fault from a",
+    "different observable angle — what they did differently, what they watched",
+    "for, what they compared it against. Confirmation that the fix missed is",
+    "itself real information and costs nothing. The anti-leak test above applies",
+    "to the repeat line UNCHANGED, and it is the harder line to write: a second",
+    "description drifts toward the cause if it is not held back deliberately.",
+    "",
+    "THIRD AND LATER FAILURES REUSE THE REPEAT LINE. A person does not invent",
+    "fresh phrasing every round, and a third variant would either repeat itself",
+    "or start narrowing toward the fix.",
+    "",
+    "PROVISIONAL — RE-GAUGE AFTER SEVERAL CAMPAIGNS (2026-09-02). These lines",
+    "have not been measured yet. Once several benchmarks have run, take the",
+    "gates that are ALWAYS failing and read the prose those gates feed the",
+    "model: a gate that never goes green may be under-specified rather than",
+    "hard, and the ambiguity would be here, not in the model. See",
+    "dev/priv/dev-bench-prompts.md."
+  ],
+  "gates": {
+    "G01": {
+      "first": "They start a new game through your engine and its starting state doesn't match a standard backgammon opening.",
+      "repeat": "They started a new game through your engine again and its starting state still doesn't match a standard opening."
+    },
+    "G02": {
+      "first": "They count pips on the standard starting position with your engine's own counting, and it doesn't come to 167 for each side.",
+      "repeat": "They counted the starting position's pips with your engine again, and it still doesn't come to 167 a side."
+    },
+    "G03": {
+      "first": "When they roll against your app's API, the numbers that come back don't match: a double doesn't give four moves, or two different numbers don't give two.",
+      "repeat": "When they roll against your API again, the numbers that come back still don't match."
+    },
+    "G04": {
+      "first": "They ask your engine for moves onto a point the other side holds with two or more checkers, and it offers them — a point held by two or more is closed.",
+      "repeat": "Your engine still offers moves onto points the other side holds with two or more checkers."
+    },
+    "G05": {
+      "first": "I rolled a 4 and a 3 and could play either one, but not both — after either move the other number had nowhere to go — and the game let me play the 3. When I can only use one of my two numbers, I expect to have to play the bigger one; when I can use both, either order is fine.",
+      "repeat": "When I can play either number but not both, the game still lets me play the smaller one."
+    },
+    "G05.pagehint": {
+      "first": "Their checks of your page: {measured}. The page's hints are the moves your server's legalMoves list for the picked piece — no more, no fewer; the page works out no move of its own.",
+      "repeat": "Their checks again: {measured} — the page still draws a hint your server's legalMoves don't list."
+    },
+    "G05.listed": {
+      "first": "Their checks of your server: {measured}. The rule for which numbers are played: both of them whenever they can both be played, in either order (on doubles, as many of the four as can be played). When the two can't both be played, only one is: the bigger one if it has a move, the smaller one only when the bigger one has nowhere to go. legalMoves list only moves that keep to that rule.",
+      "repeat": "Their checks again: {measured}. The rule again: both numbers whenever they can both be played, in either order; when they can't, the bigger one if it has a move, and the smaller one only when the bigger one has nowhere to go."
+    },
+    "G05.offered": {
+      "first": "I rolled a 4 and a 3 and could play either one, but not both — after either move the other number had nowhere to go — and the game showed me a move for the 3. When I can only use one of my two numbers, I expect to have to play the bigger one; when I can use both, either order is fine.",
+      "repeat": "When I can play either number but not both, the game still shows me a move for the smaller one."
+    },
+    "G06": {
+      "first": "They ask your engine how a piece on the bar comes back in, and its answer breaks the bar rules.",
+      "repeat": "Your engine still breaks the bar rules when they ask how a piece on the bar comes back in."
+    },
+    "G07": {
+      "first": "They play a hit through your engine — a white checker onto a lone black one — and the board afterwards isn't a complete hit: the move reported as a hit, white on that point, the black checker on the bar, and the point white left empty.",
+      "repeat": "Your engine still doesn't complete a hit when they play one."
+    },
+    "G08": {
+      "first": "They ask your engine to bear off while a white checker still sits further back, and it takes a nearer checker off with a number bigger than that checker needs — that's only allowed when no checker sits further back.",
+      "repeat": "Your engine still bears a nearer checker off with a bigger number while one sits further back."
+    },
+    "G08.overshoot": {
+      "first": "They ask your engine to bear off when every checker left is closer to the edge than the number rolled, and it won't — the number then carries the furthest-back checker off.",
+      "repeat": "Your engine still won't bear off with a number bigger than the last checkers need."
+    },
+    "G09": {
+      "first": "They ask your engine about taking checkers off with one of white's still out on the other side of the board, and it allows it — none come off until all fifteen are in white's home board.",
+      "repeat": "Your engine still lets white take checkers off with one still out on the other side of the board."
+    },
+    "G10": {
+      "first": "They ask your engine how finished games end, and its answer doesn't follow the brief's rules for a single win, a gammon and a backgammon.",
+      "repeat": "Your engine still classifies finished games against the brief's rules."
+    },
+    "G11": {
+      "first": "On the player's turn, before the roll, with the cube in the middle, your app won't let them double.",
+      "repeat": "On the player's turn with the cube in the middle, your app still won't let them double."
+    },
+    "G12": {
+      "first": "Their checks of your computer's cube decisions: {measured}. The house numbers in the build brief: the computer's win chance is 0.5 (within 0.01) when both sides have the same pip count, under 0.24 when it is hopelessly behind and over 0.90 when its win is nearly certain; it takes the player's double at a win chance of 0.32 or more on easy, 0.27 on medium and 0.24 on hard, and turns it down below that; it offers a double only inside its window — 0.72 to 0.90 on medium, 0.68 to 0.90 on hard — holds above 0.90, and never offers on easy.",
+      "repeat": "Their checks again: {measured}. The house numbers again: a win chance of 0.5 (within 0.01) at equal pips; it takes at 0.32 / 0.27 / 0.24 (easy / medium / hard); it offers only inside 0.72–0.90 (medium) or 0.68–0.90 (hard), never on easy, and holds above 0.90."
+    },
+    "G12.pips": {
+      "first": "Their checks of your engine: {measured}. The brief counts a side's pips as the distance all its checkers still have to travel to bear off.",
+      "repeat": "Their checks again: {measured} — your engine still counts this position's pips wrong."
+    },
+    "G13": {
+      "first": "They play turns through your server — spending the dice, handing the turn over, a turn shut out on the bar — and the turn flow doesn't follow the brief.",
+      "repeat": "They played turns through your server again and the turn flow still doesn't follow the brief."
+    },
+    "G13.stuckstate": {
+      "first": "Their checks of your server: {measured}. On a turn with no move left the state says so: turnOver true and an empty legalMoves.",
+      "repeat": "Their checks again: {measured} — a stuck turn's state still doesn't say turnOver true with an empty legalMoves."
+    },
+    "G14": {
+      "first": "They ask your computer's move-chooser for its moves in hundreds of positions and rolls, at every setting, and some of the moves it picks aren't legal.",
+      "repeat": "They asked your computer's move-chooser again, and some of the moves it picks still aren't legal."
+    },
+    "G15": {
+      "first": "They play a whole game through your server with fixed dice, taking the computer's doubles, and it stops partway — stuck, or failing — before anyone wins.",
+      "repeat": "Their scripted game through your server still stops before anyone wins."
+    },
+    "G16": {
+      "first": "They start a second copy of your server while one is already running, and it doesn't stop with an error saying the port is in use.",
+      "repeat": "They started a second copy again, and it still doesn't stop with an error saying the port is in use."
+    },
+    "G17": {
+      "first": "They ask your engine for moves onto a point the other side holds with a single checker, and it doesn't offer the hit.",
+      "repeat": "Your engine still won't offer a move that hits a single checker."
+    },
+    "G18": {
+      "first": "They ask your engine for the opening position's moves with a 6, and the list isn't the 6s white can play — only checkers on 24, 13 and 8 can move six, onto points on the board.",
+      "repeat": "Your engine's opening 6s still aren't the moves white can play."
+    },
+    "G19": {
+      "first": "They ask your engine about bearing off while a white checker is on the bar, and it treats white as all home — a checker on the bar isn't home, so nothing bears off.",
+      "repeat": "Your engine still lets them bear off with a checker on the bar."
+    },
+    "G20": {
+      "first": "The player doubles and your computer takes it, but your app's state doesn't make the cube worth two and owned by the computer.",
+      "repeat": "The player doubles, your computer takes it, and your app's state still doesn't make the cube worth two and owned by the computer."
+    },
+    "G21": {
+      "first": "After the player has rolled, in the middle of their turn, your app still accepts their double and changes the cube.",
+      "repeat": "Mid-turn, after the roll, your app still accepts the player's double and changes the cube."
+    },
+    "G21.offered": {
+      "first": "Their checks of your server: {measured}. The brief only lets the player double on their own turn before they roll.",
+      "repeat": "Their checks again: {measured} — the state still offers a double after the roll."
+    },
+    "G22": {
+      "first": "Their tools read your computer's win-chance estimate, and it doesn't go up as the computer gets further ahead.",
+      "repeat": "They checked more positions, and the computer's win-chance estimate still doesn't rise as it pulls ahead."
+    },
+    "G35": {
+      "first": "They set up a turn through your app's debug setup — the player's turn, before the roll, the cube in the middle — and it won't let them double, though the same turn in a real game can. Whether the opening move has happened is already in the game's fields: the only turn before it is the opening roll (phase `openingRoll`), and every turn in phase `roll` comes after it — nothing kept outside them is needed to tell.",
+      "repeat": "They set up that turn through your debug setup again — the player's turn, before the roll — and it still won't let them double the way a real game does. A turn in phase `roll` always comes after the opening move; the game's own fields say so."
+    },
+    "G35.computer": {
+      "first": "They set up a race through your app's debug setup where your computer is far enough ahead to double — the same race reached by play gets its offer — and from the set-up race it never offers. A position set through /api/debug/state plays on exactly as if it had been reached by play: nothing your server keeps outside that state may change what happens next. Whether the opening move has happened is already in the game's fields: the only turn before it is the opening roll (phase `openingRoll`), and every turn in phase `roll` comes after it — nothing kept outside them is needed to tell.",
+      "repeat": "Their checks again: from a race set up through the debug setup your computer still never offers, though the same race reached by play gets the offer."
+    },
+    "G23": {
+      "first": "They play a move through your server and undo it, and the points, the bar and the borne-off counts don't all come back exactly as they were before the move.",
+      "repeat": "Undo through your server still doesn't put the board back exactly."
+    },
+    "G23.moved": {
+      "first": "Their checks of your server: {measured}. A legal move sent to /api/move moves the piece on the board it sends back.",
+      "repeat": "Their checks again: {measured} — the move still doesn't reach the board."
+    },
+    "G23.nomove": {
+      "first": "They roll through your server and it offers white no move to play.",
+      "repeat": "They rolled through your server again and it still offers white no move."
+    },
+    "G37": {
+      "first": "They play a hit through your server and undo it, and the board doesn't come back exactly as it was before the hit.",
+      "repeat": "Undoing a hit through your server still doesn't put the board back exactly."
+    },
+    "G37.hit": {
+      "first": "They play a hit through your server and undo it; the hit checker goes back, but the computer is left with extra checkers on the bar.",
+      "repeat": "After undoing a hit through your server, the computer still has extra checkers on the bar."
+    },
+    "G37.hitback": {
+      "first": "They play a hit through your server and undo it, and the hit checker doesn't go back to the point it was hit on.",
+      "repeat": "Undoing a hit through your server still doesn't put the hit checker back."
+    },
+    "G37.hitmine": {
+      "first": "They play a hit through your server and undo it; the hit checker goes back, but one of white's own checkers is left on the bar.",
+      "repeat": "After undoing a hit through your server, a white checker is still left on the bar."
+    },
+    "G38": {
+      "first": "Their software asks your computer player for its move on a turn where it has no move to make, and it doesn't answer with no moves.",
+      "repeat": "They asked your computer player again for its move on a turn with no move to make, and it still doesn't answer with no moves."
+    },
+    "G39": {
+      "first": "Their checks of your server: {measured}. The brief has /api/debug/roll set the next throw for whichever side throws next, never a random one.",
+      "repeat": "Their checks again: {measured} — the throw they set still isn't the one your server plays."
+    },
+    "G40": {
+      "first": "Their checks of your code: {measured}. Each function the build spec declares is called by the team's software exactly as declared.",
+      "repeat": "Their checks again: {measured}."
+    },
+    "G40.words": {
+      "first": "Their checks of your AI: {measured}. Both cube functions answer with the build spec's two words only: \"double\" to offer or take, \"no-double\" to hold or pass.",
+      "repeat": "Their checks again: {measured} — the cube functions answer only \"double\" or \"no-double\"."
+    },
+    "G40.arity": {
+      "first": "Their checks of your AI: {measured}. The build spec declares shouldAiAccept(b, player, difficulty) — three parameters, no cube.",
+      "repeat": "Their checks again: {measured}; the build spec declares three — (b, player, difficulty)."
+    },
+    "G40.allinhome": {
+      "first": "Their checks of your engine: {measured}. allInHome(board, player) is true only when all 15 of that side's pieces are in its home board or already borne off — false with any piece outside it or on the bar.",
+      "repeat": "Their checks again: {measured} — allInHome still answers wrong on that board."
+    },
+    "G38.throws": {
+      "first": "Their software asks your computer player for its move on a turn where it has no move to make, and it crashes: {measured}.",
+      "repeat": "It still crashes when asked for a move on a turn with none to make: {measured}."
+    },
+    "G38.moves": {
+      "first": "Their software asks your computer player for its move on a turn where it has no move to make, and it answers with moves anyway.",
+      "repeat": "They asked your computer player again for its move on a turn with no move to make, and it still answers with moves."
+    },
+    "G38.board": {
+      "first": "Their software asks your computer player for its move on a turn where it has no move to make, and it changes the board it was handed.",
+      "repeat": "They asked your computer player again for its move on a turn with no move to make, and it still changes the board it was handed."
+    },
+    "G24.owner": {
+      "first": "The player takes your computer's double, but your app's state doesn't make the player the cube's owner.",
+      "repeat": "The player takes your computer's double and your app's state still doesn't make them the cube's owner."
+    },
+    "G24.plays": {
+      "first": "After the player takes your computer's double, your computer doesn't play the turn it doubled on — none of its pieces move.",
+      "repeat": "After the player takes its double, your computer still doesn't play the turn it doubled on."
+    },
+    "G24.never": {
+      "first": "They play races where your computer is far ahead, and it never offers a double.",
+      "repeat": "Far ahead in a race again, your computer still never offers a double."
+    },
+    "G24.before": {
+      "first": "Their checks of your server: {measured}. The rule for the computer's turn: its double comes first. When its turn begins it decides whether to double before any dice are rolled for it; if it offers, the turn waits on the offer with no dice rolled; once the player takes, it rolls and plays its moves. Neither its roll nor its moves come before that decision.",
+      "repeat": "Their checks again: {measured}. The computer's double still has to come first in its turn — decided before any dice are rolled for it."
+    },
+    "G24": {
+      "first": "The player takes your computer's double, but your app's state doesn't make the cube worth two and owned by the player.",
+      "repeat": "The player takes your computer's double and your app's state still doesn't make the cube worth two and owned by the player."
+    },
+    "G24.ignored": {
+      "first": "Their checks of your server: {measured}. The brief has /api/double/respond answer a double the computer offered: {accept: true} takes it — the cube becomes worth two and the player's — and {accept: false} passes, which ends the game.",
+      "repeat": "Their checks again: {measured} — the player's answer to the computer's double still changes nothing."
+    },
+    "G24.value": {
+      "first": "Their checks of your server: {measured}. A taken double makes the cube worth twice what it was, and the taker owns it.",
+      "repeat": "Their checks again: {measured} — a taken double still doesn't make the cube worth two."
+    },
+    "G25": {
+      "first": "They end white's turn through your server and step the computer's turn, and the computer never takes it — the turn doesn't come back to white.",
+      "repeat": "Through your server, the computer still doesn't take its turn."
+    },
+    "G25.skipped": {
+      "first": "They end white's turn through your server, and the computer's turn passes without a single move of its checkers.",
+      "repeat": "Through your server, the computer still passes its turn without moving."
+    },
+    "G25.offered": {
+      "first": "Through your server, the computer moves once and then stops in the middle of its turn to offer a double — it offers a double before it rolls, never partway through a turn.",
+      "repeat": "Through your server, the computer still stops mid-turn to offer a double."
+    },
+    "G25.nomove": {
+      "first": "They roll through your server and it offers white no move to play.",
+      "repeat": "They rolled through your server again and it still offers white no move."
+    },
+    "E01": {
+      "first": "They ask your engine how many moves a roll allows from the opening position, and the count is wrong.",
+      "repeat": "Your engine still gets the number of moves a roll allows wrong."
+    },
+    "E02": {
+      "first": "They ask your engine about bearing off with a number that doesn't match a checker's point, and its answer breaks the bearing-off rules.",
+      "repeat": "Your engine still breaks the bearing-off rules for a number that doesn't match a checker's point."
+    },
+    "E02.behind": {
+      "first": "They ask your engine to bear off with white on 6 and 3 and a 5 rolled, and it takes the checker on 3 off — a bigger number bears a checker off only when none sits further back, so here the 5 moves the 6 to 1.",
+      "repeat": "Your engine still bears the nearer checker off while one sits further back."
+    },
+    "E02.short": {
+      "first": "They ask your engine to bear off with a number too small to carry the checker off the board, and it allows it.",
+      "repeat": "Your engine still bears off with a number too small."
+    },
+    "E03": {
+      "first": "They ask your engine to bear off with white on 6 and 3 and a 3 rolled, and it won't take the checker on 3 off — a number that exactly matches a checker's point always bears it off.",
+      "repeat": "Your engine still won't bear off with an exact number."
+    },
+    "E04": {
+      "first": "They ask your engine for the moves with one of their pieces on the bar and every point it could come in on covered, and it doesn't come back empty — it offers moves for their other pieces, or it fails outright. A piece that can't come in off the bar means no move at all that turn.",
+      "repeat": "They asked your engine again with a piece shut out on the bar, and it still offers moves for their other pieces, or fails outright."
+    },
+    "E05": {
+      "first": "They ask your engine for the moves while one of their pieces is on the bar, and it offers moves for their other pieces too — a piece on the bar has to come back in before any other piece may move.",
+      "repeat": "They asked your engine again with a piece on the bar, and it still offers moves for their other pieces."
+    },
+    "E05.noentry": {
+      "first": "Their checks of your engine: {measured}. The brief brings a piece on the bar back in on the open point its number reaches.",
+      "repeat": "Their checks again: {measured} — the piece on the bar still has no way back in."
+    },
+    "E06": {
+      "first": "They ask your engine for pip counts with checkers on the bar, and the count is wrong — a checker on the bar counts 25 pips.",
+      "repeat": "Your engine's pip count still doesn't count a checker on the bar as 25."
+    },
+    "E08": {
+      "first": "Their tools ask your engine for every way to play a roll, and the same finished position keeps coming back more than once — two orders of the same moves show up as two different plays.",
+      "repeat": "They asked your engine for the ways to play a roll again, and the same end position still comes back more than once."
+    },
+    "E08.missing": {
+      "first": "Their checks of your engine: {measured}. The brief lists every different way a roll can be played.",
+      "repeat": "Their checks again: {measured} — a way of playing that roll is still missing."
+    },
+    "E09": {
+      "first": "They copy a board with your engine and change the copy, and the original changes too — a copy has to stand apart from the board it came from.",
+      "repeat": "Changing a copy of a board through your engine still changes the original."
+    },
+    "F01": {
+      "first": "When I open the game, the board doesn't show up — I expect to see the board with the pieces set out, ready to play.",
+      "repeat": "I opened the game again and the board still doesn't show up — I expect to see the board with the pieces set out, ready to play."
+    },
+    "F02": {
+      "first": "The board doesn't show all the points and pieces it should when a game starts",
+      "repeat": "On a new game the board still isn't fully drawn — points and pieces are missing from it."
+    },
+    "F03": {
+      "first": "When i click a piece the possible moves don't show up",
+      "repeat": "Clicked around on my pieces again and nothing lights up to show me where I'm able to go."
+    },
+    "F04": {
+      "first": "When I click a piece, the suggested moves don't tell me which die they use.",
+      "repeat": "The suggestions still don't say which of my numbers each one uses."
+    },
+    "F04.label": {
+      "first": "When I click a piece, the suggested moves don't tell me which die they use.",
+      "repeat": "The suggestions still don't say which of my numbers each one uses."
+    },
+    "F04.perdie": {
+      "first": "When I pick up a piece that can move with either number, only one of its moves shows — I expect a hint for each number it can use.",
+      "repeat": "When I pick up a piece that can move with either number, still only one of its moves shows — I expect a hint for each number it can use."
+    },
+    "F04.extra": {
+      "first": "When I pick up a piece, its move hints show more than the number on the die — I expect each one to show just the die it uses.",
+      "repeat": "The move hints still show more than the number on the die — I expect each one to show just the die it uses."
+    },
+    "F04.others": {
+      "first": "When I pick up a piece, hints show up for my other pieces as well — I expect only the moves of the piece I picked up.",
+      "repeat": "I picked up a piece again and hints for my other pieces still show — I expect only the piece I picked up to show its moves."
+    },
+    "F04.switch": {
+      "first": "When I select a different piece, the hints don't change to that piece straight away. They should update immediately when I select another piece.",
+      "repeat": "Selecting another piece still doesn't update the hints straight away."
+    },
+    "F75": {
+      "first": "When I pick up a piece, the hints it shows aren't that piece's moves.",
+      "repeat": "I picked up a piece again and the hints still belong to other pieces."
+    },
+    "F75.size": {
+      "first": "The move hints aren't the size of a piece — I expect each one as big as a piece.",
+      "repeat": "The move hints still aren't the size of a piece."
+    },
+    "F75.fixed": {
+      "first": "Whichever piece I pick up, its hints show up in the same place — they don't move to the points that piece can go to.",
+      "repeat": "The hints still sit in the same place whichever piece I pick up."
+    },
+    "F75.backwards": {
+      "first": "When I pick up a piece, its hints go the wrong way round — clockwise, when my pieces move anticlockwise.",
+      "repeat": "Picked up a piece again, and its hints still go clockwise, the opposite way to how my pieces move."
+    },
+    "F75.astray": {
+      "first": "When I pick up a piece, some hints sit on points it can't move to.",
+      "repeat": "I picked up a piece again and some hints still sit on points it can't move to."
+    },
+    "F76": {
+      "first": "When I pick up a piece to be moved, and try to move it, it doesn't work as intended. I expect the piece to move when I click anywhere for it to move, such as another stack, the hint, or the spot itself (the rectangle that encompasses the triangle).",
+      "repeat": "When I pick up a piece to be moved, and try to move it, it still doesn't work as intended. I expect the piece to move when I click anywhere for it to move, such as another stack, the hint, or the spot itself (the rectangle that encompasses the triangle)."
+    },
+    "F05": {
+      "first": "When I have no moves, the game doesn't tell me 'No moves available'.",
+      "repeat": "Stuck again with no move to play, and it still doesn't say 'No moves available'."
+    },
+    "F06": {
+      "first": "The pip numbers on screen don't match the game — they're wrong at the start or drift after a change.",
+      "repeat": "Those pip counters still don't agree with the board."
+    },
+    "F07": {
+      "first": "After I doubled and the computer took it, the cube on screen didn't change to match.",
+      "repeat": "Doubled again and the cube on screen still didn't change to match."
+    },
+    "F07.value": {
+      "first": "After I doubled and the computer took it, the cube on screen doesn't read 2.",
+      "repeat": "Doubled again, the computer took it, and the cube still doesn't read 2."
+    },
+    "F07.owner": {
+      "first": "After I doubled and the computer took it, the cube doesn't show that it's the computer's now.",
+      "repeat": "Doubled again, the computer took it, and the cube still doesn't show it's the computer's."
+    },
+    "F08": {
+      "first": "When i change the difficulty level nothing actually changes",
+      "repeat": "Switched the difficulty again and the computer plays exactly the same as it did before."
+    },
+    "F09": {
+      "first": "When i hit an opponent piece i don't see it go up onto the bar",
+      "repeat": "Hit one of theirs again and never saw the piece travel up to the bar on screen."
+    },
+    "F10": {
+      "first": "When I re-enter a piece from the bar, it doesn't come back onto the board.",
+      "repeat": "Re-entered from the bar again and the piece still doesn't come back onto the board."
+    },
+    "F11": {
+      "first": "When i take a piece off the board it doesn't show up in the off tray",
+      "repeat": "Took several pieces off again and they still don't show up in the off tray."
+    },
+    "F12": {
+      "first": "When the game ends, it doesn't tell me I won — there's no win message or victory popup.",
+      "repeat": "Finished another game and it still doesn't show me a win message or popup."
+    },
+    "F12.popup": {
+      "first": "The pop-up at the end of the game doesn't say I won.",
+      "repeat": "Finished another game and the end pop-up still doesn't say I won."
+    },
+    "F12.banner": {
+      "first": "Their checks of the page: {measured}. The brief has the win banner say \"You win\" when the player wins.",
+      "repeat": "Their checks again: {measured} — the banner still doesn't say \"You win\"."
+    },
+    "REQ-STATE/state.points": {
+      "first": "They're reading the state your app reports and it doesn't include \"points\" — the 24 board points as a list of numbers, positive for white checkers and negative for black. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"points\" — the 24 board points as a list of numbers, positive for white checkers and negative for black — still isn't in there."
+    },
+    "REQ-STATE/state.bar": {
+      "first": "They're reading the state your app reports and it doesn't include \"bar\" — the bar counts, as white and black numbers. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"bar\" — the bar counts, as white and black numbers — still isn't in there."
+    },
+    "REQ-STATE/state.off": {
+      "first": "They're reading the state your app reports and it doesn't include \"off\" — the borne-off counts, as white and black numbers. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"off\" — the borne-off counts, as white and black numbers — still isn't in there."
+    },
+    "REQ-STATE/state.turn": {
+      "first": "They're reading the state your app reports and it doesn't include \"turn\" — whose turn it is. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"turn\" — whose turn it is — still isn't in there."
+    },
+    "REQ-STATE/state.phase": {
+      "first": "They're reading the state your app reports and it doesn't include \"phase\" — what the game is waiting for — rolling, moving, game over, or a double being offered. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"phase\" — what the game is waiting for — rolling, moving, game over, or a double being offered — still isn't in there."
+    },
+    "REQ-STATE/state.dice": {
+      "first": "They're reading the state your app reports and it doesn't include \"dice\" — the dice rolled this turn (two of them, or four on a double). Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"dice\" — the dice rolled this turn (two of them, or four on a double) — still isn't in there."
+    },
+    "REQ-STATE/state.remainingDice": {
+      "first": "They're reading the state your app reports and it doesn't include \"remainingDice\" — the dice not used up yet this turn. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"remainingDice\" — the dice not used up yet this turn — still isn't in there."
+    },
+    "REQ-STATE/state.cube": {
+      "first": "They're reading the state your app reports and it doesn't include \"cube\" — the doubling cube as its value plus who owns it, with no owner meaning centered. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"cube\" — the doubling cube as its value plus who owns it, with no owner meaning centered — still isn't in there."
+    },
+    "REQ-STATE/state.difficulty": {
+      "first": "They're reading the state your app reports and it doesn't include \"difficulty\" — which of easy, medium or hard is set. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"difficulty\" — which of easy, medium or hard is set — still isn't in there."
+    },
+    "REQ-STATE/state.score": {
+      "first": "They're reading the state your app reports and it doesn't include \"score\" — the match score, as white and black numbers. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"score\" — the match score, as white and black numbers — still isn't in there."
+    },
+    "REQ-STATE/state.winner": {
+      "first": "They're reading the state your app reports and it doesn't include \"winner\" — who won, or nothing while the game is still going. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"winner\" — who won, or nothing while the game is still going — still isn't in there."
+    },
+    "REQ-STATE/state.winType": {
+      "first": "They're reading the state your app reports and it doesn't include \"winType\" — how the game was won — single, gammon or backgammon — or nothing while it is still going. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"winType\" — how the game was won — single, gammon or backgammon — or nothing while it is still going — still isn't in there."
+    },
+    "REQ-STATE/state.pointsWon": {
+      "first": "They're reading the state your app reports and it doesn't include \"pointsWon\" — how many points the win was worth, as a number. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"pointsWon\" — how many points the win was worth, as a number — still isn't in there."
+    },
+    "REQ-STATE/state.doubleOfferedBy": {
+      "first": "They're reading the state your app reports and it doesn't include \"doubleOfferedBy\" — who offered the double, or nothing if nobody has. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"doubleOfferedBy\" — who offered the double, or nothing if nobody has — still isn't in there."
+    },
+    "REQ-STATE/state.message": {
+      "first": "They're reading the state your app reports and it doesn't include \"message\" — the message text currently being shown to the player. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"message\" — the message text currently being shown to the player — still isn't in there."
+    },
+    "REQ-STATE/state.turnOver": {
+      "first": "They're reading the state your app reports and it doesn't include \"turnOver\" — whether the turn is finished, as a yes or no. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"turnOver\" — whether the turn is finished, as a yes or no — still isn't in there."
+    },
+    "REQ-STATE/state.gamesPlayed": {
+      "first": "They're reading the state your app reports and it doesn't include \"gamesPlayed\" — how many games have been played, as a number. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"gamesPlayed\" — how many games have been played, as a number — still isn't in there."
+    },
+    "REQ-STATE/state.pip": {
+      "first": "They're reading the state your app reports and \"pip\" is missing, or it isn't two numbers — a white count and a black count. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"pip\" is still missing, or still isn't the white and black counts."
+    },
+    "REQ-STATE/state.legalMoves": {
+      "first": "They're reading the state your app reports and \"legalMoves\" is missing, or it isn't the list of moves they read. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"legalMoves\" is still missing, or still isn't the list of moves."
+    },
+    "REQ-STATE/state.canDouble": {
+      "first": "They're reading the state your app reports and \"canDouble\" is missing, or it isn't a yes or no. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"canDouble\" is still missing, or still isn't a yes or no."
+    },
+    "REQ-TESTID/testid.scoreWhite": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"scoreWhite\" — the human player's score.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"scoreWhite\" — the human player's score."
+    },
+    "REQ-TESTID/testid.scoreBlack": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"scoreBlack\" — the AI's score.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"scoreBlack\" — the AI's score."
+    },
+    "REQ-TESTID/testid.difficulty": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"difficulty\" — the difficulty selector.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"difficulty\" — the difficulty selector."
+    },
+    "REQ-TESTID/testid.newGameBtn": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"newGameBtn\" — the new-game button.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"newGameBtn\" — the new-game button."
+    },
+    "REQ-TESTID/testid.board": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"board\" — the board itself.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"board\" — the board itself."
+    },
+    "REQ-TESTID/testid.playfield": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"playfield\" — the playing area.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"playfield\" — the playing area."
+    },
+    "REQ-TESTID/testid.checkerLayer": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"checkerLayer\" — the layer the checkers sit in.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"checkerLayer\" — the layer the checkers sit in."
+    },
+    "REQ-TESTID/testid.pointHints": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"pointHints\" — the area move hints appear in.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"pointHints\" — the area move hints appear in."
+    },
+    "REQ-TESTID/testid.turnIndicator": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"turnIndicator\" — whatever shows whose turn it is.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"turnIndicator\" — whatever shows whose turn it is."
+    },
+    "REQ-TESTID/testid.pipWhite": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"pipWhite\" — the human's pip count.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"pipWhite\" — the human's pip count."
+    },
+    "REQ-TESTID/testid.pipBlack": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"pipBlack\" — the AI's pip count.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"pipBlack\" — the AI's pip count."
+    },
+    "REQ-TESTID/testid.cube": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"cube\" — the doubling cube.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"cube\" — the doubling cube."
+    },
+    "REQ-TESTID/testid.cubeVal": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"cubeVal\" — the number on the cube.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"cubeVal\" — the number on the cube."
+    },
+    "REQ-TESTID/testid.cubeOwner": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"cubeOwner\" — whose side the cube is on.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"cubeOwner\" — whose side the cube is on."
+    },
+    "REQ-TESTID/testid.dice": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"dice\" — the dice area.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"dice\" — the dice area."
+    },
+    "REQ-TESTID/testid.rollBtn": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"rollBtn\" — the roll button.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"rollBtn\" — the roll button."
+    },
+    "REQ-TESTID/testid.doubleBtn": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"doubleBtn\" — the double button.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"doubleBtn\" — the double button."
+    },
+    "REQ-TESTID/testid.undoBtn": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"undoBtn\" — the undo button.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"undoBtn\" — the undo button."
+    },
+    "REQ-TESTID/testid.endTurnBtn": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"endTurnBtn\" — the end-turn button.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"endTurnBtn\" — the end-turn button."
+    },
+    "REQ-TESTID/testid.message": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"message\" — the message line.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"message\" — the message line."
+    },
+    "REQ-TESTID/testid.modalOverlay": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"modalOverlay\" — the end-of-game overlay.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"modalOverlay\" — the end-of-game overlay."
+    },
+    "REQ-TESTID/testid.modalTitle": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"modalTitle\" — the overlay's title.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"modalTitle\" — the overlay's title."
+    },
+    "REQ-TESTID/testid.modalBody": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"modalBody\" — the overlay's body.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"modalBody\" — the overlay's body."
+    },
+    "REQ-TESTID/testid.modalBtns": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it can't find one tagged \"modalBtns\" — the overlay's buttons.",
+      "repeat": "They looked again after your fix and still can't find an element tagged \"modalBtns\" — the overlay's buttons."
+    },
+    "REQ-TESTID/testid.scoreWhite.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"scoreWhite\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"scoreWhite\"."
+    },
+    "REQ-TESTID/testid.scoreBlack.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"scoreBlack\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"scoreBlack\"."
+    },
+    "REQ-TESTID/testid.difficulty.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"difficulty\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"difficulty\"."
+    },
+    "REQ-TESTID/testid.newGameBtn.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"newGameBtn\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"newGameBtn\"."
+    },
+    "REQ-TESTID/testid.board.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"board\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"board\"."
+    },
+    "REQ-TESTID/testid.playfield.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"playfield\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"playfield\"."
+    },
+    "REQ-TESTID/testid.checkerLayer.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"checkerLayer\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"checkerLayer\"."
+    },
+    "REQ-TESTID/testid.pointHints.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"pointHints\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"pointHints\"."
+    },
+    "REQ-TESTID/testid.turnIndicator.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"turnIndicator\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"turnIndicator\"."
+    },
+    "REQ-TESTID/testid.pipWhite.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"pipWhite\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"pipWhite\"."
+    },
+    "REQ-TESTID/testid.pipBlack.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"pipBlack\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"pipBlack\"."
+    },
+    "REQ-TESTID/testid.cube.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"cube\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"cube\"."
+    },
+    "REQ-TESTID/testid.cubeVal.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"cubeVal\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"cubeVal\"."
+    },
+    "REQ-TESTID/testid.cubeOwner.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"cubeOwner\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"cubeOwner\"."
+    },
+    "REQ-TESTID/testid.dice.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"dice\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"dice\"."
+    },
+    "REQ-TESTID/testid.rollBtn.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"rollBtn\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"rollBtn\"."
+    },
+    "REQ-TESTID/testid.doubleBtn.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"doubleBtn\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"doubleBtn\"."
+    },
+    "REQ-TESTID/testid.undoBtn.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"undoBtn\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"undoBtn\"."
+    },
+    "REQ-TESTID/testid.endTurnBtn.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"endTurnBtn\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"endTurnBtn\"."
+    },
+    "REQ-TESTID/testid.message.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"message\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"message\"."
+    },
+    "REQ-TESTID/testid.modalOverlay.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"modalOverlay\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"modalOverlay\"."
+    },
+    "REQ-TESTID/testid.modalTitle.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"modalTitle\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"modalTitle\"."
+    },
+    "REQ-TESTID/testid.modalBody.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"modalBody\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"modalBody\"."
+    },
+    "REQ-TESTID/testid.modalBtns.dup": {
+      "first": "Their automation drives your app by looking for elements tagged with a set of exact names, and it finds more than one tagged \"modalBtns\".",
+      "repeat": "They looked again after your fix and still find more than one element tagged \"modalBtns\"."
+    },
+    "REQ-TESTID/id.scoreWhite": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"scoreWhite\" — the human player's score.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"scoreWhite\" — the human player's score."
+    },
+    "REQ-TESTID/id.scoreBlack": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"scoreBlack\" — the AI's score.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"scoreBlack\" — the AI's score."
+    },
+    "REQ-TESTID/id.difficulty": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"difficulty\" — the difficulty selector.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"difficulty\" — the difficulty selector."
+    },
+    "REQ-TESTID/id.newGameBtn": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"newGameBtn\" — the new-game button.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"newGameBtn\" — the new-game button."
+    },
+    "REQ-TESTID/id.board": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"board\" — the board itself.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"board\" — the board itself."
+    },
+    "REQ-TESTID/id.playfield": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"playfield\" — the playing area.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"playfield\" — the playing area."
+    },
+    "REQ-TESTID/id.checkerLayer": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"checkerLayer\" — the layer the checkers sit in.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"checkerLayer\" — the layer the checkers sit in."
+    },
+    "REQ-TESTID/id.pointHints": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"pointHints\" — the area move hints appear in.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"pointHints\" — the area move hints appear in."
+    },
+    "REQ-TESTID/id.turnIndicator": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"turnIndicator\" — whatever shows whose turn it is.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"turnIndicator\" — whatever shows whose turn it is."
+    },
+    "REQ-TESTID/id.pipWhite": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"pipWhite\" — the human's pip count.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"pipWhite\" — the human's pip count."
+    },
+    "REQ-TESTID/id.pipBlack": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"pipBlack\" — the AI's pip count.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"pipBlack\" — the AI's pip count."
+    },
+    "REQ-TESTID/id.cube": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"cube\" — the doubling cube.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"cube\" — the doubling cube."
+    },
+    "REQ-TESTID/id.cubeVal": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"cubeVal\" — the number on the cube.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"cubeVal\" — the number on the cube."
+    },
+    "REQ-TESTID/id.cubeOwner": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"cubeOwner\" — whose side the cube is on.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"cubeOwner\" — whose side the cube is on."
+    },
+    "REQ-TESTID/id.dice": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"dice\" — the dice area.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"dice\" — the dice area."
+    },
+    "REQ-TESTID/id.rollBtn": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"rollBtn\" — the roll button.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"rollBtn\" — the roll button."
+    },
+    "REQ-TESTID/id.doubleBtn": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"doubleBtn\" — the double button.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"doubleBtn\" — the double button."
+    },
+    "REQ-TESTID/id.undoBtn": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"undoBtn\" — the undo button.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"undoBtn\" — the undo button."
+    },
+    "REQ-TESTID/id.endTurnBtn": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"endTurnBtn\" — the end-turn button.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"endTurnBtn\" — the end-turn button."
+    },
+    "REQ-TESTID/id.message": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"message\" — the message line.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"message\" — the message line."
+    },
+    "REQ-TESTID/id.modalOverlay": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"modalOverlay\" — the end-of-game overlay.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"modalOverlay\" — the end-of-game overlay."
+    },
+    "REQ-TESTID/id.modalTitle": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"modalTitle\" — the overlay's title.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"modalTitle\" — the overlay's title."
+    },
+    "REQ-TESTID/id.modalBody": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"modalBody\" — the overlay's body.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"modalBody\" — the overlay's body."
+    },
+    "REQ-TESTID/id.modalBtns": {
+      "first": "They also look up your page's elements by id, and nothing on it has the id \"modalBtns\" — the overlay's buttons.",
+      "repeat": "They looked again after your fix and still find nothing with the id \"modalBtns\" — the overlay's buttons."
+    },
+    "REQ-BIND/health": {
+      "first": "They can't reach your app's health check at all — they call it to know whether the app is up before they do anything else.",
+      "repeat": "Their health check against your app still doesn't come back."
+    },
+    "REQ-API/health.status": {
+      "first": "Your health check answers, but not with a success code, so their monitoring treats the app as down.",
+      "repeat": "Your health check still isn't answering with a success code."
+    },
+    "REQ-API/health.body": {
+      "first": "Your health check doesn't answer with JSON, so their monitoring can't read it.",
+      "repeat": "Your health check still isn't answering with readable JSON."
+    },
+    "REQ-API/health.body.status": {
+      "first": "Your health check's answer doesn't carry a \"status\" of \"ok\" — that is the word they look for to decide the app is healthy.",
+      "repeat": "Your health check still doesn't say \"status\": \"ok\"."
+    },
+    "REQ-STATE/state.off.white": {
+      "first": "They can set up a specific board position through your app, but when they read it back the borne-off counts aren't what they set.",
+      "repeat": "The borne-off counts still don't survive being set and read back."
+    },
+    "REQ-STATE/state.points.length": {
+      "first": "They're reading the state your app reports and \"points\" isn't a list of 26 numbers — the board positions they read are missing or not numbers. Without it they can't wire that part of their side up.",
+      "repeat": "They read your state again after your fix and \"points\" still isn't a list of 26 numbers."
+    },
+    "REQ-STATE/server-not-answering": {
+      "first": "They can't get the board state out of your app — the endpoint never answers, so they get nothing back to draw.",
+      "repeat": "They still can't get the board state out of your app — the endpoint still never answers, so they still get nothing back to draw."
+    },
+    "REQ-STATE/state-empty": {
+      "first": "They reach your app, but it hands back an empty game — no state is set up, so they get nothing to draw.",
+      "repeat": "They still reach your app, but it still hands back an empty game — no state is set up, so they still get nothing back to draw."
+    },
+    "REQ-DEBUG/debug.setState": {
+      "first": "They need to put your game into a specific position to test their own side against, but the app won't take the position — when they send it, they get an error back.",
+      "repeat": "Setting your game to a specific position still comes back with an error."
+    },
+    "REQ-DEBUG/debug.roll": {
+      "first": "They queue a roll through the debug route so their tests get the same dice every time, but the dice that come back aren't the ones they queued.",
+      "repeat": "They queued the roll again and the dice still come back different from the ones they asked for."
+    },
+    "REQ-DEBUG/debug.roll.error": {
+      "first": "They queue a roll through the debug route so their tests get the same dice every time, but when they roll, they get an error back.",
+      "repeat": "Rolling the dice they queued still comes back with an error."
+    },
+    "REQ-TESTID/dom": {
+      "first": "Their automation fell over while reading your page.",
+      "repeat": "Their automation still falls over reading your page."
+    },
+    "REQ-TESTID/pregate": {
+      "first": "Their whole integration run against your app fell over before it finished.",
+      "repeat": "Their integration run still falls over before it finishes."
+    },
+    "REQ-TESTID/point": {
+      "first": "The points show up on screen, but their automation can't select them — it looks for exactly 24 of them, each tagged \"point\".",
+      "repeat": "The points are still on screen without the tagging their automation looks for — exactly 24 of them, each tagged \"point\"."
+    },
+    "REQ-TESTID/point-column": {
+      "first": "Their automation finds each point by the element tagged \"point\" and takes that element to be the point's column, but some of those elements overlap one another — the same spot on the board falls inside two points.",
+      "repeat": "They looked again after your fix and the elements tagged \"point\" still overlap one another — some spots on the board still fall inside two points."
+    },
+    "REQ-TESTID/checker": {
+      "first": "The checkers show up on screen, but their automation can't select them — it looks for exactly 30 of them, 15 a side, each tagged \"checker\".",
+      "repeat": "The checkers are still on screen without the tagging their automation looks for — exactly 30 of them, 15 a side, each tagged \"checker\"."
+    },
+    "REQ-TESTID/bar": {
+      "first": "The bar shows up on screen, but their automation can't select it — it looks for the bar column tagged \"bar\".",
+      "repeat": "The bar is still on screen without the tagging their automation looks for — the bar column tagged \"bar\"."
+    },
+    "REQ-TESTID/off-tray": {
+      "first": "The off tray shows up on screen, but their automation can't select it — it looks for the off tray tagged \"off-tray\".",
+      "repeat": "The off tray is still on screen without the tagging their automation looks for — the off tray tagged \"off-tray\"."
+    },
+    "REQ-TESTID/die": {
+      "first": "The dice show up on screen, but their automation can't select them — it looks for each die tagged \"die\", at least two showing after a roll.",
+      "repeat": "The dice are still on screen without the tagging their automation looks for — each die tagged \"die\", at least two showing after a roll."
+    },
+    "REQ-BIND/boot": {
+      "first": "The game doesn't come up at all for me — I get nothing.",
+      "repeat": "Still nothing when I try to open it, even from a completely fresh start."
+    },
+    "REQ-RENDER/point": {
+      "first": "The board doesn't have the right number of spaces on it.",
+      "repeat": "I counted the spaces on the board again and it's still not right."
+    },
+    "REQ-RENDER/checker": {
+      "first": "There is an incorrect number of pieces on the board when I start a game, or there are pieces located off the board that I cannot see.",
+      "repeat": "I counted the pieces again on a new game and there is still an incorrect number of them, or there are still pieces located off the board that I cannot see."
+    },
+    "REQ-RENDER/bar": {
+      "first": "There's no bar down the middle of the board.",
+      "repeat": "The middle of the board still doesn't have a bar."
+    },
+    "REQ-RENDER/off-tray": {
+      "first": "There's nowhere on the board for pieces I've taken off to go.",
+      "repeat": "There's still nowhere for my taken-off pieces to sit."
+    },
+    "REQ-RENDER/blank-board": {
+      "first": "When I open the game, the board comes up blank — the points and triangles don't draw, so there's nothing to play on.",
+      "repeat": "I opened the game again and the board still comes up blank — the points and triangles still don't draw."
+    },
+    "REQ-RENDER/geometry-not-drawn": {
+      "first": "When I open the game, I can see the pieces, but the board itself never draws — there are no points or triangles, so there's nothing to play on.",
+      "repeat": "I opened the game again and I can still see the pieces, but the board itself still never draws — there are still no points or triangles, so there's still nothing to play on."
+    },
+    "REQ-RENDER/die": {
+      "first": "I don't see the dice after I roll.",
+      "repeat": "I still can't see the dice after rolling."
+    },
+    "REQ-RENDER/die-reload": {
+      "first": "I rolled the dice, refreshed the page, and the board reset itself — my roll was gone and it was my turn to roll again.",
+      "repeat": "Same thing after your fix — I rolled, reloaded, and the board wiped the dice away and started me over as if I hadn't rolled."
+    },
+    "REQ-HINT/hint": {
+      "first": "When i pick up one of my pieces the game doesn't show me where it can go.",
+      "repeat": "I picked a piece up again after your fix and still nothing shows me where it can go."
+    },
+    "F15": {
+      "first": "I opened the game from a different address than usual and got a dead board — it loads but nothing appears on it.",
+      "repeat": "Same thing again: reaching the game by its other address still gives me an empty board."
+    },
+    "F16": {
+      "first": "I reload in the middle of my turn and the game comes back saying it isn't my turn anymore.",
+      "repeat": "I reloaded in the middle of my turn again and it still came back saying it wasn't my turn."
+    },
+    "F17": {
+      "first": "I refreshed the page between games and the score at the top didn't come back as it was — we'd already played a couple of games.",
+      "repeat": "Played another game, reloaded, and the score at the top still didn't come back as it was."
+    },
+    "F17.zero": {
+      "first": "I refreshed the page between games and the score at the top went back to zero-zero even though we'd already played a couple of games.",
+      "repeat": "Played another game, reloaded, and the score got wiped to nothing again — the games we'd won were just gone."
+    },
+    "F18": {
+      "first": "I rolled, refreshed the page, and the dice didn't come back as what I'd rolled.",
+      "repeat": "Rolled again, reloaded, and the dice still didn't come back as what I'd rolled."
+    },
+    "F19": {
+      "first": "I picked the hard computer, refreshed the page, and it wasn't set to hard any more.",
+      "repeat": "Set it to hard again, reloaded, and it dropped off hard again without me touching the selector."
+    },
+    "F20": {
+      "first": "I refreshed the page and the doubling cube went back to the middle on its own, so the game offered me a double all over again.",
+      "repeat": "Same thing after another refresh — the cube reset to the middle and I could double as if the game had just started."
+    },
+    "F21": {
+      "first": "I'd already used one of my dice and was about to move with the other, refreshed the page, and my turn went back to before I'd rolled.",
+      "repeat": "It happened again — partway through a turn after playing one die, I refreshed and the game put me back to the start of the turn."
+    },
+    "F22": {
+      "first": "When I start a new game, the board doesn't reset.",
+      "repeat": "Started over again and the board still doesn't reset."
+    },
+    "F22.pieces": {
+      "first": "When I start a new game, the pieces don't go back to their starting places.",
+      "repeat": "Started another new game and the pieces still don't go back to their starting places."
+    },
+    "F22.popup": {
+      "first": "When I start a new game, the pop-up from the last game is still on screen.",
+      "repeat": "Started another new game and the last game's pop-up is still on screen."
+    },
+    "F22.hiddenclass": {
+      "first": "Their checks of the page: {measured}. The brief has the end pop-up shown and hidden by toggling the hidden class on modalOverlay, and their software reads that class.",
+      "repeat": "Their checks again: {measured} — modalOverlay still doesn't take the hidden class back."
+    },
+    "F23": {
+      "first": "When the game ends i can't start a fresh game unless i reload the page",
+      "repeat": "Game ended again and I still had to reload the whole page before I could play another."
+    },
+    "F24": {
+      "first": "When I have no moves, the game doesn't finish my turn — it keeps me stuck or still shows me places to click.",
+      "repeat": "Stuck again and it still won't finish my turn, or it still shows hints when I click a piece."
+    },
+    "F24.stuckstate": {
+      "first": "Their checks of your server: {measured}. On a turn with no move left the state says so: turnOver true and an empty legalMoves.",
+      "repeat": "Their checks again: {measured} — a stuck turn's state still doesn't say turnOver true with an empty legalMoves."
+    },
+    "F25": {
+      "first": "I clicked where my piece could go, and the piece didn't move.",
+      "repeat": "Clicked where my piece could go again, and it still didn't move."
+    },
+    "F27": {
+      "first": "Their monitoring shows your page logging errors in the browser console when it loads.",
+      "repeat": "They loaded your page again, and it still logs errors in the browser console."
+    },
+    "F28": {
+      "first": "The points aren't laid out in the right order — I expect 13 to 24 running left to right along the top, and 12 down to 1 running left to right along the bottom.",
+      "repeat": "Looked the board over again and the points are still in the wrong order — I expect 13 to 24 running left to right along the top, and 12 down to 1 running left to right along the bottom."
+    },
+    "F28.rows": {
+      "first": "The points aren't in two rows, one above the other — I expect 13 to 24 running left to right along the top, and 12 down to 1 running left to right along the bottom.",
+      "repeat": "The points still aren't in two rows, one above the other — I expect 13 to 24 running left to right along the top, and 12 down to 1 running left to right along the bottom."
+    },
+    "F29": {
+      "first": "The bar sits out at the edge of the board, not between the two halves.",
+      "repeat": "Looked again and the bar is still sitting out at the edge, not in the middle of the board."
+    },
+    "F29.thin": {
+      "first": "The bar down the middle is just a thin line — I expect it wide enough for a piece I've hit to sit on it.",
+      "repeat": "The bar down the middle is still just a thin line — I expect it wide enough for a piece that's been hit to sit on it."
+    },
+    "F29.wide": {
+      "first": "Their measurements of the page: {measured}. The brief has the bar about as wide as a piece, with only a few pixels to spare on each side.",
+      "repeat": "Their measurements again: {measured} — the bar is still wider than a piece and its few pixels of room."
+    },
+    "F29.blend": {
+      "first": "The bar down the middle blends into the board, so I can't pick it out — I expect it to stand out from the board.",
+      "repeat": "The bar down the middle still blends into the board, so I still can't pick it out — I expect it to stand out from the board."
+    },
+    "F29.narrow": {
+      "first": "Their measurements of the page: {measured}. The brief has the bar about as wide as a piece, with a few pixels to spare on each side, so a piece that has been hit fits on it.",
+      "repeat": "Their measurements again: {measured} — the bar is still narrower than a piece."
+    },
+    "F29.overlap": {
+      "first": "The bar cuts across some of the points.",
+      "repeat": "The bar still cuts across some of the points."
+    },
+    "F29.place": {
+      "first": "The bar splits the board in the wrong place.",
+      "repeat": "The bar still splits the board in the wrong place."
+    },
+    "F29.short": {
+      "first": "The bar doesn't run the full height of the board.",
+      "repeat": "The bar still doesn't run the full height of the board."
+    },
+    "F29.undrawn": {
+      "first": "I can't see a bar down the middle of the board — I expect a bar splitting the board into two halves.",
+      "repeat": "There's still no bar down the middle of the board."
+    },
+    "F30": {
+      "first": "The triangles point outward, away from the middle of the board — I expect each triangle's wide end at the edge and its tip pointing toward the middle.",
+      "repeat": "Looked at the triangles again and they still point outward, away from the middle — I expect each triangle's wide end at the edge and its tip pointing toward the middle."
+    },
+    "F30.boardcolours": {
+      "first": "The board isn't one plain colour behind the points — I expect one board colour, with the points drawn on it as triangles in two other colours that alternate.",
+      "repeat": "The board is still not one plain colour behind the points — I expect one board colour, with the points drawn on it as triangles in two other colours that alternate."
+    },
+    "F30.offscreen": {
+      "first": "Part of the board runs off the edge of the screen.",
+      "repeat": "Part of the board still runs off the edge of the screen."
+    },
+    "F30.outwardbottom": {
+      "first": "The triangles in the bottom row point the wrong way, down toward the edge of the board — I expect each one's wide end at the bottom edge and its tip pointing up toward the middle.",
+      "repeat": "The triangles in the bottom row still point down toward the edge — I expect each one's wide end at the bottom edge and its tip pointing up toward the middle."
+    },
+    "F30.outwardtop": {
+      "first": "The triangles in the top row point the wrong way, up toward the edge of the board — I expect each one's wide end at the top edge and its tip pointing down toward the middle.",
+      "repeat": "The triangles in the top row still point up toward the edge — I expect each one's wide end at the top edge and its tip pointing down toward the middle."
+    },
+    "F30.undrawn": {
+      "first": "I can't make out a triangle on any of the points — I expect each point drawn as a triangle that stands out from the board.",
+      "repeat": "I still can't make out a triangle on any of the points — I expect each point drawn as a triangle that stands out from the board."
+    },
+    "F30.someundrawn": {
+      "first": "Some of the points don't show a clear triangle — I expect each point drawn as a triangle that stands out from the board.",
+      "repeat": "Some of the points still don't show a clear triangle — I expect each point drawn as a triangle that stands out from the board."
+    },
+    "F30.someundrawnright": {
+      "first": "Some of the points, including every one on the right half of the board, don't show a clear triangle — I expect each point drawn as a triangle that stands out from the board.",
+      "repeat": "Some of the points, including every one on the right half of the board, still don't show a clear triangle — I expect each point drawn as a triangle that stands out from the board."
+    },
+    "F30.someundrawnleft": {
+      "first": "Some of the points, including every one on the left half of the board, don't show a clear triangle — I expect each point drawn as a triangle that stands out from the board.",
+      "repeat": "Some of the points, including every one on the left half of the board, still don't show a clear triangle — I expect each point drawn as a triangle that stands out from the board."
+    },
+    "F30.short": {
+      "first": "The triangles reach less than half way from the board's edge to the middle — the empty space across the middle of the board is taller than the triangles themselves. I expect each one to reach about nine-tenths of the way, leaving only a small gap between its tip and the tip straight across from it.",
+      "repeat": "The triangles still reach less than half way from the board's edge to the middle — the empty space across the middle of the board is still taller than the triangles themselves. I expect each one to reach about nine-tenths of the way, leaving only a small gap between its tip and the tip straight across from it."
+    },
+    "F30.someshort": {
+      "first": "Some of the triangles reach less than half way from the board's edge to the middle — I expect each one to reach about nine-tenths of the way, leaving only a small gap between its tip and the tip straight across from it.",
+      "repeat": "Some of the triangles still reach less than half way from the board's edge to the middle — I expect each one to reach about nine-tenths of the way, leaving only a small gap between its tip and the tip straight across from it."
+    },
+    "F30.float": {
+      "first": "The triangles don't sit at the edge of the board — I expect each triangle's wide end right at the edge.",
+      "repeat": "The triangles still don't sit at the edge of the board — I expect each triangle's wide end right at the edge."
+    },
+    "F31": {
+      "first": "The checkers don't sit on their points — they're drawn off to the side or floating in the wrong place; I expect each stack to stand as a single straight column of pieces on its point.",
+      "repeat": "Fresh game again, and the checkers still don't sit on their points — still drawn off to the side or floating in the wrong place; I expect each stack to stand as a single straight column of pieces on its point."
+    },
+    "F31.offboard": {
+      "first": "Some of my pieces are drawn off the edge of the board.",
+      "repeat": "Some of my pieces are still drawn off the edge of the board."
+    },
+    "F31.side": {
+      "first": "The pieces do not sit perfectly on center of their point, they are off to one side.",
+      "repeat": "The pieces still do not sit perfectly on center of their point, they are off to one side."
+    },
+    "F31.up": {
+      "first": "Some pieces for the bottom points are drawn too far up the board, away from their point.",
+      "repeat": "Some pieces for the bottom points are still drawn too far up the board."
+    },
+    "F31.down": {
+      "first": "Some pieces for the top points are drawn too far down the board, away from their point.",
+      "repeat": "Some pieces for the top points are still drawn too far down the board."
+    },
+    "F31.rim": {
+      "first": "Some of the stacks don't start at the edge of the board — I expect each stack to start right at the edge, at the wide end of its point.",
+      "repeat": "Some of the stacks still don't start at the edge of the board — I expect each stack to start right at the edge, at the wide end of its point."
+    },
+    "F32": {
+      "first": "The off tray isn't showing — there's no place on the board for pieces that have been taken off.",
+      "repeat": "Looked again and the off tray still isn't there, still no place for taken-off pieces."
+    },
+    "F32.wide": {
+      "first": "Their measurements of the page: {measured}. The brief has the off tray at least as wide as a piece and no wider than one and a half points.",
+      "repeat": "Their measurements again: {measured} — the off tray is still wider than one and a half points."
+    },
+    "F32.blend": {
+      "first": "The off tray blends into the board, so I can't tell where it is — I expect it to stand out from the board.",
+      "repeat": "The off tray still blends into the board, so I still can't tell where it is — I expect it to stand out from the board."
+    },
+    "F32.overlap": {
+      "first": "The off tray cuts across some of the points.",
+      "repeat": "The off tray still cuts across some of the points."
+    },
+    "F32.offboard": {
+      "first": "The off tray is sitting outside the board, not on it.",
+      "repeat": "The off tray is still sitting outside the board, not on it."
+    },
+    "F32.short": {
+      "first": "The off tray doesn't run the full height of the board.",
+      "repeat": "The off tray still doesn't run the full height of the board."
+    },
+    "F32.narrow": {
+      "first": "Their measurements of the page: {measured}. The brief has the off tray at least as wide as a piece, so a borne-off piece fits lying on its side.",
+      "repeat": "Their measurements again: {measured} — the off tray is still too narrow for a piece lying on its side."
+    },
+    "F32.side": {
+      "first": "The off tray isn't at the end of the board where I bear off, past point 1.",
+      "repeat": "The off tray still isn't at the end of the board where I bear off, past point 1."
+    },
+    "F33": {
+      "first": "I rolled a double and couldn't play all of it.",
+      "repeat": "Rolled another double and still couldn't play all of it."
+    },
+    "F33.nomove": {
+      "first": "I rolled a double and couldn't make a single move with it.",
+      "repeat": "Rolled another double and still couldn't make a single move with it."
+    },
+    "F33.one": {
+      "first": "I rolled a double and could only make one move.",
+      "repeat": "Rolled another double and could still only make one move."
+    },
+    "F33.two": {
+      "first": "I rolled a double and could only make two moves.",
+      "repeat": "Rolled another double and could still only make two moves."
+    },
+    "F33.three": {
+      "first": "I rolled a double and could only make three moves.",
+      "repeat": "Rolled another double and could still only make three moves."
+    },
+    "REQ-RESPONSIVE/startup": {
+      "first": "The game never finished loading — it just sat there and nothing ever came up. I gave it {seconds} and then force-quit it.",
+      "repeat": "Tried opening it again and it hung on me the same way. Nothing ever appears, it just sits — {seconds} of it before I gave up."
+    },
+    "REQ-RESPONSIVE/moving": {
+      "first": "It locked up on me while I was moving my pieces — nothing responded after that. I gave it {seconds}.",
+      "repeat": "It locked up again while I was moving my pieces, and {seconds} later it still hadn't come back."
+    },
+    "REQ-RESPONSIVE/bearingoff": {
+      "first": "It locked up on me while I was bearing off — nothing responded after that. I gave it {seconds}.",
+      "repeat": "It locked up again while I was bearing off, and {seconds} later it still hadn't come back."
+    },
+    "REQ-RESPONSIVE/aiturn": {
+      "first": "It locked up on me while the computer was taking its turn — it never finished. I gave it {seconds}.",
+      "repeat": "The computer's turn locked up again, and {seconds} later it still hadn't finished."
+    },
+    "REQ-RESPONSIVE/awkwardroll": {
+      "first": "It locked up on me when I rolled a double with a piece on the bar — nothing responded after that. I gave it {seconds}.",
+      "repeat": "I rolled a double with a piece on the bar again and it locked up again; {seconds} later it still hadn't come back."
+    },
+    "REQ-RESPONSIVE/playing": {
+      "first": "It locked up on me while I was playing — the whole page stopped responding and nothing I clicked did anything after that. I gave it {seconds}.",
+      "repeat": "It seized up on me again mid-game. Everything on screen just stops reacting, and {seconds} later it still hadn't moved."
+    },
+    "G01.pieces": {
+      "first": "They start a new game through your engine and the checkers aren't on their starting points. A game starts with white's 2 on point 24, 5 on 13, 3 on 8 and 5 on 6, and black's the mirror: 2 on point 1, 5 on 12, 3 on 17 and 5 on 19.",
+      "repeat": "Their new game from your engine still doesn't put the checkers on their starting points."
+    },
+    "G01.setup": {
+      "first": "They start a new game through your engine and the rest of its state — the cube, whose turn it is, the phase, the bar and borne-off counts, the winner — isn't how the brief's new game begins.",
+      "repeat": "Their new game from your engine still doesn't begin the way the brief's does."
+    },
+    "G01.opponent": {
+      "first": "They ask your engine who each colour plays against, and it doesn't answer black for white and white for black.",
+      "repeat": "They asked your engine again, and it still doesn't name white and black as each other's opponents."
+    },
+    "F06.value": {
+      "first": "The pip counts on screen are the wrong numbers for the position on the board.",
+      "repeat": "Checked the pip counts again and they're still the wrong numbers for the board."
+    },
+    "F06.sync": {
+      "first": "The pip numbers on screen don't match the game's own count.",
+      "repeat": "The pip numbers on screen still disagree with the game."
+    },
+    "F06.format": {
+      "first": "The pip counters on screen don't show a number.",
+      "repeat": "The pip counters still don't show a number."
+    },
+    "F10.hints": {
+      "first": "I clicked my checker on the bar and no hints appeared showing where it could come back in.",
+      "repeat": "Clicked the bar checker again and still no re-entry hints showed up."
+    },
+    "F10.reentry": {
+      "first": "I clicked a re-entry move and the piece didn't come off the bar — it stayed up there.",
+      "repeat": "Tried to re-enter again and the piece still didn't come off the bar."
+    },
+    "F10.entryhint": {
+      "first": "When I picked up my piece on the bar, its hints didn't show on the points it could come in on.",
+      "repeat": "Picked up my piece on the bar again, and its hints still weren't on the points it could come in on."
+    },
+    "F10.onbar": {
+      "first": "One of my pieces was on the bar and I couldn't see it there.",
+      "repeat": "A piece of mine on the bar still isn't drawn there."
+    },
+    "F09.extra": {
+      "first": "When I hit one of the computer's pieces, more than one of its pieces shows up on the bar.",
+      "repeat": "Hit one of theirs again, and the bar still shows more of their pieces than I hit."
+    },
+    "F25.spent": {
+      "first": "I clicked where my piece could go: the number got used up, but my piece stayed where it was.",
+      "repeat": "Clicked where my piece could go again: the number was used up, and my piece still didn't move."
+    },
+    "F25.reveal": {
+      "first": "I clicked a piece and the game didn't show me any hints for where it could go.",
+      "repeat": "Clicked a piece again and still no hints appeared for where it could go."
+    },
+    "F25.consume": {
+      "first": "I made a move and the die I used didn't go away — the game still counted it as left to play.",
+      "repeat": "Made a move again and the die still didn't go away, still showing as left to play."
+    },
+    "G06.blocked": {
+      "first": "They ask your engine for the moves of a piece on the bar when every point it could come in on is held by two or more of the other side's checkers, and it offers a way in anyway — a piece shut out like that has no move.",
+      "repeat": "Your engine still lets a piece on the bar come in on a point the other side holds."
+    },
+    "G06.noentry": {
+      "first": "They ask your engine for the moves of a piece on the bar with an open point to come in on, and it offers no way in.",
+      "repeat": "Your engine still offers no way in off the bar onto an open point."
+    },
+    "G06.wrongpoint": {
+      "first": "They ask your engine where white's piece on the bar comes back in, and it names the wrong point — white comes in on the point in black's home that matches the number used, so a 2 enters on 23.",
+      "repeat": "Your engine still brings a piece in off the bar on the wrong point."
+    },
+    "G10.points": {
+      "first": "They finish a gammon through your engine and it's scored as one point — a gammon counts double.",
+      "repeat": "Your engine still scores a gammon as one point."
+    },
+    "G10.gammon": {
+      "first": "They ask your engine to classify a win where black has borne off none, has none on the bar and none in white's home board, and it isn't called a gammon.",
+      "repeat": "Your engine still doesn't call that win a gammon."
+    },
+    "G10.backgammon": {
+      "first": "They ask your engine to classify a win where black has borne off none and still has a checker in white's home board or on the bar, and it isn't called a backgammon.",
+      "repeat": "Your engine still doesn't call that win a backgammon."
+    },
+    "G10.single": {
+      "first": "They ask your engine to classify a win where black has already borne off a checker, and it isn't called a single win.",
+      "repeat": "Your engine still doesn't call that win a single win."
+    },
+    "G10.early": {
+      "first": "They ask your engine whether white has won with one checker still to bear off, and it says yes.",
+      "repeat": "Your engine still says white has won with a checker left to bear off."
+    },
+    "G20.value": {
+      "first": "The player doubles and your computer takes it, but your app's state doesn't make the cube worth two.",
+      "repeat": "Your computer takes the player's double and your app's state still doesn't make the cube worth two."
+    },
+    "G20.owner": {
+      "first": "Their checks of your server: {measured}. Whoever takes a double owns the cube from then on: the computer took the player's double, so the cube is the computer's (black).",
+      "repeat": "Their checks again: {measured} — the side that takes a double owns the cube, so after the computer takes the player's double it is black's."
+    },
+    "E01.doubles": {
+      "first": "They ask your engine how many moves a double allows from the opening position, and it doesn't come to four.",
+      "repeat": "Your engine still doesn't give a double four moves."
+    },
+    "E01.nondouble": {
+      "first": "They ask your engine how many moves two different numbers allow from the opening position, and it doesn't come to two.",
+      "repeat": "Your engine still doesn't give two different numbers two moves."
+    },
+    "G03.doubles": {
+      "first": "They roll doubles on your turn through your app's API (/api/roll, not the opening roll), and the state it sends back doesn't carry the double as four numbers in both `dice` and `remainingDice`. The brief carries a double as four entries, not two.",
+      "repeat": "They rolled doubles on your turn through your API again: the state still doesn't carry the double as four numbers in both `dice` and `remainingDice`."
+    },
+    "G03.nomove": {
+      "first": "They roll a double through your app's API and it gives them no move to make.",
+      "repeat": "They roll a double through your API again and it still gives them no move to make."
+    },
+    "G03.doublemoves": {
+      "first": "They ask your engine how many moves a double allows, and the number it gives back is wrong.",
+      "repeat": "They asked your engine again how many moves a double allows, and the number is still wrong."
+    },
+    "G03.plainmoves": {
+      "first": "They ask your engine how many moves two different numbers allow, and the number it gives back is wrong.",
+      "repeat": "They asked your engine again how many moves two different numbers allow, and the number is still wrong."
+    },
+    "G26": {
+      "first": "A new game from your app doesn't start with the cube at one, in the middle.",
+      "repeat": "A new game from your app still doesn't start with the cube at one, in the middle."
+    },
+    "F34": {
+      "first": "On a new game the cube on the board reads a number other than one, or it already looks owned by one side.",
+      "repeat": "Started another game and the cube on the board still reads wrong, or still looks owned."
+    },
+    "F35": {
+      "first": "The board isn't on the left with all the buttons and game info on the right, like I asked.",
+      "repeat": "Still not the layout I asked for — the board on the left, with all the buttons and game info on the right."
+    },
+    "F35.leftedge": {
+      "first": "Their measurements of the page: {measured}. The brief puts the board at the left of the window, with all the buttons and game info on its right.",
+      "repeat": "Their measurements again: {measured} — the board still starts too far in from the left edge."
+    },
+    "F35.controls": {
+      "first": "Some of the buttons and game info aren't on the right of the board, like I asked.",
+      "repeat": "Still some of the buttons and game info aren't on the right of the board."
+    },
+    "F36": {
+      "first": "The board and the buttons on the right aren't sized the way I asked, can you give me something like an 80%/20% ratio, board/buttons",
+      "repeat": "The board and the buttons still aren't sized the way I asked, can you give me something like an 80%/20% ratio, board/buttons"
+    },
+    "F36.wide": {
+      "first": "Their measurements of the page: {measured}. The brief gives the board about 80% of the width, with the buttons and game info in the rest.",
+      "repeat": "Their measurements again: {measured} — the board still takes more than its share of the width."
+    },
+    "F36.narrow": {
+      "first": "Their measurements of the page: {measured}. The brief gives the board about 80% of the width, with the buttons and game info in the rest.",
+      "repeat": "Their measurements again: {measured} — the board still takes less than its share of the width."
+    },
+    "F37": {
+      "first": "The game doesn't fit the screen properly.",
+      "repeat": "The game still doesn't fit the screen properly."
+    },
+    "F37.scroll": {
+      "first": "I have to scroll to see the whole game.",
+      "repeat": "I still have to scroll to see the whole game."
+    },
+    "F37.space": {
+      "first": "The board doesn't fill the screen — there's a lot of empty space around it.",
+      "repeat": "The board still doesn't fill the screen — there's still a lot of empty space around it."
+    },
+    "F37.offbottom": {
+      "first": "Some of the pieces run off the bottom of the screen — I expect every piece to be fully on the screen.",
+      "repeat": "Some of the pieces still run off the bottom of the screen — I expect every piece to be fully on the screen."
+    },
+    "F37.offtop": {
+      "first": "Some of the pieces run off the top of the screen — I expect every piece to be fully on the screen.",
+      "repeat": "Some of the pieces still run off the top of the screen — I expect every piece to be fully on the screen."
+    },
+    "F37.offleft": {
+      "first": "Some of the pieces run off the left side of the screen — I expect every piece to be fully on the screen.",
+      "repeat": "Some of the pieces still run off the left side of the screen — I expect every piece to be fully on the screen."
+    },
+    "F37.offright": {
+      "first": "Some of the pieces run off the right side of the screen — I expect every piece to be fully on the screen.",
+      "repeat": "Some of the pieces still run off the right side of the screen — I expect every piece to be fully on the screen."
+    },
+    "F37.unseen": {
+      "first": "I can't see some of the pieces — I expect every piece on the board, where I can see it.",
+      "repeat": "I still can't see some of the pieces."
+    },
+    "F37.unseenwhere": {
+      "first": "Their checks of the page: {measured}. The brief has every piece on the board, fully on the screen.",
+      "repeat": "Their checks again: {measured} — the pieces are still drawn where no one can see them."
+    },
+    "F38": {
+      "first": "Some of the buttons on the right are cut off, overlapping, or too small to use.",
+      "repeat": "Some of the buttons on the right are still cut off, overlapping, or too small to use."
+    },
+    "F39": {
+      "first": "After I rolled, the dice on the screen didn't look right.",
+      "repeat": "Rolled again and the dice on the screen still didn't look right."
+    },
+    "F39.extra": {
+      "first": "After I rolled, there were more than two dice on the screen.",
+      "repeat": "Rolled again and there were still more than two dice on the screen."
+    },
+    "F39.double": {
+      "first": "When I rolled a double, there were more than two dice on the screen.",
+      "repeat": "Rolled a double again and there were still more than two dice on the screen."
+    },
+    "F39.moves": {
+      "first": "I rolled two different numbers and got the wrong number of moves.",
+      "repeat": "Rolled two different numbers again and still got the wrong number of moves."
+    },
+    "F40": {
+      "first": "The two rows of points don't line up with each other.",
+      "repeat": "The two rows of points still don't line up with each other."
+    },
+    "F41": {
+      "first": "The pieces aren't perfect circles.",
+      "repeat": "The pieces still aren't perfect circles."
+    },
+    "F41.big": {
+      "first": "Their measurements of the page: {measured}. The brief makes a checker about 80% of a point's width.",
+      "repeat": "Their measurements again: {measured} — the checkers are still too big for their points."
+    },
+    "F41.small": {
+      "first": "Their measurements of the page: {measured}. The brief makes a checker about 80% of a point's width.",
+      "repeat": "Their measurements again: {measured} — the checkers are still too small for their points."
+    },
+    "F42": {
+      "first": "Some neighbouring points are the same colour — I expect the points to alternate between two colours.",
+      "repeat": "Some neighbouring points are still the same colour — I expect the points to alternate between two colours."
+    },
+    "F42.onecolour": {
+      "first": "The points are all one colour — I expect them to alternate between two colours.",
+      "repeat": "The points are still all one colour — I expect them to alternate between two colours."
+    },
+    "F42.morecolours": {
+      "first": "The points use more than two colours — I expect them to alternate between just two colours.",
+      "repeat": "The points still use more than two colours — I expect them to alternate between just two colours."
+    },
+    "F43": {
+      "first": "I can't see the pieces properly — some are hidden or cut off.",
+      "repeat": "I still can't see the pieces properly — some are hidden or cut off."
+    },
+    "F43.stacked": {
+      "first": "Pieces in a stack are drawn on the same spot, so I can't tell them apart — I expect each drawn piece on its own spot.",
+      "repeat": "Pieces in a stack are still drawn on the same spot, so I can't tell them apart — I still expect each drawn piece on its own spot."
+    },
+    "F43.clipped": {
+      "first": "Some of the pieces are cut off — I expect to see each drawn piece as a whole circle.",
+      "repeat": "Some of the pieces are still cut off — I still expect to see each drawn piece as a whole circle."
+    },
+    "F38.roll": {
+      "first": "I can't find the Roll button — I expect it on screen all the time, greyed out while it can't be used.",
+      "repeat": "I still can't find the Roll button — I expect it on screen all the time, greyed out while it can't be used."
+    },
+    "F38.double": {
+      "first": "I can't find the Double button — I expect it on screen all the time, greyed out while it can't be used.",
+      "repeat": "I still can't find the Double button — I expect it on screen all the time, greyed out while it can't be used."
+    },
+    "F38.undo": {
+      "first": "I can't find the Undo button — I expect it on screen all the time, greyed out while it can't be used.",
+      "repeat": "I still can't find the Undo button — I expect it on screen all the time, greyed out while it can't be used."
+    },
+    "F38.endturn": {
+      "first": "I can't find the End Turn button — I expect it on screen all the time, greyed out while it can't be used.",
+      "repeat": "I still can't find the End Turn button — I expect it on screen all the time, greyed out while it can't be used."
+    },
+    "F38.newgame": {
+      "first": "I can't find the New Game button — I expect it on screen all the time.",
+      "repeat": "I still can't find the New Game button — I expect it on screen all the time."
+    },
+    "F38.difficulty": {
+      "first": "I can't find where to choose the difficulty — I expect it on screen all the time.",
+      "repeat": "I still can't find where to choose the difficulty — I expect it on screen all the time."
+    },
+    "F38.cube": {
+      "first": "I can't see the doubling cube — I expect it on screen all the time.",
+      "repeat": "I still can't see the doubling cube — I expect it on screen all the time."
+    },
+    "F38.pipwhite": {
+      "first": "I can't see my pip count — I expect it on screen all the time.",
+      "repeat": "I still can't see my pip count — I expect it on screen all the time."
+    },
+    "F38.pipblack": {
+      "first": "I can't see the computer's pip count — I expect it on screen all the time.",
+      "repeat": "I still can't see the computer's pip count — I expect it on screen all the time."
+    },
+    "F38.turn": {
+      "first": "I can't see whose turn it is — I expect it on screen all the time.",
+      "repeat": "I still can't see whose turn it is — I expect it on screen all the time."
+    },
+    "F38.message": {
+      "first": "I can't see the game's messages — I expect them on screen all the time.",
+      "repeat": "I still can't see the game's messages — I expect them on screen all the time."
+    },
+    "F44": {
+      "first": "Some of the buttons aren't labelled with their names — I expect them to read Roll, Double, Undo, End Turn and New Game.",
+      "repeat": "Some of the buttons still aren't labelled with their names — I expect them to read Roll, Double, Undo, End Turn and New Game."
+    },
+    "F45": {
+      "first": "When I pick up a piece to be moved, and try to move it, it doesn't work as intended. I expect the piece to move when I click anywhere for it to move, such as another stack, the hint, or the spot itself (the rectangle that encompasses the triangle).",
+      "repeat": "When I pick up a piece to be moved, and try to move it, it still doesn't work as intended. I expect the piece to move when I click anywhere for it to move, such as another stack, the hint, or the spot itself (the rectangle that encompasses the triangle)."
+    },
+    "G27": {
+      "first": "They play a game to the end and start another, and the gamesPlayed count comes out wrong.",
+      "repeat": "They played another game to the end and started a new one, and the gamesPlayed count still comes out wrong."
+    },
+    "G27.counted": {
+      "first": "They play a game to the end, and gamesPlayed doesn't go up.",
+      "repeat": "They played another game to the end, and gamesPlayed still doesn't go up."
+    },
+    "G27.carried": {
+      "first": "They finish a game and start another, and gamesPlayed drops back to zero.",
+      "repeat": "They played another game to the end and started a new one, and gamesPlayed is still reset to zero."
+    },
+    "G27.extra": {
+      "first": "They finish a game and start another, and gamesPlayed goes up again as if the new game had already been played.",
+      "repeat": "They started another new game, and gamesPlayed again went up before it was played."
+    },
+    "G28.turnover": {
+      "first": "They tell your app's debug setup that the turn is over, and the state they read back doesn't say so.",
+      "repeat": "They set the turn as over through your app's debug setup again, and the state still doesn't say so."
+    },
+    "G28.games": {
+      "first": "They tell your app's debug setup how many games were played, and the state they read back doesn't carry that number.",
+      "repeat": "They set the games-played count through your app's debug setup again, and the state still doesn't carry it."
+    },
+    "G28": {
+      "first": "They seed two extra fields through your app's debug setup — that the turn is over, and how many games were played — and both are ignored.",
+      "repeat": "They sent the turn-over flag and a games count to your app's debug setup again, and it still ignores both."
+    },
+    "G29": {
+      "first": "They load your app at the /game address and it comes back 'Not found' — no page at all.",
+      "repeat": "They tried the /game address again and it still comes back 'Not found' — no page."
+    },
+    "G30": {
+      "first": "Their checks of your server: {measured}. They let your computer take a turn where either of its two numbers moves its checker but not both — when only one number can be used, the bigger one is played.",
+      "repeat": "Their checks again: {measured} — in a turn where only one of the computer's two numbers can be used, the bigger one is played."
+    },
+    "G30.passed": {
+      "first": "They let your computer take a turn through your server where one of its numbers can be played, and it passes without moving.",
+      "repeat": "Your computer still passes its turn without moving when one of its numbers can be played."
+    },
+    "G30.cubeheld": {
+      "first": "They let your computer take a turn through your server with the cube in the player's hands, and it still decides to offer a double — its turn then doesn't get played. The computer may offer a double only when the cube is in the middle or its own; while the player holds it, it never offers and just plays its turn.",
+      "repeat": "With the cube in the player's hands, your computer still decides to offer a double, and its turn still doesn't get played."
+    },
+    "G39.cubeheld": {
+      "first": "They let your computer take a turn through your server with the cube in the player's hands, and it still decides to offer a double — its turn then doesn't get played. The computer may offer a double only when the cube is in the middle or its own; while the player holds it, it never offers and just plays its turn.",
+      "repeat": "With the cube in the player's hands, your computer still decides to offer a double, and its turn still doesn't get played."
+    },
+    "G24.cubeheld": {
+      "first": "Their checks of your server: with the cube in the player's hands, your computer still offers a double. The computer may offer a double only when the cube is in the middle or its own; while the player holds it, it never offers.",
+      "repeat": "Their checks again: with the cube in the player's hands, your computer still offers a double."
+    },
+    "G24.lost": {
+      "first": "Their checks of your server: in races where your computer's own cube decision says double, its turn goes by without offering it. The rule for the computer's turn: once it decides to double, the turn stops on the offer — phase doubleOffered, before it rolls — until the player answers; then it rolls and plays.",
+      "repeat": "Their checks again: in those races your computer still decides to double, and its turn still goes by without offering it."
+    },
+    "G31": {
+      "first": "They start a new game through your app's API and the opening roll doesn't work right.",
+      "repeat": "They start another new game through your API and the opening roll still doesn't work right."
+    },
+    "G31.won": {
+      "first": "They throw higher than the computer in the opening roll through your app's API, and the first move isn't theirs.",
+      "repeat": "They throw higher than the computer in the opening roll through your API again, and the first move still isn't theirs."
+    },
+    "G31.dice": {
+      "first": "They win the opening throw through your app's API, but what comes back doesn't give them both numbers to move with.",
+      "repeat": "They win the opening throw through your API again, and what comes back still doesn't give them both numbers to move with."
+    },
+    "G31.first": {
+      "first": "They throw lower than the computer in the opening roll through your app's API, and the first move isn't the computer's.",
+      "repeat": "They throw lower than the computer in the opening roll through your API again, and the first move still isn't the computer's."
+    },
+    "G31.numbers": {
+      "first": "Their checks of your server: {measured}. When the computer wins the opening throw, its first turn plays exactly those two numbers — no more, no less.",
+      "repeat": "Their checks again: {measured} — the computer's first turn still doesn't play exactly the opening's two numbers."
+    },
+    "G31.queue": {
+      "first": "Their checks of your server: {measured}. A roll queued through /api/debug/roll belongs to the next roll that is thrown; the computer's opening turn throws no dice — it plays the opening numbers and leaves the queue for the next roll.",
+      "repeat": "Their checks again: {measured} — a turn that throws no dice still takes the queued roll."
+    },
+    "G31.handback": {
+      "first": "The computer makes its first move after winning the opening throw through your app's API, and the turn never comes back to them.",
+      "repeat": "The computer makes its first move through your API again, and the turn still never comes back to them."
+    },
+    "G31.tie": {
+      "first": "They throw the same number in the opening roll through your app's API, and the game carries on as if one side had won.",
+      "repeat": "They throw the same number in the opening roll through your API again, and the game still carries on as if one side had won."
+    },
+    "G31.cube": {
+      "first": "They start a new game through your app's API and it says they may double before the first move.",
+      "repeat": "They start another new game through your API and it still says they may double before the first move."
+    },
+    "G31.cubemoved": {
+      "first": "They double through your app's API before the first move of a new game, and it takes the double.",
+      "repeat": "They double through your API again before the first move of a new game, and it takes the double."
+    },
+    "G32": {
+      "first": "They leave the computer on the bar with every way in held, and your app's reply to its turn neither says so nor gives them the turn back.",
+      "repeat": "They leave the computer on the bar with every way in held again, and your app's reply still neither says so nor gives them the turn back."
+    },
+    "G32.pass": {
+      "first": "They leave the computer on the bar with every way in held, and your app never gives them the turn back.",
+      "repeat": "They leave the computer on the bar with every way in held again, and your app still never gives them the turn back."
+    },
+    "G32.wording": {
+      "first": "They leave the computer on the bar with every way in held, and your app's message for it doesn't contain the words \"No moves available\".",
+      "repeat": "They leave the computer on the bar with every way in held again, and your app's message still doesn't contain the words \"No moves available\"."
+    },
+    "F46": {
+      "first": "When the computer turns down my double, the pop-up's title doesn't say I won.",
+      "repeat": "The computer turned down my double again and the pop-up's title still doesn't say I won."
+    },
+    "F46.winner": {
+      "first": "When the computer turned down my double, the game declared the computer the winner.",
+      "repeat": "Again, when the computer turns down my double, the game declares the computer the winner."
+    },
+    "F46.nopopup": {
+      "first": "When the computer turns down my double, no pop-up comes up to say I won.",
+      "repeat": "The computer turned down my double again, and still no pop-up comes up to say I won."
+    },
+    "F47": {
+      "first": "After I play my moves, my turn ends by itself before I click End Turn.",
+      "repeat": "My turn still ends by itself after my moves, before I click End Turn."
+    },
+    "F48.stuck": {
+      "first": "When I roll and can't move, the turn goes over to the computer, but its turn never finishes — the game just sits there.",
+      "repeat": "After a roll I can't move with, the computer's turn still never finishes."
+    },
+    "F48": {
+      "first": "When I roll and can't move, the turn doesn't pass to the computer on its own.",
+      "repeat": "Rolled with no move again, and the turn still doesn't pass to the computer on its own."
+    },
+    "F49": {
+      "first": "When the computer offers a double, the message goes into its working — odds, pip counts, its reasoning. I just want to be told it's doubling.",
+      "repeat": "The computer doubled again and its message still goes into its working — odds, pip counts, its reasoning."
+    },
+    "F50": {
+      "first": "When the computer answers my double, the message goes into its working — odds, pip counts, its reasoning. I just want to know whether it took the double.",
+      "repeat": "I doubled again and the computer's answer still goes into its working — odds, pip counts, its reasoning."
+    },
+    "F50.winner": {
+      "first": "When the computer turned down my double, the game declared the computer the winner.",
+      "repeat": "Again, when the computer turns down my double, the game declares the computer the winner."
+    },
+    "F51": {
+      "first": "The pop-up at the end shows a 'Match score' line — I just want who won and the points.",
+      "repeat": "The game ended again and the pop-up still shows a 'Match score' line — I still just want who won and the points."
+    },
+    "F52": {
+      "first": "Their measurements of the page at the start of a game: {measured}. The brief draws the buttons that can't be used yet clearly fainter than the ones that can.",
+      "repeat": "Their measurements again: {measured} — the buttons that can't be used yet still aren't clearly fainter."
+    },
+    "F53": {
+      "first": "I bear off my last piece and the win pop-up never appears.",
+      "repeat": "I bore off my last piece again and the win pop-up still never appears."
+    },
+    "F53.title": {
+      "first": "I bear off my last piece and a pop-up comes up, but it doesn't say I won.",
+      "repeat": "I bore off my last piece again and the pop-up still doesn't say I won."
+    },
+    "F54": {
+      "first": "I set the difficulty to Hard, and after a reload the difficulty box no longer shows Hard.",
+      "repeat": "I set it to Hard again, and after reloading the difficulty box still doesn't show Hard."
+    },
+    "F54.control": {
+      "first": "I tried to set the difficulty to Hard, and the difficulty box wouldn't let me pick it.",
+      "repeat": "The difficulty box still won't let me pick Hard."
+    },
+    "F54.newgame": {
+      "first": "At the start of a game I picked Hard and pressed New Game, and New Game wouldn't respond — I couldn't start a game at the level I picked.",
+      "repeat": "New Game still won't respond at the start of a game after I pick Hard."
+    },
+    "F55": {
+      "first": "I reload while it's the computer's turn, and the game stalls — the turn never comes back to me.",
+      "repeat": "I reloaded again during the computer's turn, and the turn still never came back to me."
+    },
+    "F56": {
+      "first": "I reload while the computer's double offer is up, and I can no longer accept or decline it.",
+      "repeat": "I reloaded again while the computer's double offer was up, and I still couldn't accept or decline it."
+    },
+    "F57": {
+      "first": "When a lot of pieces pile up on one point, they aren't drawn so I can see how many are there.",
+      "repeat": "A point piled high with pieces still isn't drawn so I can see how many are there."
+    },
+    "F57.cap": {
+      "first": "A point holding seven of my pieces shows more than six of them — I expected six, with the total on the top one.",
+      "repeat": "A point with seven of my pieces still shows more than six — I expected six, with the total on the top one."
+    },
+    "F57.count": {
+      "first": "A point holding seven of my pieces shows no number telling me there are seven.",
+      "repeat": "A point with seven of my pieces still shows no number telling me how many there are."
+    },
+    "F58": {
+      "first": "When I move a piece off a stack, it isn't the top piece that slides away — I expected the top one to leave and the rest to stay put.",
+      "repeat": "Moving a piece off a stack still slides away one that isn't on top."
+    },
+    "F59": {
+      "first": "When I move a piece onto a point that already has one of mine, it lands at the edge and pushes the other one along — I expected it to join at the far end.",
+      "repeat": "A piece I move onto one of my stacks still lands at the edge and pushes the others along."
+    },
+    "F60": {
+      "first": "On point 13, where five of my pieces are stacked, I clicked at the end of the stack toward the middle of the board, still inside that point's column, and no hints came up — I expect a click anywhere in a point's column to pick up its top piece and show where it can move.",
+      "repeat": "On point 13 I clicked again at the end of the stack, inside the point's column, and still no hints came up."
+    },
+    "F61": {
+      "first": "I started a new game and the throw to see who goes first didn't go right on screen.",
+      "repeat": "Another new game, and the throw to see who goes first still didn't go right on screen."
+    },
+    "F61.roll": {
+      "first": "At the start of a new game the Roll button won't let me click it, so I can't roll.",
+      "repeat": "I started another new game and the Roll button still won't let me click it."
+    },
+    "F61.dice": {
+      "first": "I clicked Roll to see who goes first, and fewer than two dice stayed on screen.",
+      "repeat": "I rolled to see who goes first again, and still fewer than two dice stayed on screen."
+    },
+    "F61.tie": {
+      "first": "We threw the same number to see who goes first, and nothing on screen said \"Tie — roll again\".",
+      "repeat": "We threw the same number again to see who goes first, and still nothing on screen said \"Tie — roll again\"."
+    },
+    "F62": {
+      "first": "I couldn't keep up with what the computer did.",
+      "repeat": "Again I couldn't keep up with what the computer did."
+    },
+    "F62.turn": {
+      "first": "After my last move, the computer's turn never went through.",
+      "repeat": "After my last move again, the computer's turn still never went through."
+    },
+    "F62.drawn": {
+      "first": "The computer took its turn, but I never saw its pieces move on the board.",
+      "repeat": "The computer took another turn and again I never saw its pieces move on the board."
+    },
+    "F62.dice": {
+      "first": "The computer moved without showing me its dice first.",
+      "repeat": "Again the computer moved without showing me its dice first."
+    },
+    "F62.first": {
+      "first": "Their timing of the page: {measured}. The brief keeps the computer's dice readable about a second before its first move.",
+      "repeat": "Their timing again: {measured} — the computer's dice still aren't up long enough to read."
+    },
+    "F62.wait": {
+      "first": "Their timing of the page: {measured}. The brief has a pause of about a second after End Turn before the computer's dice come up.",
+      "repeat": "Their timing again: {measured} — the computer's dice still come up too soon after End Turn."
+    },
+    "F77": {
+      "first": "I couldn't keep up with what the computer did.",
+      "repeat": "Again I couldn't keep up with what the computer did."
+    },
+    "F77.between": {
+      "first": "Their timing of the page: {measured}. They time the pieces as the board draws them, not the calls behind it: the brief has the board show the computer's moves one at a time, about half a second apart.",
+      "repeat": "Their timing again: {measured} — on the board itself, the computer's moves still aren't half a second apart."
+    },
+    "F63": {
+      "first": "They roll to see who goes first and can't read the result from your app.",
+      "repeat": "They rolled to see who goes first again and still can't read the result from your app."
+    },
+    "F63.order": {
+      "first": "They fix the first roll of a game at 6 for the player and 5 for the computer, and the state's dice don't read [6, 5] — the player's die first.",
+      "repeat": "They fixed the first roll at 6 against 5 again, and the state's dice still don't read [6, 5]."
+    },
+    "F63.owner": {
+      "first": "They roll to see who goes first and can't tell which die on screen is the player's and which is the computer's: the two dice don't carry data-owner \"you\" and \"ai\".",
+      "repeat": "They rolled to see who goes first again, and the two dice still don't carry data-owner \"you\" and \"ai\"."
+    },
+    "F64": {
+      "first": "I couldn't find the Fast Forward button when I wanted it.",
+      "repeat": "Again I couldn't find the Fast Forward button when I wanted it."
+    },
+    "F64.outside": {
+      "first": "A Fast Forward button was already showing at the start of a new game.",
+      "repeat": "Again a Fast Forward button was showing at the start of a new game."
+    },
+    "F64.shown": {
+      "first": "At the start of my turn, before I'd rolled, all my pieces were past the computer's and nothing could be hit any more — and no Fast Forward button showed.",
+      "repeat": "Again at the start of my turn, before rolling, with all my pieces past the computer's, no Fast Forward button showed."
+    },
+    "F64.size": {
+      "first": "The Fast Forward button isn't the same size as the other buttons.",
+      "repeat": "The Fast Forward button still isn't the same size as the other buttons."
+    },
+    "F64.label": {
+      "first": "In a race, the button that came up doesn't say Fast Forward.",
+      "repeat": "That button in a race still doesn't say Fast Forward."
+    },
+    "F64.shownplayed": {
+      "first": "In a race, the Fast Forward button went away once I'd played my moves.",
+      "repeat": "Again, in a race the Fast Forward button went away once my moves were played."
+    },
+    "F64.shownrolled": {
+      "first": "In a race, the Fast Forward button was there before I rolled, but it went away once I'd rolled.",
+      "repeat": "Again, in a race the Fast Forward button went away as soon as I'd rolled."
+    },
+    "F65": {
+      "first": "Fast Forward didn't carry the game through to the end for me.",
+      "repeat": "Again Fast Forward didn't carry the game through to the end."
+    },
+    "F65.unseen": {
+      "first": "When Fast Forward played the game out, I never saw my own pieces move — the board just jumped on to the end.",
+      "repeat": "Fast Forward played the game out again and I still never saw my own pieces move."
+    },
+    "F65.played": {
+      "first": "I clicked Fast Forward once and sat back, and a minute later the game still wasn't over.",
+      "repeat": "I clicked Fast Forward once again, and a minute later the game still wasn't over."
+    },
+    "F65.popup": {
+      "first": "Fast Forward played the game to the end, but no end-of-game pop-up appeared.",
+      "repeat": "Again the game played out to the end with no end-of-game pop-up."
+    },
+    "F65.dice": {
+      "first": "When Fast Forward played my turn, my pieces moved before my dice ever showed.",
+      "repeat": "Again, under Fast Forward my pieces moved before my dice showed."
+    },
+    "F65.first": {
+      "first": "Their timing of the page: {measured}. The brief keeps the player's dice readable about a second before Fast Forward's first move.",
+      "repeat": "Their timing again: {measured} — the dice still aren't up long enough before Fast Forward moves."
+    },
+    "F65.between": {
+      "first": "Their timing of the page: {measured}. The brief plays Fast Forward's moves about half a second apart.",
+      "repeat": "Their timing again: {measured} — Fast Forward's moves still come too close together."
+    },
+    "F66": {
+      "first": "I couldn't pause Fast Forward the way I wanted.",
+      "repeat": "Again I couldn't pause Fast Forward the way I wanted."
+    },
+    "F66.gone": {
+      "first": "I clicked Fast Forward, and while the game played itself the button disappeared — there was no Pause button on screen to stop it.",
+      "repeat": "Again the Fast Forward button disappeared once it started — there's still no Pause button on screen to stop it."
+    },
+    "F66.running": {
+      "first": "While Fast Forward was running, its button never read Pause.",
+      "repeat": "Again, while Fast Forward ran, its button never read Pause."
+    },
+    "F66.hang": {
+      "first": "I clicked Fast Forward and the whole page froze — nothing on it responded any more.",
+      "repeat": "Clicked Fast Forward again and the page froze again."
+    },
+    "F66.again": {
+      "first": "After I clicked Pause, I couldn't press Fast Forward again to carry on.",
+      "repeat": "Paused again, and Fast Forward still couldn't be pressed to carry on."
+    },
+    "F66.label": {
+      "first": "After I clicked Pause, the button never went back to Fast Forward.",
+      "repeat": "Again, after Pause, the button never went back to Fast Forward."
+    },
+    "F66.paused": {
+      "first": "I clicked Pause, and my own pieces were still being moved for me a few seconds later.",
+      "repeat": "Again, after I clicked Pause my pieces kept being moved for me."
+    },
+    "F66.resume": {
+      "first": "After pausing, I clicked Fast Forward again and no piece moved.",
+      "repeat": "Again, clicking Fast Forward after a pause moved nothing."
+    },
+    "F67": {
+      "first": "After being offered a double while my game was in Fast Forward, the behavior was wrong. I expect:\n   - When the computer offers a double during Fast Forward, the automatic play stops and the offer shows on screen.\n   - I can take the double right there.\n   - After I take it, the computer finishes its turn and the turn comes back to me with the game still paused — nothing moves by itself.\n   - The Fast Forward button is there, reading Fast Forward, and clicking it starts the automatic play again, whether or not I've rolled.",
+      "repeat": "Again, after being offered a double while my game was in Fast Forward, the behavior was wrong. I expect:\n   - When the computer offers a double during Fast Forward, the automatic play stops and the offer shows on screen.\n   - I can take the double right there.\n   - After I take it, the computer finishes its turn and the turn comes back to me with the game still paused — nothing moves by itself.\n   - The Fast Forward button is there, reading Fast Forward, and clicking it starts the automatic play again, whether or not I've rolled."
+    },
+    "F67.offer": {
+      "first": "When I started Fast Forward at the end of my turn, nothing on screen showed the computer doubling.",
+      "repeat": "Again, with Fast Forward started at the end of my turn, nothing showed the computer doubling."
+    },
+    "F67.stopped": {
+      "first": "When the computer offered a double, the Fast Forward button still read Pause.",
+      "repeat": "Again, when the computer offered a double, the button still read Pause."
+    },
+    "F67.answer": {
+      "first": "When the computer offered a double during Fast Forward, I couldn't find a way to take it.",
+      "repeat": "Again, during Fast Forward I couldn't find a way to take the computer's double."
+    },
+    "F67.back": {
+      "first": "After I took the double, the Fast Forward button didn't come back.",
+      "repeat": "Again, after I took the double, the Fast Forward button didn't come back."
+    },
+    "F67.carry": {
+      "first": "After I took the double, I couldn't press Fast Forward to carry on.",
+      "repeat": "Took the double again and still couldn't press Fast Forward to carry on."
+    },
+    "F67.label": {
+      "first": "After I took the double, nothing was playing any more, but the button still read Pause.",
+      "repeat": "Again, after I took the double, nothing was playing, but the button still read Pause."
+    },
+    "F67.stays": {
+      "first": "With Fast Forward on, after I took the double it kept playing my moves for me.",
+      "repeat": "Fast Forward was on again, and after I took the double it still played my moves for me."
+    },
+    "F67.frozen": {
+      "first": "With Fast Forward running, I took the computer's double and the game froze — the computer never finished its turn.",
+      "repeat": "Took the computer's double during Fast Forward again, and the game froze again."
+    },
+    "F47.undonever": {
+      "first": "Undo is not working. When I roll and play my moves, the Undo button is physically greyed out for the full duration of the turn. I cannot ever undo my turns.",
+      "repeat": "Undo still isn't working — the button stays greyed out the whole turn, and I can never undo a move."
+    },
+    "F47.turnover": {
+      "first": "Their checks of your server: {measured}. The rule for turnOver: false while the player still has a move to play — straight after the roll and between moves — and true once none is left, whether every die is used or the rest can't move. End Turn ends the turn only then.",
+      "repeat": "Their checks again: {measured}. The rule again: turnOver is false while a move is left to play, and true once none is."
+    },
+    "F47.undoclick": {
+      "first": "I clicked Undo while my turn waited for End Turn, and my last move wasn't taken back.",
+      "repeat": "Clicked Undo again while the turn waited, and my move still wasn't taken back."
+    },
+    "F47.undo": {
+      "first": "Undo works while I'm playing my moves, but once they're all played and the turn waits for End Turn, the Undo button greys out.",
+      "repeat": "Played my moves out again, and Undo still greys out as soon as the turn waits for End Turn."
+    },
+    "F47.endturn": {
+      "first": "When I've finished my moves, End Turn doesn't hand the turn to the computer.",
+      "repeat": "End Turn still doesn't hand the turn to the computer after I finish my moves."
+    },
+    "F47.endturnoff": {
+      "first": "When I'd played all my moves, I couldn't press End Turn.",
+      "repeat": "I played all my moves again and still couldn't press End Turn."
+    },
+    "F48.dim": {
+      "first": "Their measurements of a roll with no move: {measured}. The brief dims the dice of a roll that can't be played, then passes the turn after about a second.",
+      "repeat": "Their measurements again: {measured} — the dice of a roll with no move still aren't dimmed."
+    },
+    "F48.pause": {
+      "first": "When I roll and can't move, the turn passes straight away. I want a second's pause with my dice up so I can see why.",
+      "repeat": "Rolled with no move again, and the turn still passes straight away."
+    },
+    "F49.shown": {
+      "first": "The computer's double offer never shows up on screen — nothing tells me it wants to double.",
+      "repeat": "Still nothing on screen tells me when the computer wants to double."
+    },
+    "F49.answer": {
+      "first": "When the computer offers a double, the buttons to answer it don't read Accept (or Take) and Decline (or Pass).",
+      "repeat": "The computer offered a double again, and the buttons to answer it still don't read Accept (or Take) and Decline (or Pass)."
+    },
+    "F50.shown": {
+      "first": "When I double, nothing on screen tells me whether the computer took it.",
+      "repeat": "I doubled again and still nothing on screen told me whether the computer took it."
+    },
+    "F50.frozen": {
+      "first": "After the computer took my double, the game froze — I couldn't roll.",
+      "repeat": "The computer took my double and the game froze again — still no way to roll."
+    },
+    "F50.passed": {
+      "first": "When I doubled and the computer turned it down, the game ended, but nothing on screen said the computer had passed.",
+      "repeat": "I doubled again, the computer turned it down and the game ended — and still nothing on screen said it had passed."
+    },
+    "F51.points": {
+      "first": "The pop-up at the end doesn't show the game's points — no number with the word \"points\".",
+      "repeat": "The game ended again and the pop-up still doesn't show the points — no number with the word \"points\"."
+    },
+    "F68": {
+      "first": "They start a game at Hard through your API and open it, and your difficulty box reads a different level.",
+      "repeat": "They started another game at Hard through your API, and opened it, and your difficulty box still shows a different level."
+    },
+    "F69": {
+      "first": "They read your pip counts from the pipWhite and pipBlack elements, and what they find there isn't a bare number.",
+      "repeat": "They read your pip counts again, and pipWhite and pipBlack still don't hold a bare number."
+    },
+    "F70": {
+      "first": "The triangles across the middle leave the wrong gap — I expect the gap between each top triangle's tip and the tip of the one straight across from it to be about 24% of half the board's height.",
+      "repeat": "The triangles across the middle still leave the wrong gap — I expect the gap between each top triangle's tip and the tip of the one straight across from it to be about 24% of half the board's height."
+    },
+    "F70.touching": {
+      "first": "The triangles on the two sides of the middle touch or overlap — I expect the gap between each top triangle's tip and the tip of the one straight across from it to be about 24% of half the board's height.",
+      "repeat": "The triangles on the two sides of the middle still touch or overlap — I expect the gap between each top triangle's tip and the tip of the one straight across from it to be about 24% of half the board's height."
+    },
+    "F70.tooclose": {
+      "first": "Their measurements of the page: {measured}. The brief leaves about a quarter of half the board's height open between each top tip and the tip straight across from it.",
+      "repeat": "Their measurements again: {measured} — facing tips still sit too close together."
+    },
+    "F70.toowide": {
+      "first": "Their measurements of the page: {measured}. The brief leaves about a quarter of half the board's height open between each top tip and the tip straight across from it.",
+      "repeat": "Their measurements again: {measured} — facing tips still sit too far apart."
+    },
+    "F71": {
+      "first": "The checkers on a point aren't spaced evenly — I expect a point's checkers evenly apart, and a stack of six a little tighter than the rest.",
+      "repeat": "The checkers on a point still aren't spaced evenly — I expect a point's checkers evenly apart, and a stack of six a little tighter than the rest."
+    },
+    "F71.uneven": {
+      "first": "Their measurements of the page: {measured}. The brief has the checkers in a stack evenly spaced, each touching the next.",
+      "repeat": "Their measurements again: {measured} — the steps in a stack still aren't even."
+    },
+    "F71.six": {
+      "first": "Their measurements of the page: {measured}. The brief: a stack of six sits a little tighter so all six fit within their point, while stacks of five or fewer stay as they are — starting right at the edge, each piece touching the next.",
+      "repeat": "Their measurements again: {measured} — a stack of six is still drawn at the shorter stacks' spacing."
+    },
+    "F71.crowdedtop": {
+      "first": "Their measurements of the page: {measured}. The brief has each piece in a stack touching the next without overlapping it; only a stack of six sits a little tighter.",
+      "repeat": "Their measurements again: {measured} — the checkers in a stack still overlap."
+    },
+    "F71.crowdedbottom": {
+      "first": "Their measurements of the page: {measured}. The brief has each piece in a stack touching the next without overlapping it; only a stack of six sits a little tighter.",
+      "repeat": "Their measurements again: {measured} — the checkers in a stack still overlap."
+    },
+    "F71.crowdedboth": {
+      "first": "Their measurements of the page: {measured}. The brief has each piece in a stack touching the next without overlapping it; only a stack of six sits a little tighter.",
+      "repeat": "Their measurements again: {measured} — the checkers in a stack still overlap."
+    },
+    "F71.spreadtop": {
+      "first": "Their measurements of the page: {measured}. The brief has every stack start right at the edge, at the wide end of its point, each piece touching the next.",
+      "repeat": "Their measurements again: {measured} — the checkers in a stack still aren't touching."
+    },
+    "F71.spreadbottom": {
+      "first": "Their measurements of the page: {measured}. The brief has every stack start right at the edge, at the wide end of its point, each piece touching the next.",
+      "repeat": "Their measurements again: {measured} — the checkers in a stack still aren't touching."
+    },
+    "F71.spreadboth": {
+      "first": "Their measurements of the page: {measured}. The brief has every stack start right at the edge, at the wide end of its point, each piece touching the next.",
+      "repeat": "Their measurements again: {measured} — the checkers in a stack still aren't touching."
+    },
+    "F71.cascade": {
+      "first": "Their measurements of the page: {measured}. The brief has each stack stand straight along its point, every checker centred on the point.",
+      "repeat": "Their measurements again: {measured} — the stack still drifts sideways."
+    },
+    "F61.autoroll": {
+      "first": "When I opened the game, the opening roll had already been played by itself — I never got to press Roll.",
+      "repeat": "The opening roll still plays itself as soon as the game opens — I never get to press Roll."
+    },
+    "F61.match": {
+      "first": "On the opening sequence, when the two players roll, their dice don't match the colours of our pieces — I expect my die white like my pieces and the computer's die black like its pieces.",
+      "repeat": "On the opening sequence, when the two players roll, their dice still don't match the colours of our pieces."
+    },
+    "F61.self": {
+      "first": "When we tied on the opening roll, the game rolled again by itself — I expect it to wait for me to press Roll.",
+      "repeat": "After a tie on the opening roll, the game still rolled again without waiting for me to press Roll."
+    },
+    "G33": {
+      "first": "From the even starting position, your computer offers a double after its very first turn, when nobody is ahead.",
+      "repeat": "From the even start again, your computer still offers a double after its very first turn."
+    },
+    "G33.early": {
+      "first": "From the even starting position, your computer offers a double after its very first turn, when nobody is ahead.",
+      "repeat": "From the even start again, your computer still offers a double after its very first turn."
+    },
+    "F72": {
+      "first": "While the computer's double was waiting for my answer, pressing End Turn just made the computer play again.",
+      "repeat": "I still get the computer playing again, not my own turn, when I press End Turn with its double waiting."
+    },
+    "F49.noend": {
+      "first": "My moves were done, and End Turn couldn't be pressed.",
+      "repeat": "My moves were done again, and End Turn still couldn't be pressed."
+    },
+    "F55.noend": {
+      "first": "My moves were done, and End Turn couldn't be pressed.",
+      "repeat": "My moves were done again, and End Turn still couldn't be pressed."
+    },
+    "F56.noend": {
+      "first": "My moves were done, and End Turn couldn't be pressed.",
+      "repeat": "My moves were done again, and End Turn still couldn't be pressed."
+    },
+    "F72.noend": {
+      "first": "My moves were done, and End Turn couldn't be pressed.",
+      "repeat": "My moves were done again, and End Turn still couldn't be pressed."
+    },
+    "F90.noend": {
+      "first": "My moves were done, and End Turn couldn't be pressed.",
+      "repeat": "My moves were done again, and End Turn still couldn't be pressed."
+    },
+    "F94.noend": {
+      "first": "My moves were done, and End Turn couldn't be pressed.",
+      "repeat": "My moves were done again, and End Turn still couldn't be pressed."
+    },
+    "F72.endturn": {
+      "first": "While the computer's double was waiting for my answer, pressing End Turn just made the computer play again.",
+      "repeat": "I still get the computer playing again, not my own turn, when I press End Turn with its double waiting."
+    },
+    "F73": {
+      "first": "I rolled two different numbers and both could be used, but the game made me play the bigger one first — clicking the smaller number's move did nothing. When both numbers can be used I expect to play them in either order; only when just one of them can be used does it have to be the bigger one.",
+      "repeat": "With two different numbers that can both be used, I still can't play the smaller one first."
+    },
+    "F78": {
+      "first": "After I move a piece, the die I used disappears. It should grey out slightly to signal it's been played.",
+      "repeat": "The die I used still disappears after I move."
+    },
+    "F78.gone": {
+      "first": "After I move a piece, the die I used disappears. It should grey out slightly to signal it's been played.",
+      "repeat": "The die I used still disappears after I move."
+    },
+    "F78.grey": {
+      "first": "After I move a piece, the die I used looks the same as the one I haven't played yet. I expect it greyed out slightly so I can see it's been played.",
+      "repeat": "The die I used still looks the same as the unplayed one after I move."
+    },
+    "F78.slight": {
+      "first": "Their measurements of the page: {measured}. The brief has a played die greyed out — visibly fainter than a die not yet played.",
+      "repeat": "Their measurements again: {measured} — the played die still isn't clearly fainter than before."
+    },
+    "F79": {
+      "first": "The triangles on one side of the board are bigger than on the other — I expect them all to match.",
+      "repeat": "The triangles still don't all match."
+    },
+    "F79.width": {
+      "first": "Their measurements of the page: {measured}. The brief has every point the same width.",
+      "repeat": "Their measurements again: {measured} — the points still aren't all the same width."
+    },
+    "F79.length": {
+      "first": "Their measurements of the page: {measured}. The brief has every point the same length.",
+      "repeat": "Their measurements again: {measured} — the points still aren't all the same length."
+    },
+    "F80": {
+      "first": "Their measurements of the page: {measured}. The brief has the bar run down the middle of the board, so the two halves are the same width.",
+      "repeat": "Their measurements again: {measured} — the two halves still aren't the same width."
+    },
+    "F80.bargap": {
+      "first": "Their measurements of the page: {measured}. On each side of the bar the six points sit side by side from the board's outer edge right up to the bar — no more than a quarter of a point's width of empty board is left beside the bar.",
+      "repeat": "Their measurements again: {measured} — there's still empty board between the points and the bar."
+    },
+    "F81": {
+      "first": "There's an empty gap between the last points and the bear-off area — I expect them to touch.",
+      "repeat": "There's still an empty gap before the bear-off area."
+    },
+    "F82": {
+      "first": "Their measurements of the page: {measured}. The brief has all five buttons the same size as each other.",
+      "repeat": "Their measurements again: {measured} — the buttons still aren't the same size."
+    },
+    "F83": {
+      "first": "The triangles facing each other across the board are the same colour — I expect light to face dark.",
+      "repeat": "The triangles facing each other are still the same colour."
+    },
+    "F84": {
+      "first": "The move hints show up straight after I roll, before I've picked a piece, which is confusing. I want to see them as soon as I select a piece.",
+      "repeat": "The hints still show up before I've picked a piece."
+    },
+    "F85": {
+      "first": "When we tied on the opening roll, the game froze — I pressed Roll like it told me and nothing happened.",
+      "repeat": "We tied on the opening roll again and the game froze again; pressing Roll still did nothing."
+    },
+    "F86": {
+      "first": "The move hints don't look right — I expect each one to be a dimmed, light-green marker the size of a piece.",
+      "repeat": "The move hints still look wrong — I still expect a dimmed, light-green marker as big as a piece."
+    },
+    "F86.size": {
+      "first": "The move hints aren't the size of a piece — I expect each one as big as a piece.",
+      "repeat": "The move hints still aren't the size of a piece."
+    },
+    "F86.green": {
+      "first": "The move hints aren't light green — I expect a light-green marker.",
+      "repeat": "The move hints still aren't light green."
+    },
+    "F86.dim": {
+      "first": "The move hints are drawn solid — I expect them dimmed, so the board shows through.",
+      "repeat": "The move hints are still solid, not dimmed."
+    },
+    "F31.past": {
+      "first": "Some of my pieces hang over the edge of the board, past the end of their point.",
+      "repeat": "Some of my pieces still hang over the edge of the board."
+    },
+    "F87": {
+      "first": "When I change the size or shape of my browser window, the game doesn't keep up.",
+      "repeat": "Resized my window again and the game still doesn't keep up."
+    },
+    "F87.fit": {
+      "first": "When I change the shape of my browser window — shorter, narrower or bigger — part of the game runs off the screen.",
+      "repeat": "Changed my window's shape again and part of the game still runs off the screen."
+    },
+    "F87.gonebuttons": {
+      "first": "When I change the shape of my browser window, some of the buttons disappear.",
+      "repeat": "Changed my window's shape again and some buttons still disappear."
+    },
+    "F87.offbuttons": {
+      "first": "Their measurements of the page: {measured}. The brief lays the board, the buttons and the game-info panels out to fit the window, whatever its shape.",
+      "repeat": "Their measurements again: {measured} — the buttons still don't all fit in the window."
+    },
+    "F87.info": {
+      "first": "Their measurements of the page: {measured}. The brief lays the board, the buttons and the game-info panels out to fit the window, whatever its shape.",
+      "repeat": "Their measurements again: {measured} — the game information still doesn't all fit in the window."
+    },
+    "F87.buttons": {
+      "first": "When I change the shape of my browser window, the buttons get squashed and their names are cut off.",
+      "repeat": "Changed my window's shape again and the buttons are still squashed, their names cut off."
+    },
+    "F87.missing": {
+      "first": "When I change the shape of my browser window, some of my pieces disappear from the board.",
+      "repeat": "Changed my window's shape again and pieces still disappear from the board."
+    },
+    "F87.place": {
+      "first": "When I change the shape of my browser window, the pieces don't move with the board — they end up away from their points.",
+      "repeat": "Changed my window's shape again and the pieces still end up away from their points."
+    },
+    "F87.uneven": {
+      "first": "Their measurements of the page: {measured}. The brief has the pieces stay the same share of a point's width at any window size.",
+      "repeat": "Their measurements again: {measured} — the pieces still aren't one size after the window changes shape."
+    },
+    "F87.small": {
+      "first": "Their measurements of the page: {measured}. The brief sizes the board in proportion to the window, so it fills the room the window gives it.",
+      "repeat": "Their measurements again: {measured} — the board still shrinks well below the room the window gives it."
+    },
+    "F87.overlap": {
+      "first": "When I change the shape of my browser window — shorter, narrower or bigger — pieces from different points run into each other.",
+      "repeat": "Changed my window's shape again, and pieces from different points still run into each other."
+    },
+    "F87.ratio": {
+      "first": "Their measurements of the page: {measured}. The brief keeps the whole board — its points, the bar and the off tray — 1.4 times as wide as it is tall, sized to the window.",
+      "repeat": "Their measurements again: {measured} — the board still isn't 1.4 times as wide as it is tall."
+    },
+    "F87.shape": {
+      "first": "Their measurements as the window changes size: {measured}. The brief keeps the board 1.4 times as wide as it is tall at any window size.",
+      "repeat": "Their measurements as the window changes size again: {measured} — the board still loses its shape."
+    },
+    "F87.size": {
+      "first": "Their measurements as the window changes size: {measured}. The brief keeps each checker the same share of a point's width at any window size.",
+      "repeat": "Their measurements as the window changes size again: {measured} — the checkers still change their share of the point."
+    },
+    "F87.changed": {
+      "first": "Their measurements of the page: {measured}. The brief sizes everything in proportion to the window, so back at full size the game should look as it did.",
+      "repeat": "Their measurements again: {measured} — back at full size, the game still doesn't look as it did."
+    },
+    "F87.stale": {
+      "first": "When I change the size of my browser window, the board is left a mess — old copies of parts of the board stay drawn over the game.",
+      "repeat": "Resized my window again, and old copies of the board are still left drawn over the game."
+    },
+    "F03.stale": {
+      "first": "When I click one of my pieces it lights up, but the hints stay where they were — they don't move to show where that piece can go.",
+      "repeat": "My piece still lights up when I click it, but the hints still don't move to show where it can go."
+    },
+    "F03.nochange": {
+      "first": "When I click one of my pieces, the hints don't change to show that piece's moves — it doesn't seem to get picked up.",
+      "repeat": "Clicked my pieces again and the hints still don't change — the piece still doesn't get picked up."
+    },
+    "F88": {
+      "first": "When the computer won the opening roll, it never made its move — the game just sat there and I couldn't do anything.",
+      "repeat": "The computer won the opening roll again and still never made its move."
+    },
+    "F90": {
+      "first": "If the AI doubles and I accept, the game is left in a broken frozen state.",
+      "repeat": "Accepted the AI's double again and the game froze again."
+    },
+    "F90.stays": {
+      "first": "When I take the computer's double, its pop-up stays up over the game after I've answered it.",
+      "repeat": "I took the computer's double again and its pop-up still stays up over the game."
+    },
+    "F91": {
+      "first": "I see pieces on the board already — I asked for just the board and the buttons first, with no pieces yet.",
+      "repeat": "There are still pieces on the board — I asked for just the board and the buttons first, with no pieces yet."
+    },
+    "F89": {
+      "first": "I pressed Roll and nothing happened.",
+      "repeat": "I pressed Roll again and still nothing happened."
+    },
+    "F89.seeded": {
+      "first": "Their checks of the page: {measured}. In the brief, phase \"roll\" is the player's turn before the roll, and a position set through /api/debug/state plays on exactly as if it had been reached by play.",
+      "repeat": "Their checks again: {measured} — a game set to phase \"roll\" still can't be rolled from the page."
+    },
+    "F39.frozen": {
+      "first": "After I played both my numbers, clicking a piece again locked the game up.",
+      "repeat": "After both my numbers, clicking a piece again still locks the game up."
+    },
+    "F88.stuck": {
+      "first": "When the computer won the opening roll, it started moving its pieces but never finished its turn — the turn never came back to me, and I couldn't do anything.",
+      "repeat": "The computer won the opening roll again, started moving, and its turn still never came back to me."
+    },
+    "F88.tie": {
+      "first": "When we tied on the opening roll, the game froze — I pressed Roll like it told me and nothing happened.",
+      "repeat": "We tied on the opening roll again and the game froze again; pressing Roll still did nothing."
+    },
+    "F88.pace": {
+      "first": "Their timing of the page: {measured}. The brief keeps the computer's dice readable about a second before its first move.",
+      "repeat": "Their timing again: {measured} — the computer's opening dice still aren't up long enough to read."
+    },
+    "F88.drawn": {
+      "first": "When the computer won the opening roll, I never saw its pieces move on the board.",
+      "repeat": "When the computer won the opening roll again, I still never saw its pieces move on the board."
+    },
+    "F88.numbers": {
+      "first": "When the computer won the opening roll, its first turn didn't move by exactly the two numbers thrown — no more, no less.",
+      "repeat": "When the computer won the opening roll, its first turn still didn't move by exactly the two numbers thrown — no more, no less."
+    },
+    "F92": {
+      "first": "After I played my roll, the Roll button was still there and let me roll and play again before the computer had its turn — I expect one roll per turn, then End Turn.",
+      "repeat": "After I played my roll, the Roll button was still there and still let me roll and play again before the computer had its turn — I expect one roll per turn, then End Turn."
+    },
+    "F93": {
+      "first": "After a roll, the game moves on before I can read the dice — I expect the dice to land and stay still for about a second before anything else happens.",
+      "repeat": "After a roll, the game still moves on before I can read the dice."
+    },
+    "F93.moved": {
+      "first": "Right after I rolled, my pieces moved by themselves — I hadn't moved anything. I expect the dice to land and stay still, and my pieces to stay where they are until I move them.",
+      "repeat": "Rolled again, and my pieces still moved by themselves before I'd touched them."
+    },
+    "F93.still": {
+      "first": "Their timing of the page: {measured}. The brief has the dice land after a roll and stay still so they can be read.",
+      "repeat": "Their timing again: {measured} — the dice still don't hold still after they land."
+    },
+    "F94": {
+      "first": "The computer's piece was on the bar and it rolled numbers that couldn't bring it in. The turn should have come back to me, but it didn't — the game froze and I couldn't roll.",
+      "repeat": "Again the computer couldn't bring its piece in off the bar, and the game froze instead of giving me my roll."
+    },
+    "F95.offhint": {
+      "first": "When I picked up a piece that could bear off, the hint to take it off wasn't on the off tray.",
+      "repeat": "Picked up a piece to bear off again, and the hint to take it off still wasn't on the off tray."
+    },
+    "F95": {
+      "first": "When I pick up a piece to bear it off, clicking the off tray doesn't take it off — I have to click its hint. I expect the piece to come off when I click anywhere for it to go, such as the off tray itself (the rectangle that holds the borne-off pieces) or its hint.",
+      "repeat": "Clicking the off tray still doesn't bear my piece off — only its hint does."
+    },
+    "G36": {
+      "first": "They roll again through your app's API after the dice are already rolled, and it gives them a new roll instead of ignoring it.",
+      "repeat": "They roll again through your app's API after the dice are already rolled, and it still gives them a new roll instead of ignoring it."
+    },
+    "F88.twice": {
+      "first": "When the computer won the opening roll, it moved its checkers twice as far as the dice allow — it played the 3 and the 5, then played them again.",
+      "repeat": "When the computer won the opening roll, it still moved its checkers twice as far as the dice allow — it played the 3 and the 5, then played them again."
+    },
+    "F66.turnend": {
+      "first": "Fast Forward played my roll and then just stopped — my dice were used up, but the turn never went over to the computer.",
+      "repeat": "Fast Forward played my roll and stopped there again — the turn still never went over to the computer."
+    },
+    "F11.outside": {
+      "first": "Some of the pieces I take off are drawn past the edges of the off tray, not inside it — I expect every piece I take off to sit wholly inside the tray.",
+      "repeat": "Pieces I take off are still drawn past the edges of the off tray."
+    },
+    "F33.twice": {
+      "first": "I rolled a double, and one click played two of its moves at once — I clicked to move one piece and two of my moves were used up.",
+      "repeat": "Rolled a double again and one click still played two of its moves at once."
+    },
+    "F33.twicewhere": {
+      "first": "Their checks of the page: {measured}. The brief has a click on a hint execute that one move, consuming that hint's die.",
+      "repeat": "Their checks again: {measured} — one click still sends the move more than once."
+    },
+    "G24.again": {
+      "first": "After the player takes your computer's double, your computer offers to double again straight away, on a cube the player now owns.",
+      "repeat": "After the take, your computer still offers to double again straight away, on a cube the player owns."
+    },
+    "F49.never": {
+      "first": "I was far behind in a race and the computer never once offered to double.",
+      "repeat": "Far behind in a race again, and the computer still never offered to double."
+    },
+    "F29.faint": {
+      "first": "Their measurements of the page: {measured}. The brief has the bar stand out clearly from the board — a fill of its own or a clear edge.",
+      "repeat": "Their measurements again: {measured} — the bar still barely stands apart from the board."
+    },
+    "F32.faint": {
+      "first": "Their measurements of the page: {measured}. The brief has the off tray stand out clearly from the board — a fill of its own or a clear edge down the side facing the points.",
+      "repeat": "Their measurements again: {measured} — the off tray still barely stands apart from the board."
+    },
+    "F30.faint": {
+      "first": "Their measurements of the page: {measured}. The brief has each point drawn as a triangle that stands out from the board.",
+      "repeat": "Their measurements again: {measured} — the triangles still barely stand apart from the board."
+    },
+    "F88.between": {
+      "first": "Their timing of the page: {measured}. They time the pieces as the board draws them, not the calls behind it: the brief has the board show the computer's moves one at a time, about half a second apart.",
+      "repeat": "Their timing again: {measured} — on the board itself, the computer's opening moves still aren't half a second apart."
+    },
+    "G30.easy": {
+      "first": "On the easy setting, they let your computer take a turn through your server where either of its two numbers moves its checker but not both, and it plays the smaller one — when only one number can be used, the bigger one is played, on every setting.",
+      "repeat": "On the easy setting, your computer still plays the smaller number when only one of its two can be used."
+    },
+    "G30.medium": {
+      "first": "On the medium setting, they let your computer take a turn through your server where either of its two numbers moves its checker but not both, and it plays the smaller one — when only one number can be used, the bigger one is played, on every setting.",
+      "repeat": "On the medium setting, your computer still plays the smaller number when only one of its two can be used."
+    },
+    "G30.hard": {
+      "first": "On the hard setting, they let your computer take a turn through your server where either of its two numbers moves its checker but not both, and it plays the smaller one — when only one number can be used, the bigger one is played, on every setting.",
+      "repeat": "On the hard setting, your computer still plays the smaller number when only one of its two can be used."
+    },
+    "F88.passed": {
+      "first": "When the computer won the opening roll, it handed the turn straight back to me without moving a single piece.",
+      "repeat": "The computer won the opening roll again and still handed the turn back without moving a piece."
+    },
+    "F88.tiemoved": {
+      "first": "When we tied on the opening roll, the game went straight on as if someone had won the roll.",
+      "repeat": "We tied on the opening roll again and the game still went straight on as if someone had won it."
+    },
+    "G14.strength": {
+      "first": "They play your computer against itself — hard against easy, with the same seeded dice — and {measured}. Hard doesn't win more games than easy.",
+      "repeat": "They played hard against easy again: {measured}."
+    },
+    "G14.unfinished": {
+      "first": "They play your computer against itself — hard against easy — and none of the games ever comes to an end.",
+      "repeat": "They played hard against easy again, and still none of the games came to an end."
+    },
+    "F38.cutoff": {
+      "first": "Some of the buttons or game info on the right are cut off by the edge of the window.",
+      "repeat": "Some of the buttons or game info are still cut off by the edge of the window."
+    },
+    "F38.onboard": {
+      "first": "Some of the buttons or game info sit on top of the board.",
+      "repeat": "Some of the buttons or game info still sit on top of the board."
+    },
+    "F38.squished": {
+      "first": "Some of the buttons' labels are cut off — the words don't fit on the button.",
+      "repeat": "Some of the buttons' labels are still cut off."
+    },
+    "F38.small": {
+      "first": "Their measurements of the page: {measured}. The brief has every button at least 60 px wide and 24 px tall.",
+      "repeat": "Their measurements again: {measured} — still under the brief's 60 by 24 px."
+    },
+    "F38.overlap": {
+      "first": "Some of the buttons overlap each other.",
+      "repeat": "Some of the buttons still overlap each other."
+    },
+    "F34.value": {
+      "first": "On a new game the cube on the board doesn't read one.",
+      "repeat": "Started another new game and the cube still doesn't read one."
+    },
+    "F34.owner": {
+      "first": "On a new game the cube already looks owned by one side — I expect it in the middle, owned by nobody.",
+      "repeat": "Started another new game and the cube still looks owned by one side."
+    },
+    "F16.pieces": {
+      "first": "I refreshed the page and not all the pieces were on the board afterwards.",
+      "repeat": "Refreshed again and still not all the pieces came back on the board."
+    },
+    "F17.pieces": {
+      "first": "I refreshed the page and not all the pieces were on the board afterwards.",
+      "repeat": "Refreshed again and still not all the pieces came back on the board."
+    },
+    "F18.pieces": {
+      "first": "I refreshed the page and not all the pieces were on the board afterwards.",
+      "repeat": "Refreshed again and still not all the pieces came back on the board."
+    },
+    "F19.pieces": {
+      "first": "I refreshed the page and not all the pieces were on the board afterwards.",
+      "repeat": "Refreshed again and still not all the pieces came back on the board."
+    },
+    "F20.pieces": {
+      "first": "I refreshed the page and not all the pieces were on the board afterwards.",
+      "repeat": "Refreshed again and still not all the pieces came back on the board."
+    },
+    "F21.pieces": {
+      "first": "I refreshed the page and not all the pieces were on the board afterwards.",
+      "repeat": "Refreshed again and still not all the pieces came back on the board."
+    },
+    "F37.shape": {
+      "first": "Their measurements of the page: {measured}. The brief keeps the whole board — its points, the bar and the off tray — 1.4 times as wide as it is tall, sized to the window.",
+      "repeat": "Their measurements again: {measured} — the board still isn't 1.4 times as wide as it is tall."
+    }
+  }
+}

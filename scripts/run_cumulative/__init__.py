@@ -1,0 +1,466 @@
+"""Canonical primary scored cumulative benchmark CLI.
+
+This script is **THE** canonical primary scored cumulative path for OpenDyno.
+`scripts/run_aider_solve.py` (Path C) and `scripts/backgammon_scored_ladder.py`
+are diagnostic/historical paths and are **not** the active primary path.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import uuid
+from pathlib import Path
+from typing import Any, Callable
+
+from harness import config
+from harness.cumulative.progress import progress_from_cell_result
+from harness.free_port import resolve_serve_host_port
+from harness.process_reaper import (
+    ProcessReaper,
+    run_reaper_unconditional,
+)
+
+# Re-imported INTO this namespace so the conductor functions below resolve their
+# bare-name calls here — which is what makes ``monkeypatch.setattr(run_cumulative,
+# "_build_context", ...)`` reach ``_handle_run`` (its __globals__ is this module).
+from .context import (
+    CliContext,
+    _append_results_ledger,
+    _build_context,
+)
+from .paths import (
+    DEFAULT_MANIFEST_PATH,
+    DEFAULT_ORG_ID,
+    DEFAULT_PROXY_RUNS_DIR,
+    DEFAULT_SEED,
+    DEFAULT_TASK_LABEL,
+    GATE_ROSTER_TIMEOUT_S,
+    PROMPTS_DIR,
+    REPO_ROOT,
+    PathLayout,
+    _prune_runs_retention,
+    _resolve_manifest_layout,
+    _runs_root_from_args,
+    _utc_now_iso,
+    _variant_dir,
+)
+from .roster import (
+    _apply_model_override,
+    _build_roster,
+    _compose_cloud_slug,
+    _normalize_model_slug,
+    _provider_pin_from_model,
+)
+from .runner import (
+    RealSessionRunner,
+    _NoopSessionRunner,
+    _SessionRunState,
+    _build_real_runner,
+    _read_proxy_served_identity,
+    _resolve_positive_int_env,
+)
+from .template import (
+    FROZEN_TASK_TEMPLATE_HASH,
+    compute_task_template_hash,
+    verify_task_template_frozen,
+)
+
+IS_PRIMARY_SCORED_PATH = True
+_LOG = logging.getLogger("run_cumulative")
+
+
+def _handle_run(args: argparse.Namespace) -> int:
+    context = _build_context(args, require_runtime=True)
+    # ONE CLICK, ONE CELL: this launch appends its cell to the campaign log and
+    # runs exactly that cell. There is nothing to select and nothing to advance
+    # afterwards — the appended record IS the run's identity.
+    cell = context.sequencer.append_cell(str(args.variant))
+
+    result = context.sequencer.step_until_done()
+    # step_until_done returns status:done (with convergence) or
+    # status:halted_on_gate (measurement gate descriptor); gate failures
+    # raise. Print the descriptor as-is.
+    _print_json(result)
+    # WO-43a: recompute the manifest layout for the ledger append — CliContext
+    # carries only the sequencer, so `layout` is not in this scope. Pure
+    # path resolution (mkdir lives in _build_context), so recomputing is safe.
+    layout = _resolve_manifest_layout(
+        str(getattr(args, "manifest", None) or DEFAULT_MANIFEST_PATH)
+    )
+    if result.get("status") == "done":
+        # WO-43a: append THIS cell's scored records to the HOST-side results
+        # ledger. The printed `result` carries only {status, convergence}; the
+        # schema fields come from the scorecard (run-manifest + status stream —
+        # the same authoritative seam the done state itself sources from) and
+        # `runs/active-tree.json`. The cell index keeps a campaign's other
+        # scored cells out of this launch's append.
+        _append_results_ledger(args, layout, sequence_index=cell.sequence_index)
+    return 0
+
+
+def _handle_state(args: argparse.Namespace) -> int:
+    context = _build_context(args, require_runtime=False)
+    _print_json(context.sequencer.state())
+    return 0
+
+
+def assert_primary_path() -> None:
+    """Raise if this module is not marked as the canonical primary path."""
+
+    if IS_PRIMARY_SCORED_PATH is not True:
+        raise AssertionError("run_cumulative.py lost primary-path marker")
+
+    primary_recall_mode = str(config.RunConfig().primary_recall_mode).strip().lower()
+    if primary_recall_mode != "prod":
+        raise AssertionError(
+            "run_cumulative.py primary scored path requires RunConfig.primary_recall_mode='prod' "
+            "(declared consumer policy; no hidden env auto-accept)"
+        )
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run/state coordinator CLI for cumulative benchmark sequencing.",
+    )
+    parser.add_argument(
+        "--manifest",
+        default=str(DEFAULT_MANIFEST_PATH),
+        help=(
+            "Path to cumulative manifest JSON "
+            f"(default: {DEFAULT_MANIFEST_PATH.as_posix()})."
+        ),
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help=(
+            f"RNG seed recorded in each cell's run manifest (default: {DEFAULT_SEED})."
+        ),
+    )
+    parser.add_argument(
+        "--task",
+        default=DEFAULT_TASK_LABEL,
+        help="Logical task label used in manifest validation.",
+    )
+    parser.add_argument(
+        "--roster-model",
+        default=None,
+        help=(
+            "Optional case-insensitive model substring filter for roster selection "
+            "(smoke/diagnostic aid; canonical benchmark runs unfiltered)."
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "Pin the run's subject to a named proxy bench alias present in "
+            "the model proxy's bench list (e.g. qwen3.6-35b-a3b-bench). The proxy makes "
+            "that exact model resident on the first request (exclusive load on "
+            "call); identity is still observed from API responses and recorded "
+            "(RC-7). Omit to keep the neutral auto-resident slug. Changing the "
+            "model changes the roster hash, which invalidates an existing "
+            "manifest by design: archive runs/cumulative and rerun (the former runbook)."
+        ),
+    )
+    parser.add_argument(
+        "--cloud",
+        action="store_true",
+        default=False,
+        help="Route the cell directly to a cloud provider (OrcaRouter) instead of the local relay proxy.",
+    )
+    parser.add_argument(
+        "--router",
+        default=None,
+        help="Cloud router id for the composed model slug (default: orcarouter). Only used with --cloud.",
+    )
+    parser.add_argument(
+        "--provider",
+        default=None,
+        help="Cloud vendor id (e.g. deepseek) — the '{provider}/{model}' key inside the OrcaRouter provider block. Only used with --cloud.",
+    )
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Append one cell of the given variant to the campaign and step it to done.",
+    )
+    run_parser.add_argument(
+        "--variant",
+        choices=["a", "b"],
+        required=True,
+        help=(
+            "The variant of the ONE cell this launch appends: 'a' adds a point to "
+            "the baseline floor, 'b' takes one measurement against it. "
+            "Every click appends exactly one cell; nothing is precomputed."
+        ),
+    )
+    run_parser.add_argument(
+        "--proxy-base-url",
+        default=None,
+        help=(
+            "Explicit model base URL baked into worker container opencode.json "
+            "(local mode only; cloud mode always uses the egress sidecar). "
+            "Default resolves via BENCH_WORKER_SPEND_PROXY_BASE_URL "
+            "env/.env, else the cell's per-run egress sidecar "
+            "http://bench-egress-<hash>:4545/v1 derived from the run label."
+        ),
+    )
+    run_parser.add_argument("--proxy-token-file", default=None)
+    # ── CHUNK-BOUNDARY COMPACTION ───────────────────────────────────────────
+    #
+    # EXPLICIT ON BOTH SIDES, WITH NO DEFAULT HERE. The default belongs to the
+    # control plane, which knows the model's context window and states its
+    # choice in the confirmation the operator reads before START. If this flag
+    # carried a default of its own there would be two rules deciding the same
+    # thing, and the one the operator confirmed would not necessarily be the one
+    # that ran. Omitting both flags leaves compaction OFF — the pre-2026-09-02
+    # behaviour — so a hand-typed CLI invocation never acquires five extra model
+    # turns it did not ask for.
+    compact_group = run_parser.add_mutually_exclusive_group()
+    compact_group.add_argument(
+        "--compact",
+        dest="compact",
+        action="store_true",
+        default=False,
+        help=(
+            "Compact the session after each build chunk (never during the "
+            "repair phase), costing one model turn per chunk. Trades spent "
+            "build narration for room the troubleshooting phase needs; the "
+            "turns are metered into the cell totals and reported separately."
+        ),
+    )
+    compact_group.add_argument(
+        "--no-compact",
+        dest="compact",
+        action="store_false",
+        help="Run the build with no compaction at any boundary.",
+    )
+
+    # PLAN BEFORE WORK — a benchmark run-condition, off by default.
+    #
+    # OFF is the honest default because turning it on CHANGES WHAT THE AGENT
+    # DOES: an agent made to plan before it edits may simply perform better, for
+    # reasons that have nothing to do with the variant. A run with it and a run
+    # without it are not comparable, and the OFF floor has to be re-established
+    # after a change. Nothing enforces it harness-side — a plugin honours the
+    # exported REQUIRE_TODOS, or nothing happens.
+    todos_group = run_parser.add_mutually_exclusive_group()
+    todos_group.add_argument(
+        "--require-todos",
+        dest="require_todos",
+        action="store_true",
+        default=False,
+        help=(
+            "Refuse mutating tools until the agent has written a todo list "
+            "(reading stays open). Requires a variant plugin that honours "
+            "REQUIRE_TODOS; the harness only declares the condition."
+        ),
+    )
+    todos_group.add_argument(
+        "--no-require-todos",
+        dest="require_todos",
+        action="store_false",
+        help="Let the agent work without planning first (the default).",
+    )
+
+    # ── OPERATOR PAUSE BETWEEN GRADES (WO-PAUSE-AFTER-GRADE) ────────────────
+    #
+    # DEV MODE ONLY — the CONTROL PLANE refuses this option when dev mode is
+    # off, and the harness knows nothing about dev mode: the control plane
+    # decides and the harness obeys this flag. Off by default: the loop then
+    # behaves exactly as before (no hold file, no extra wait, no new output).
+    run_parser.add_argument(
+        "--pause-after-grade",
+        dest="pause_after_grade",
+        action="store_true",
+        default=False,
+        help=(
+            "Hold the cell after EVERY graded pass (and once at the end) so an "
+            "operator can play the app and read the exact lines the model is "
+            "about to be told before anything is sent. Dev mode only."
+        ),
+    )
+
+    # ── MACHINE SHARE FOR GRADING ──────────────────────────────────────────
+    #
+    # NOT a measurement variable, unlike everything around it: it changes how
+    # many test workers the GRADING container starts once the model is done,
+    # and the gates and verdicts are identical either way. Held to that by
+    # scripts/verify_worker_parity.py, which grades the golden at one worker
+    # and at the maximum and requires them to agree gate for gate.
+    #
+    # A FRACTION, not a count: the container reads its own limits and works the
+    # count out, so the same value fits any machine and nobody's hardware ends
+    # up written into the code. The share is of what is FREE at grading time.
+    run_parser.add_argument(
+        "--grader-worker-target",
+        dest="grader_worker_target",
+        type=float,
+        default=None,
+        metavar="FRACTION",
+        help=(
+            "Share (0-1] of the grading container's FREE cpu and memory to use "
+            "for test workers. Unset leaves the container's own default."
+        ),
+    )
+
+    # ── RESUME FROM A CHECK-POINT (dev loop step 6) ─────────────────────────
+    #
+    # DEV MODE ONLY, like the pause: the control plane refuses it when dev mode
+    # is off, and the adapter refuses it without --pause-after-grade. The cell
+    # starts from the code a previous cell was graded on (`cp-NN` directory),
+    # at that check-point's phase, and is never a measurement (resume.json).
+    run_parser.add_argument(
+        "--resume-checkpoint",
+        dest="resume_checkpoint",
+        default=None,
+        metavar="CP_DIR",
+        help=(
+            "Start this cell from a check-point directory (…/checkpoints/cp-NN): "
+            "its tree is the worktree, phases before it are taken as built, and "
+            "its own phase starts at the grade. Dev mode only."
+        ),
+    )
+    run_parser.add_argument(
+        "--resume-phase",
+        dest="resume_phase",
+        type=int,
+        default=None,
+        metavar="K",
+        help=(
+            "The phase-plan index the check-point was graded at. Needed only for "
+            "check-points recorded before they carried their build phase."
+        ),
+    )
+    subparsers.add_parser("state", help="Print cumulative sequencer state summary.")
+
+    return parser
+
+
+def _print_json(payload: Any) -> None:
+    print(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    )
+
+
+def _discover_bench_ports() -> list[int]:
+    """Ports the BENCH itself publishes and must clear at teardown.
+
+    Only the live-view serve host port qualifies (RunConfig.serve_host_port,
+    default 8719) — one persistent `opencode serve` per cell (WO-WATCH-1E),
+    asserted clear so a leaked serve is caught. The hub (:4440) and MCP recall
+    client (:4550) are STANDING infra owned outside the bench (card §7: the
+    hub is the ONE hub, normally already running); asserting them clear was a
+    guaranteed false alarm on every run (2026-08-09).
+    """
+    rc = config.RunConfig()
+    if rc.serve_host_port > 0:
+        return [rc.serve_host_port]
+    return []
+
+
+def _emit_predicate_outcomes(args: argparse.Namespace) -> str:
+    """Publish this run's graded gates as predicate outcome records.
+
+    Rides the same unconditional exit path as the reaper and the retention
+    prune, so a run that dies halfway still publishes the gates it DID grade.
+    Non-fatal by construction: emission failing must never change a run's
+    outcome, and a run that produced no graded gates simply has nothing to say.
+    """
+    try:
+        from harness.outcomes.predicate_emitter import emit_for_run
+
+        manifest = Path(str(getattr(args, "manifest", None) or DEFAULT_MANIFEST_PATH))
+        run_dir = manifest.expanduser().resolve().parent
+        if not (run_dir / "manifest.status.jsonl").is_file():
+            return f"skipped: no status stream under {run_dir}"
+        summary = emit_for_run(run_dir)
+        return (
+            f"wrote={summary['records_written']} "
+            f"counts={summary['counts']} "
+            f"binding={summary['state_binding_counts']} "
+            f"out={summary['out_path']}"
+        )
+    except Exception as exc:  # noqa: BLE001 - never fail a run over telemetry
+        return f"failed: {type(exc).__name__}: {exc}"
+
+
+def main() -> int:
+    assert_primary_path()
+    parser = _build_arg_parser()
+    args = parser.parse_args()
+
+    # R-37 no-silent-ops: configure root logging so harness PROGRESS lines are
+    # actually emitted on the run/resume paths. Without this, no basicConfig
+    # exists, so every _LOG.info (including the adapter's worker-nonzero
+    # stderr_tail diagnostics) was silently dropped. Logs go to stderr;
+    # machine-readable results stay on stdout (_print_json).
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
+    handlers: dict[str, Callable[[argparse.Namespace], int]] = {
+        "run": _handle_run,
+        "state": _handle_state,
+    }
+    handler = handlers.get(str(args.command))
+    if handler is None:
+        raise RuntimeError(f"unsupported command: {args.command!r}")
+
+    # RC-6 / D-NO-REAPER: the reaper runs UNCONDITIONALLY on every exit path of
+    # a MUTATING command — normal return, exception (failure), and
+    # KeyboardInterrupt (operator interrupt). A silent reaper is not a reaper.
+    # It is a safety net wrapper only: it must not alter the handler's return
+    # value or exit code. Read-only commands (state) spawn no workers and are
+    # never reaped — a read-only `state` must not tear anything down
+    # (2026-08-09: it ran a compose down against an unrelated project).
+    mutating = {"run"}
+    if str(args.command) not in mutating:
+        return handler(args)
+    try:
+        run_label = getattr(args, "task", None) or "bench"
+        # ONE free live-view host port per run-instance, allocated before the
+        # reaper reads it. With N concurrent cells (separate processes) each
+        # allocates its own free port; a pinned BENCH_SERVE_HOST_PORT is honored.
+        # resolve_serve_host_port() exports the chosen port to the env, so the
+        # two independent readers (RunConfig + ChallengeRunner) and this reaper
+        # all resolve the SAME value.
+        resolve_serve_host_port()
+        bench_ports = _discover_bench_ports()
+        # ONE identity per run-instance, generated at process entry and shared
+        # with BOTH the reaper and the session runner (via args) so the reaper's
+        # anchored sweep (name=-{run_identity}$) matches exactly the containers
+        # this run creates.
+        args.run_identity = uuid.uuid4().hex[:12]
+        reaper = ProcessReaper(
+            run_label=run_label,
+            bench_ports=bench_ports,
+            run_identity=args.run_identity,
+        )
+        return handler(args)
+    finally:
+        _LOG.info("process_reaper: unconditional reap entering finally")
+        report = run_reaper_unconditional(reaper)
+        _LOG.info(
+            "process_reaper: run_label=%s killed_count=%d ports=%s "
+            "cell_containers_removed=%s ok=%s",
+            report.run_label,
+            report.killed_count,
+            report.ports,
+            report.cell_containers_removed,
+            report.ok,
+        )
+        _LOG.info("predicate_outcomes: %s", _emit_predicate_outcomes(args))
+        # Runs/ retention prune (operator 2026-08-10): rides the same
+        # unconditional exit path as the reaper, so every early-cancelled
+        # run's predecessor debris is bounded at latest+1 while the failed
+        # run's own logs survive for post-mortem. Non-fatal by construction.
+        _LOG.info(
+            "runs_retention: %s", _prune_runs_retention(_runs_root_from_args(args))
+        )

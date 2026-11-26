@@ -1,0 +1,1 @@
+They start another new game through your API and the opening roll still doesn't work right.

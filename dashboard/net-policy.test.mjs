@@ -1,0 +1,154 @@
+// The LAN trust + origin contract (lib/net-policy.mjs).
+//
+// Once the dashboard can bind to a LAN interface, these functions are the
+// ONLY thing standing between "reachable from the house" and "writable by
+// anything that can route to it". The cases below pin both directions of the
+// classifier — every RFC boundary that matters (172.16/12's edges, the
+// IPv4-mapped forms, the ULA range) and the fail-closed rule that garbage,
+// public and unspecified addresses are all refused. The origin cases pin the
+// CSRF half: no browser, no Origin, allowed; a sandboxed "null" origin or a
+// foreign page, refused.
+
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  classifyAddress,
+  guardPeer,
+  isAllowedHost,
+  isSameOrigin,
+} from "./lib/net-policy.mjs";
+
+// ── classifyAddress: IPv4 ───────────────────────────────────────────────────
+
+test("classifyAddress: IPv4 loopback is the whole 127.0.0.0/8, not just .0.0.1", () => {
+  assert.equal(classifyAddress("127.0.0.1"), "loopback");
+  assert.equal(classifyAddress("127.8.8.8"), "loopback");
+});
+
+test("classifyAddress: RFC 1918 ranges are private, including 172.16/12 edges", () => {
+  assert.equal(classifyAddress("10.0.0.1"), "private");
+  assert.equal(classifyAddress("172.16.0.1"), "private");
+  assert.equal(classifyAddress("172.31.255.255"), "private");
+  assert.equal(classifyAddress("192.168.1.5"), "private");
+});
+
+test("classifyAddress: 172.32.0.1 is just outside 172.16/12 → public", () => {
+  assert.equal(classifyAddress("172.32.0.1"), "public");
+});
+
+test("classifyAddress: link-local, internet, and the bind wildcard", () => {
+  assert.equal(classifyAddress("169.254.1.1"), "link-local");
+  assert.equal(classifyAddress("8.8.8.8"), "public");
+  assert.equal(classifyAddress("0.0.0.0"), "unspecified");
+});
+
+// ── classifyAddress: IPv6 ───────────────────────────────────────────────────
+
+test("classifyAddress: IPv6 loopback and unspecified", () => {
+  assert.equal(classifyAddress("::1"), "loopback");
+  assert.equal(classifyAddress("::"), "unspecified");
+});
+
+test("classifyAddress: fe80::/10 link-local, fc00::/7 ULA private, doc prefix public", () => {
+  assert.equal(classifyAddress("fe80::1"), "link-local");
+  assert.equal(classifyAddress("fc00::1"), "private");
+  assert.equal(classifyAddress("fd12::1"), "private");
+  assert.equal(classifyAddress("2001:db8::1"), "public");
+});
+
+test("classifyAddress: IPv4-mapped IPv6 classifies the embedded v4", () => {
+  assert.equal(classifyAddress("::ffff:192.168.1.5"), "private");
+  assert.equal(classifyAddress("::ffff:8.8.8.8"), "public");
+  // The SIIT "::ffff:0:" spelling is the same peer, rendered longer.
+  assert.equal(classifyAddress("::ffff:0:192.168.1.5"), "private");
+});
+
+// ── classifyAddress: fail-closed on anything else ───────────────────────────
+
+test("classifyAddress: garbage and non-strings are unparseable, never trusted classes", () => {
+  assert.equal(classifyAddress("garbage"), "unparseable");
+  assert.equal(classifyAddress(undefined), "unparseable");
+});
+
+// ── trusted peers (guardPeer) ───────────────────────────────────────────────────────────
+
+test("guardPeer: local-wire classes are trusted", () => {
+  assert.equal(guardPeer("127.0.0.1").ok, true);
+  assert.equal(guardPeer("192.168.1.5").ok, true);
+  assert.equal(guardPeer("fe80::1").ok, true);
+});
+
+test("guardPeer: public, unspecified and unparseable are refused", () => {
+  assert.equal(guardPeer("8.8.8.8").ok, false);
+  assert.equal(guardPeer("0.0.0.0").ok, false);
+  assert.equal(guardPeer("garbage").ok, false);
+});
+
+// ── isSameOrigin ────────────────────────────────────────────────────────────
+
+test("isSameOrigin: no Origin header means non-browser client → allowed", () => {
+  assert.equal(isSameOrigin(null, "192.168.1.10:8717"), true);
+});
+
+test("isSameOrigin: matching origin and host → true", () => {
+  assert.equal(
+    isSameOrigin("http://192.168.1.10:8717", "192.168.1.10:8717"),
+    true,
+  );
+});
+
+test("isSameOrigin: a foreign page's origin → false", () => {
+  assert.equal(isSameOrigin("http://evil.com", "192.168.1.10:8717"), false);
+});
+
+test('isSameOrigin: the sandboxed "null" origin must never write', () => {
+  assert.equal(isSameOrigin("null", "192.168.1.10:8717"), false);
+});
+
+test("isSameOrigin: an unparseable Origin is refused, not errored past", () => {
+  assert.equal(isSameOrigin("not a url", "192.168.1.10:8717"), false);
+});
+
+// ── isAllowedHost ───────────────────────────────────────────────────────────
+
+test("isAllowedHost: IP literals and localhost, the ways the board is opened → true", () => {
+  assert.equal(isAllowedHost("127.0.0.1:8717"), true);
+  assert.equal(isAllowedHost("localhost:8717"), true);
+  assert.equal(isAllowedHost("192.168.1.10:8717"), true);
+  assert.equal(isAllowedHost("[::1]:8717"), true);
+  assert.equal(isAllowedHost("[fd00::5]:8717"), true);
+});
+
+test("isAllowedHost: a rebinding page's own domain is refused even though it is same-origin", () => {
+  // The attack: evil.example re-resolves to 127.0.0.1. Origin and Host agree,
+  // and the peer is this machine's own browser.
+  assert.equal(isSameOrigin("http://evil.example:8717", "evil.example:8717"), true);
+  assert.equal(isAllowedHost("evil.example:8717"), false);
+  assert.equal(isAllowedHost("localhost.evil.example:8717"), false);
+});
+
+test("isAllowedHost: a LAN name passes only when BENCH_DASH_ALLOWED_HOSTS lists it", () => {
+  assert.equal(isAllowedHost("dashboard.lan:8717"), false);
+  assert.equal(isAllowedHost("dashboard.lan:8717", ["Dashboard.lan"]), true);
+});
+
+test("isAllowedHost: a missing or unparseable Host is refused", () => {
+  assert.equal(isAllowedHost(undefined), false);
+  assert.equal(isAllowedHost(""), false);
+  assert.equal(isAllowedHost("bad host:x"), false);
+});
+
+// ── guardPeer ───────────────────────────────────────────────────────────────
+
+test("guardPeer: a public peer is refused with a reason naming address and class", () => {
+  const r = guardPeer("8.8.8.8");
+  assert.equal(r.ok, false);
+  assert.ok(r.reason, "a refusal without a reason is undebuggable");
+  assert.match(r.reason, /8\.8\.8\.8/);
+  assert.match(r.reason, /public/);
+});
+
+test("guardPeer: a private-LAN peer passes with no reason", () => {
+  assert.deepEqual(guardPeer("192.168.1.5"), { ok: true, reason: null });
+});

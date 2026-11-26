@@ -1,0 +1,191 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED HELPERS for control/__tests__/*.test.mjs
+//
+// Moved VERBATIM from control/control.test.mjs during the split. The `_`
+// prefix + non-`.test.mjs` suffix keeps `node --test` from treating this file
+// as a test file. HERE/BENCH are recomputed for this directory so they resolve
+// to the SAME absolute paths as the original (HERE = <repo>/control,
+// BENCH = <repo>).
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { setCodeInputsProvider } from "../baselines.mjs";
+
+export const HERE = join(dirname(fileURLToPath(import.meta.url)), "..");
+export const BENCH = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/** The cell containers a campaign home holds (scripts/run_cumulative/paths.py). */
+const CELL_CONTAINERS = ["variantA", "variantB", "variantUNKNOWN"];
+
+/**
+ * What every fixture cell records it ran on (harness/fingerprint.py writes the
+ * real one), and the "current code" the fixtures are checked against — the
+ * same values, so a fixture batch is current unless a test says otherwise.
+ * The provider is swapped so no test reads the repo or docker.
+ */
+export const FIXTURE_FP = {
+  chunk_plan_hash: "p".repeat(64),
+  grader_hash: "g".repeat(64),
+  model: "fixture-model",
+  challenge: "backgammon",
+  compaction: false,
+  scaffold_hash: "s".repeat(64),
+  golden_hash: "o".repeat(64),
+  worker_image: { image_id: "sha256:fixture", created: "2026-09-01T00:00:00Z" },
+  harness_hash: "h".repeat(64),
+  source_commit: "c".repeat(40),
+  source_dirty: false,
+  worker_source_digest: "w".repeat(64),
+  opencode_version: "1.0.0-fixture",
+  grader_image: { image: "grader-img-1", source_digest: "gd1" },
+};
+export const FIXTURE_CODE = {
+  chunk_plan_hash: FIXTURE_FP.chunk_plan_hash,
+  grader_hash: FIXTURE_FP.grader_hash,
+  scaffold_hash: FIXTURE_FP.scaffold_hash,
+  golden_hash: FIXTURE_FP.golden_hash,
+  worker_image: FIXTURE_FP.worker_image,
+  harness_hash: FIXTURE_FP.harness_hash,
+  source_commit: FIXTURE_FP.source_commit,
+  source_dirty: FIXTURE_FP.source_dirty,
+  worker_source_digest: FIXTURE_FP.worker_source_digest,
+  opencode_version: FIXTURE_FP.opencode_version,
+  grader_image: FIXTURE_FP.grader_image,
+};
+let fixtureCode = FIXTURE_CODE;
+/** Make "the current code" differ (or restore it with no argument). */
+export function setFixtureCode(over = null) {
+  fixtureCode = over ? { ...FIXTURE_CODE, ...over } : FIXTURE_CODE;
+}
+setCodeInputsProvider(async () => fixtureCode);
+
+/** A cell's recorded fingerprint, where the harness writes it. */
+export function writeCellFingerprint(runDir, seq, { variant = "a", values = FIXTURE_FP } = {}) {
+  const cell = join(runDir, `variant${String(variant).toUpperCase()}`, `cell-${String(seq).padStart(4, "0")}`);
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(join(cell, "fingerprint.json"), JSON.stringify({ schema_version: 1, values }));
+}
+
+/**
+ * A cell's `cell.start` on its live stream (harness/live_stream.py): the record
+ * the harness writes BEFORE any work, naming the variant and the model the cell
+ * actually runs. A cell is addressed by its DIRECTORY now, so this — plus the
+ * dir name itself — is where its identity is read from.
+ */
+export function writeCellLiveStart(runDir, seq, { variant = "a", model = "m-a" } = {}) {
+  const cell = join(runDir, `variant${String(variant).toUpperCase()}`, `cell-${String(seq).padStart(4, "0")}`);
+  mkdirSync(cell, { recursive: true });
+  const records = [
+    { kind: "run.start", task: "backgammon" },
+    { kind: "cell.start", cell_seq: seq, session_id: `sess-${seq}`, variant, model },
+  ];
+  writeFileSync(join(cell, "live.jsonl"), `${records.map((r) => JSON.stringify(r)).join("\n")}\n`);
+  return cell;
+}
+
+/**
+ * A cell's cost stamp, where the harness writes it
+ * (scripts/run_cumulative/runner.py; sibling of fingerprint.json). `record` is
+ * the whole body: { outcome, phases: { build?, troubleshooting?, total? },
+ * paused_seconds?, void: { is_void, reason } }.
+ */
+export function writeCellCost(runDir, seq, { variant = "a", record }) {
+  const cell = join(runDir, `variant${String(variant).toUpperCase()}`, `cell-${String(seq).padStart(4, "0")}`);
+  mkdirSync(cell, { recursive: true });
+  writeFileSync(join(cell, "cost.json"), `${JSON.stringify(record, null, 2)}\n`);
+}
+
+/** A cost stamp for a cell that measured the model: the common fixture body. */
+export function costStamp(total = null, { outcome = "failed" } = {}) {
+  return {
+    outcome,
+    phases: total ? { total } : {},
+    void: { is_void: false, reason: null },
+  };
+}
+
+/**
+ * A run dir on disk: its manifest (an EMPTY append log — a cell exists because
+ * its directory does, not because a slot does), the cell's `cell.start` stamp,
+ * and its status record.
+ */
+export function writeRun(root, dir, { seq = 0, model = "m-a", variant = "a", status = null }) {
+  const d = join(root, dir);
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "manifest.json"), JSON.stringify({
+    created_at: "2026-08-13T00:00:00Z",
+    // The harness appends one entry per clicked cell (harness/cumulative/
+    // manifest.py); no reader may take an address from it.
+    schedule: [],
+  }));
+  writeCellLiveStart(d, seq, { variant, model });
+  if (status) {
+    writeFileSync(join(d, "manifest.status.jsonl"), `${JSON.stringify(status)}\n`);
+    writeCellFingerprint(d, seq, { variant });
+  }
+  return d;
+}
+
+/**
+ * A MULTI-CELL campaign: one campaign home, both variants, one status record and
+ * one cell directory per slot.
+ *
+ * This is the shape a real campaign has — `harness/cumulative/ordering.py`
+ * schedules ONE model per directory, slot 0 as the variant A floor and every
+ * later slot a variant B repetition of it — and it is what the runs of a
+ * baseline are read from. Each slot writes a REAL cell directory, so a reader that enumerates by
+ * scan finds it; the manifest is left as the append log it is on disk. Any cell
+ * dirs already there are cleared first, so re-writing a campaign is not a way to
+ * accumulate orphans.
+ */
+export function writeCampaign(root, dir, slots, { model = "m-a" } = {}) {
+  const d = join(root, dir);
+  mkdirSync(d, { recursive: true });
+  for (const name of CELL_CONTAINERS) rmSync(join(d, name), { recursive: true, force: true });
+  writeFileSync(join(d, "manifest.json"), JSON.stringify({
+    created_at: "2026-08-13T00:00:00Z",
+    schedule: slots.map((s) => ({ sequence_index: s.seq, variant: s.variant, provider_pin: model })),
+  }));
+  const status = slots.filter((s) => s.status).map((s) => JSON.stringify(s.status)).join("\n");
+  if (status) writeFileSync(join(d, "manifest.status.jsonl"), `${status}\n`);
+  for (const s of slots) {
+    writeCellLiveStart(d, s.seq, { variant: s.variant, model });
+    if (s.status) writeCellFingerprint(d, s.seq, { variant: s.variant });
+  }
+  return d;
+}
+
+export const OFF_PASS = { type: "attempt", sequence_index: 0, verdict: "PASS", progress: { turns: 9, total_tokens: 400, wall_seconds: 60 } };
+
+/** A campaign directory with a pinned roster and one attempt's outcomes. */
+export function writeCampaignCell(runs, dir, { gates, results }) {
+  mkdirSync(join(runs, dir, "sessions"), { recursive: true });
+  writeFileSync(
+    join(runs, dir, "gate-roster.json"),
+    JSON.stringify({ total: gates.length, enumeration: { complete: true }, gates }),
+  );
+  writeFileSync(
+    join(runs, dir, "manifest.status.jsonl"),
+    JSON.stringify({ type: "attempt", attempt: 1, sequence_index: 0, gate_results: results }) + "\n",
+  );
+  writeFileSync(
+    join(runs, "a-cell-live.log"),
+    "PROGRESS step=worktree-git-init path=" + join(runs, dir, "sessions", "cell", "worktree") + "\n",
+  );
+}
+
+export function treeFixture() {
+  const root = mkdtempSync(join(tmpdir(), "tree-"));
+  return { root, runs: join(root, "runs") };
+}
+
+export function campaignAt(runs, rel, { status = true } = {}) {
+  const dir = join(runs, rel);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "manifest.json"), JSON.stringify({ created_at: "2026-08-20T00:00:00Z" }));
+  if (status) writeFileSync(join(dir, "manifest.status.jsonl"), "");
+  return dir;
+}

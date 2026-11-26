@@ -1,0 +1,580 @@
+"""PLAYER ORDER — the model hears what a player could actually reach.
+
+A player cannot test bearing off if the opening position is wrong, and cannot
+test hitting before a move can be made. So every round still grades every
+check, but the repair message carries only the failing checks of the EARLIEST
+stage that has any. Once that stage is clean the next one's problems appear.
+
+The stages belong to the challenge (``grader/checks.json`` → ``stages``): each
+lists check ids — a bracket token (``G05``) or a setup key (``REQ-RENDER/die``,
+or ``REQ-STATE/`` for every key under it). The most specific key wins, so
+``REQ-TESTID/die`` can sit in a later stage than ``REQ-TESTID/``.
+
+A failing check with no stage RAISES: which stage it is in decides whether the
+model hears about it, so guessing would silently change what a run measures.
+tests/test_player_stages.py proves every check the grader can emit has one.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Any
+
+_TOKEN_RE = re.compile(r"^\s*\[([A-Z]+[0-9]*)\]")
+_CONF_KEY_RE = re.compile(r"^\s*(?:conformance:)?(REQ-[A-Z0-9-]+/\S+)")
+
+
+class UnstagedCheckError(RuntimeError):
+    """A failing check the challenge gave no stage."""
+
+
+@dataclass(frozen=True)
+class Stage:
+    number: int
+    name: str
+    keys: tuple[str, ...]
+    # Which layer this stage's work belongs to, from ``grader/layers.json``
+    # (sibling of ``checks.json``). None when the challenge ships no layer map.
+    layer: int | None = None
+
+
+@dataclass(frozen=True)
+class PlayerView:
+    """What the model is told this round."""
+
+    stage: Stage | None
+    visible: list[dict[str, Any]] = field(default_factory=list)
+    withheld: list[str] = field(default_factory=list)
+    # Checks the grader never reached this round, and checks that stopped at a
+    # step another failing check already reports (`[needs: …]`). Scored as not
+    # passing; never told to the model, because nobody observed them fail.
+    unevaluated: list[str] = field(default_factory=list)
+    # GRADER ALARMS: a `[setup]` step that failed while every check it names
+    # passed. The grader's own setup is wrong; never told, and the cell stops.
+    alarms: list[str] = field(default_factory=list)
+
+
+# The pre-gate's wording for a check an earlier failure skipped
+# (grader/conformance/pregate.ts verdictFor; pinned by
+# grader/meta/unevaluated-is-not-pass.test.ts). Such a check was never looked
+# at, so there is nothing true to say about it: telling the model "their
+# automation can't find the board" when the page was never opened is how one
+# HTTP 500 became 30 false complaints (run 1790183923, attempts 4 and 5).
+_UNEVALUATED = "never evaluated"
+
+
+# A SETUP STEP IS NEVER A FINDING (operator, 2026-11-23: "an untold check should
+# never be untold"). A check reaches its subject through steps the build brief
+# already makes other checks judge — the game accepting a listed move, a roll
+# played out through the server. Such a step is marked `[setup]` and names its
+# owners with `[needs: …]`. Its owner failed: the owner's line is the true one,
+# so this check is unevaluated like any other waiting on it. Its owners passed
+# and the step still failed: the grader's setup is wrong, not the build — that is
+# a GRADER ALARM, told to no model, and the cell stops loudly (runner.py). The
+# contract items the old `[untold]` marker hid (the brief's named functions and
+# answer words) are conformance now, told by the team (G40).
+_SETUP = "[setup]"
+
+
+# WHAT A FINDING SAYS IS ITS OWN MESSAGE. A failed page check's text carries more
+# than the message its assertion wrote: Playwright appends the expect call, the
+# call log and a frame of the test's SOURCE around the failing line, and vitest a
+# stack. Markers read from all of it took them from neighbouring source lines: run
+# 1795065106 round 2's G05 finding "the game played the smaller number" (no
+# aspect) was told as G05's [aspect: offered] line because the code frame showed
+# the next assertion. Every marker — [aspect: …], [needs: …], [setup] — is read
+# from the message alone: the text before the first blank line, stack line or
+# code-frame line.
+_MESSAGE_END_RE = re.compile(r"\n\s*\n|\n\s+at\s|\n\s*>?\s*\d+\s*\|")
+
+
+def finding_message(observed: Any) -> str:
+    text = str(observed or "")
+    m = _MESSAGE_END_RE.search(text)
+    return text[: m.start()] if m else text
+
+
+def is_setup(problem: dict[str, Any]) -> bool:
+    return _SETUP in finding_message(problem.get("observed", ""))
+
+
+# A DEBUG ROUTE THAT REFUSED A SETUP IS CONFORMANCE (operator, 2026-11-23: the
+# debug route "should be validated before anything else, above all else, and
+# should come from the team integrating the app"). A gate whose setup through the
+# route did not take (grader/lib/harness.ts SETUP_REFUSED) never reached its
+# subject; its finding is the team's line about the route (feedback.py
+# setup_refusal_line). Staged at its gate's own moment, it sat behind whatever
+# symptom an earlier moment told: 0 of the 35 corpus builds whose route refused a
+# setup were ever told so, while one refusal broke 23 checks on average
+# (WO-LI-SEAM-CHART, 2026-11-24). It is told at the first moment, with the rest
+# of the route's conformance.
+_SETUP_REFUSED = "SETUP REFUSED"
+
+
+def is_refused(problem: dict[str, Any]) -> bool:
+    return _SETUP_REFUSED in finding_message(problem.get("observed", ""))
+
+
+_REFUSAL_KIND_RE = re.compile(r"SETUP REFUSED:\s*(.*?)(?:\s+\(sent\b|\s+\[rolled\b|$)")
+
+
+def refusal_kind(problem: dict[str, Any]) -> str:
+    """What the route refused, without the values: "/api/debug/roll did not take
+    dice", "/api/debug/state did not take difficulty". One cause, told once a
+    round: a dice queue the route ignores refused 23 rolls in one build, and the
+    model read 23 lines saying so (WO-LI-SEAM-PROOF, 2026-11-24)."""
+    m = _REFUSAL_KIND_RE.search(finding_message(problem.get("observed", "")))
+    return m.group(1).strip() if m else ""
+
+
+# A BRIEF EXCERPT IS HANDED BACK ONLY FOR WHAT IT EXPLAINS (2026-11-19). An
+# excerpt (`prompts/respec/<gate>.md`) says "<this part> still isn't following
+# the build brief"; that is true only when the failing assertion judges that
+# part. Handed back for any finding of its gate, it was false: run 1795104147's
+# G08 caught a 5 bearing off the 3 while a piece sat on 5, its allInHome
+# assertion had PASSED, and the model was told "the engine's all-home check
+# still isn't following the build brief"; across the 264-build corpus the
+# scoring excerpt came back for "your debug endpoint refused the position".
+# An assertion that judges its gate's excerpt says so: `[brief]`.
+_BRIEF = "[brief]"
+
+
+def is_brief(problem: dict[str, Any]) -> bool:
+    return _BRIEF in finding_message(problem.get("observed", ""))
+
+
+# A CHECK THAT DIDN'T FINISH IS NOT A FINDING (operator, 2026-11-17 audit, class 3).
+# A test that ran out of time — Playwright's "Test timeout of …ms exceeded",
+# vitest's own timer ("Test timed out in …", or its STACK_TRACE_ERROR when the
+# timer fires after a synchronous block) — never reached a verdict on its
+# subject. Told by the check's own line it was false over and over (1,300+
+# times in the saved runs; run 1794897794's slow-but-correct self-play told
+# "the skill setting doesn't change anything"). It is scored as not passing and
+# told to no one; a check that needs to report a frozen page bounds its own
+# step and names it with an aspect.
+_DID_NOT_FINISH = re.compile(
+    r"Test timeout of \d+ms exceeded|Test timed out in \d+|STACK_TRACE_ERROR"
+)
+
+
+def did_not_finish(problem: dict[str, Any]) -> bool:
+    return bool(_DID_NOT_FINISH.search(str(problem.get("observed", ""))))
+
+
+def is_unevaluated(problem: dict[str, Any]) -> bool:
+    observed = str(problem.get("observed", "")).strip()
+    return observed.startswith(_UNEVALUATED) or did_not_finish(problem)
+
+
+# A CHECK THAT CANNOT GET STARTED IS NOT TOLD (operator, 2026-09-24). A gate that
+# fails before it reaches its own subject — no checker to pick up, no hint to
+# click, no move to undo — names the checks that test that same step:
+# `[needs: F03 REQ-HINT/hint]`. When one of them failed too, the player's
+# complaint is theirs, so this one is scored as not passing and told to no one;
+# the doubles gate used to tell "I could only make two moves" to a player who
+# could make none (FIX-2 mutations M13, M27, M28, M34). When none of them
+# failed, the step went wrong only in this gate's situation, and the gate's own
+# `[aspect: …]` line for it is told — hiding it would skip a stage a player
+# meets. The needed checks sit in the same or an earlier stage and never form a
+# cycle (tests/test_player_stages.py), so a withheld check always has a told
+# one at or before its stage.
+_NEEDS_RE = re.compile(r"\[needs: ([^\]]+)\]")
+
+
+def needs_of(problem: dict[str, Any]) -> tuple[str, ...]:
+    # EVERY marker, not the first: fourteen assertions write two, such as
+    # `[needs: F01] [needs: G12]`, and reading only the first dropped the second
+    # (2026-09-30) — the line was told even when G12 had already failed.
+    observed = finding_message(problem.get("observed", ""))
+    return tuple(n for m in _NEEDS_RE.finditer(observed) for n in m.group(1).split())
+
+
+def met_failures(problems: Iterable[dict[str, Any]]) -> set[str]:
+    """The checks that failed on a step the grader reached. A check never
+    reached, or failing only on a setup step, is not a failure a player met, so it
+    cannot excuse another check from being told: both would reach no one."""
+    return {
+        ident
+        for p in problems
+        if isinstance(p, dict)
+        and not is_unevaluated(p)
+        and not is_setup(p)
+        and (ident := check_id(str(p.get("check", "")).strip()))
+    }
+
+
+def needs_unmet(problem: dict[str, Any], failed: set[str]) -> bool:
+    """True when a check this one's failing step waits on failed too: the step
+    never had its situation, so nothing about it is known."""
+    return any(n in failed for n in needs_of(problem))
+
+
+_LAYER_TEMPLATE = "{x}"
+
+
+def _template_pattern(template: str) -> re.Pattern[str]:
+    """``REQ-STATE/state.{x}`` → the per-key names that instance it."""
+    literal = re.escape(template).replace(re.escape(_LAYER_TEMPLATE), r"[^.]+")
+    return re.compile(rf"\A{literal}\Z")
+
+
+def _canonical(check: str) -> str:
+    """``[F01] board appears`` → ``F01``; ``conformance:REQ-RENDER/point — …`` →
+    ``REQ-RENDER/point``. The key a layer map names, whatever wording a gate set."""
+    raw = str(check or "").strip()
+    if m := _TOKEN_RE.match(raw):
+        return m.group(1)
+    token = raw.split()[0] if raw.split() else ""
+    return token.removeprefix("conformance:")
+
+
+@dataclass(frozen=True)
+class LayerMap:
+    """Which layer each check belongs to (``grader/layers.json``).
+
+    A layer is a pass over the challenge: 1 is the board/controls surface, and a
+    later number is only reachable once the earlier ones hold. The map declares
+    layers per check, with a per-stage default for checks it names no key for.
+    """
+
+    checks: dict[str, int]
+    stages: dict[int, int]
+
+    def layer_of(self, check: str, stages: Sequence[Stage]) -> int:
+        candidate = _canonical(check)
+        if (layer := self.checks.get(candidate)) is not None:
+            return layer
+        # A setup key that is not named one by one is an instance of a `{x}`
+        # template (`REQ-STATE/state.off.white` of `REQ-STATE/state.{x}`).
+        for template, layer in self.checks.items():
+            if _LAYER_TEMPLATE not in template:
+                continue
+            if _template_pattern(template).match(candidate):
+                return layer
+        try:
+            number: int | None = stage_of(check, stages).number
+        except UnstagedCheckError:
+            number = None
+        if number is not None and (layer := self.stages.get(number)) is not None:
+            return layer
+        raise UnstagedCheckError(
+            f"check {check!r} has no layer in grader/layers.json — its layer decides "
+            "which pass may report it, so it must be declared, never guessed"
+        )
+
+
+def _layer_int(layers_json: Path, where: str, value: Any) -> int:
+    """A layer is written as a bare int, or as ``{"layer": int, "reason": str}``."""
+    layer = value if isinstance(value, int) and not isinstance(value, bool) else None
+    if layer is None and isinstance(value, dict):
+        inner = value.get("layer")
+        layer = (
+            inner if isinstance(inner, int) and not isinstance(inner, bool) else None
+        )
+    if layer is None:
+        raise RuntimeError(f"{layers_json}: {where} has no integer layer: {value!r}")
+    if not 1 <= layer <= 3:
+        raise RuntimeError(f"{layers_json}: {where} layer {layer} is outside 1..3")
+    return layer
+
+
+def load_layers(layers_json: Path) -> LayerMap:
+    """Read the layer map beside ``checks.json``. Never an empty map: a challenge
+    that ships a map means it, and a silently empty one would layer nothing."""
+    path = Path(layers_json)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"{path}: cannot read the layer map: {exc}") from exc
+    checks_data = data.get("checks")
+    stages_data = data.get("stages")
+    if not isinstance(checks_data, dict) or not isinstance(stages_data, dict):
+        raise RuntimeError(f"{path}: the layer map needs `checks` and `stages` objects")
+    checks = {
+        str(key): _layer_int(path, f"check {key!r}", value)
+        for key, value in checks_data.items()
+    }
+    stages: dict[int, int] = {}
+    for key, value in stages_data.items():
+        try:
+            number = int(str(key))
+        except ValueError as exc:
+            raise RuntimeError(f"{path}: stage key {key!r} is not a number") from exc
+        stages[number] = _layer_int(path, f"stage {number}", value)
+    return LayerMap(checks=checks, stages=stages)
+
+
+def load_stages(checks_json: Path) -> list[Stage]:
+    data = json.loads(Path(checks_json).read_text(encoding="utf-8"))
+    stages = [
+        Stage(
+            number=int(s["stage"]),
+            name=str(s["name"]),
+            keys=tuple(str(k) for k in s["checks"]),
+        )
+        for s in data.get("stages") or []
+    ]
+    if not stages:
+        raise UnstagedCheckError(f"{checks_json} declares no stages")
+    ordered = sorted(stages, key=lambda s: s.number)
+    # The layer map rides beside the stage list: it is built from the same
+    # file, and grading a challenge that ships none must keep working.
+    layers_json = Path(checks_json).with_name("layers.json")
+    if layers_json.is_file():
+        layers = load_layers(layers_json)
+        ordered = [
+            replace(stage, layer=layers.stages.get(stage.number)) for stage in ordered
+        ]
+    return ordered
+
+
+def check_id(check: str) -> str | None:
+    """``G05`` from ``[G05] …``, or ``REQ-RENDER/die`` from a setup check."""
+    raw = str(check or "").split("\n", 1)[0]
+    if m := _TOKEN_RE.match(raw):
+        return m.group(1)
+    if m := _CONF_KEY_RE.match(raw):
+        return m.group(1)
+    return None
+
+
+def _match(check: str, stages: Iterable[Stage]) -> tuple[Stage, int]:
+    """The check's stage and the position of its key in that stage's list."""
+    ident = check_id(check)
+    best: tuple[int, Stage, int] | None = None
+    if ident is not None:
+        for stage in stages:
+            for index, key in enumerate(stage.keys):
+                matches = ident == key or (key.endswith("/") and ident.startswith(key))
+                if matches and (best is None or len(key) > best[0]):
+                    best = (len(key), stage, index)
+    if best is None:
+        raise UnstagedCheckError(
+            f"check {check!r} has no player stage in grader/checks.json — its stage decides "
+            "whether the model hears about it, so it must be declared, never guessed"
+        )
+    return best[1], best[2]
+
+
+def stage_of(check: str, stages: Iterable[Stage]) -> Stage:
+    return _match(check, stages)[0]
+
+
+def player_order(check: str, stages: Iterable[Stage]) -> tuple[int, int]:
+    """Where a player meets this check: its stage, then its place in that stage's
+    list. A stage's list is written in the order a player meets things (operator,
+    2026-10-28: app loads → board → pieces → buttons → resizing), and the model
+    reads its problems in that order — never in the grader's file order, which
+    put conformance before backend before frontend whatever the player saw first
+    (WO-LI-GRADER-ORIENTATION: 769 inversions in stage 1)."""
+    stage, index = _match(check, stages)
+    return stage.number, index
+
+
+def player_view(
+    problems: Iterable[dict[str, Any]],
+    stages: list[Stage],
+    *,
+    is_infra: Callable[[str], bool],
+    layer: int | None = None,
+    layer_map: LayerMap | None = None,
+) -> PlayerView:
+    """The problems of the earliest failing stage; the rest are withheld, and
+    checks the grader never reached, or that stopped at a step another failing
+    check reports, are told to no one.
+
+    ``layer`` scopes the told problems to one grader pass: a problem whose CHECK
+    belongs to a LATER layer is dropped before staging, so a pass over layer 1
+    never widens its repair message to a later pass's gates. An earlier layer's
+    check stays: its phase is done and must keep working, and the pass grades it
+    (report.mjs grades layers 1..N), so a fault the model's new work brought
+    back there is told in stage order like any other (operator, 2026-11-13: run
+    1794602352's pieces round moved the bottom row of triangles to the middle
+    of the board and the model was never told — every layer-1 check was
+    dropped). The layer is the
+    check's own (``layer_map.layer_of``), never its stage's: layer 2 has no
+    stage of its own — stages 7-19 default to layer 3 — so reading ``Stage.layer``
+    here would drop every layer-2 problem. Without a scope the result is
+    unchanged."""
+    records = [p for p in problems if isinstance(p, dict)]
+    failed = met_failures(records)
+    staged: list[tuple[Stage, dict[str, Any]]] = []
+    unevaluated: list[str] = []
+    alarms: list[str] = []
+    for problem in records:
+        check = str(problem.get("check", "")).strip()
+        if not check or is_infra(check):
+            continue
+        if (
+            layer is not None
+            and layer_map is not None
+            and layer_map.layer_of(check, stages) > layer
+        ):
+            continue
+        if is_unevaluated(problem) or needs_unmet(problem, failed):
+            unevaluated.append(check)
+            continue
+        if is_setup(problem):
+            alarms.append(check)
+            continue
+        staged.append(
+            (
+                min(stages, key=lambda s: s.number)
+                if is_refused(problem)
+                else stage_of(check, stages),
+                problem,
+            )
+        )
+    # One refusal of each kind is told — the first a player meets; the rest wait
+    # on it (refusal_kind).
+    first_refusal: dict[str, tuple[tuple[int, int], int]] = {}
+    for at, (_, problem) in enumerate(staged):
+        if is_refused(problem):
+            order = player_order(str(problem.get("check", "")).strip(), stages)
+            kind = refusal_kind(problem)
+            if kind not in first_refusal or order < first_refusal[kind][0]:
+                first_refusal[kind] = (order, at)
+    kept = {at for _, at in first_refusal.values()}
+    unevaluated += [
+        str(p.get("check", "")).strip()
+        for at, (_, p) in enumerate(staged)
+        if is_refused(p) and at not in kept
+    ]
+    staged = [
+        entry
+        for at, entry in enumerate(staged)
+        if not is_refused(entry[1]) or at in kept
+    ]
+    if not staged:
+        return PlayerView(stage=None, unevaluated=unevaluated, alarms=alarms)
+    first = min(s.number for s, _ in staged)
+    stage = next(s for s, _ in staged if s.number == first)
+    visible = sorted(
+        (p for s, p in staged if s.number == first),
+        key=lambda p: player_order(str(p.get("check", "")).strip(), stages),
+    )
+    withheld = [str(p.get("check", "")).strip() for s, p in staged if s.number != first]
+    return PlayerView(
+        stage=stage,
+        visible=visible,
+        withheld=withheld,
+        unevaluated=unevaluated,
+        alarms=alarms,
+    )
+
+
+# WHERE IN ITS TEST A COMPLAINT IS ASKED. A test stops at its first failing
+# assertion, so a check that now fails on an aspect asked LATER in its test than
+# the one the model was told about has passed that earlier one: the told
+# complaint is fixed, and the player can say so. One that fails EARLIER never
+# reached the told assertion, and nothing true can be said about it. Two aspects
+# asked inside one loop are NOT ordered: F31 asks side, up, down and past piece by
+# piece, so "past" failing on one piece says nothing about "up" on another. Read
+# from the graded source: each aspect's first ask in its test body, with the
+# `for` blocks around it.
+_TEST_START_RE = re.compile(r"""^\s*(?:test|it)\(\s*["'`]\[([A-Z]+[0-9]*)\]""", re.M)
+_ASPECT_MARK_RE = re.compile(r"\[aspect: ([a-z]+)\]")
+_FOR_OPEN_RE = re.compile(r"\bfor\s*\([^{]*\)\s*$")
+
+
+@dataclass(frozen=True)
+class AspectAsk:
+    position: int
+    loops: frozenset[int]
+
+
+def _asks(body: str, offset: int) -> dict[str, list[AspectAsk]]:
+    asks: dict[str, list[AspectAsk]] = {}
+    stack: list[tuple[int, bool]] = []  # (open position, is a for-loop block)
+    # Asks, not mentions: a comment naming an aspect is not where it is asked.
+    marks = {
+        m.start(): m.group(1)
+        for m in _ASPECT_MARK_RE.finditer(body)
+        if not body[body.rfind("\n", 0, m.start()) + 1 : m.start()]
+        .lstrip()
+        .startswith(("//", "*"))
+    }
+    for i, ch in enumerate(body):
+        if ch == "{":
+            stack.append((i, bool(_FOR_OPEN_RE.search(body[max(0, i - 200) : i]))))
+        elif ch == "}" and stack:
+            stack.pop()
+        elif i in marks:
+            loops = frozenset(offset + pos for pos, is_for in stack if is_for)
+            asks.setdefault(marks[i], []).append(AspectAsk(offset + i, loops))
+    return asks
+
+
+def aspect_order(grader_dir: Path) -> dict[str, dict[str, list[AspectAsk]]]:
+    """check token -> {aspect: every place its test asks it, and inside which loops}."""
+    order: dict[str, dict[str, list[AspectAsk]]] = {}
+    for path in sorted(
+        [
+            *Path(grader_dir).glob("frontend/*.spec.ts"),
+            *Path(grader_dir).glob("backend/*.test.ts"),
+        ]
+    ):
+        text = path.read_text(encoding="utf-8")
+        starts = list(_TEST_START_RE.finditer(text))
+        for i, m in enumerate(starts):
+            end = starts[i + 1].start() if i + 1 < len(starts) else len(text)
+            seen = order.setdefault(m.group(1), {})
+            for aspect, asks in _asks(text[m.end() : end], m.end()).items():
+                seen.setdefault(aspect, []).extend(asks)
+    return order
+
+
+def asked_after(
+    order: dict[str, dict[str, list[AspectAsk]]], token: str, later: str, earlier: str
+) -> bool:
+    """True only when every ask of `earlier` comes before the first ask of `later`,
+    outside any loop they share — F87 asks "stale" twice, once before "place" and
+    once after it, so a failure on "place" proves nothing about the second."""
+    asks = order.get(token, {})
+    before, after = asks.get(earlier), asks.get(later)
+    if not before or not after:
+        return False
+    first = min(after, key=lambda x: x.position)
+    return all(
+        a.position < first.position and not (a.loops & first.loops) for a in before
+    )
+
+
+def told_complaints_fixed(
+    told: Iterable[tuple[str, str | None]],
+    now: Iterable[tuple[str, str | None]],
+    order: dict[str, dict[str, list[AspectAsk]]],
+) -> list[tuple[str, str | None]]:
+    """Which of last round's told complaints (check, aspect) are gone now.
+
+    Gone when the check passes, or when every way it fails now is asked after
+    the told aspect, outside any loop they share. Run 1793479392 round 3: the
+    collision told in round 2 was fixed and the check failed on uneven pieces,
+    asked after it; acknowledged per check, the model never heard its fix worked.
+    """
+    failing: dict[str, set[str | None]] = {}
+    # A line belongs to a gate id and aspect, not to one check: two checks of
+    # one gate tell the same line, so while either fails it is not fixed (run
+    # 1793662415 round 3: one G12 check passed, the other still told the G12
+    # line, and the model heard it fixed and still broken in one message).
+    open_lines: set[tuple[str, str | None]] = set()
+    for check, aspect in now:
+        failing.setdefault(check, set()).add(aspect)
+        open_lines.add((check_id(check) or check, aspect))
+    fixed = []
+    for check, aspect in told:
+        if check not in failing:
+            if (check_id(check) or check, aspect) not in open_lines:
+                fixed.append((check, aspect))
+            continue
+        token = check_id(check) or ""
+        if aspect is not None and all(
+            b is not None and asked_after(order, token, b, aspect)
+            for b in failing[check]
+        ):
+            fixed.append((check, aspect))
+    return fixed

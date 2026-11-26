@@ -1,0 +1,244 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// REGRESSION: the live stream is written into the CELL directory.
+//
+// `LiveStream.for_run(run_dir)` is called from `backgammon.py::run_cell`, where
+// `run_dir` is the cell's directory — so the file lands at
+// `<campaign>/variant<A|B>/cell-<seq>/live.jsonl`, one level BELOW the campaign
+// directory `activeRun()` resolves. Both readers used to join the bare filename
+// onto `run.dir`, which opened a path that never exists and reported
+// "no live.jsonl yet" — a reason indistinguishable from a run that legitimately
+// never wrote a stream. The board therefore showed no gate state for the entire
+// life of every run.
+//
+// These tests pin the three facts that fix depends on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, writeFile, utimes } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { cellLiveStreamPath } from "../control/board/sources/_runtime.mjs";
+import * as liveStream from "../control/board/sources/live-stream.mjs";
+
+const ROSTER = {
+  total: 3,
+  enumeration: { complete: true },
+  gates: [
+    { id: "CONF", phase: "conformance", title: "conformance pre-gate" },
+    { id: "backend/a.test.ts::alpha", phase: "backend", title: "alpha" },
+    { id: "frontend/b.test.ts::beta", phase: "frontend", title: "beta" },
+  ],
+};
+
+const STREAM = [
+  { v: 1, ts: 1, kind: "cell.start", session_id: "ses_LIVE", cell_seq: 0, variant: "a" },
+  { v: 1, ts: 2, kind: "gate.result", session_id: "ses_LIVE", attempt: 1, id: "CONF", status: "pass", phase: "conformance" },
+  { v: 1, ts: 3, kind: "gate.result", session_id: "ses_LIVE", attempt: 1, id: "backend/a.test.ts::alpha", status: "fail", phase: "backend" },
+  { v: 1, ts: 4, kind: "attempt.end", session_id: "ses_LIVE", attempt: 1, verdict: "fail", failed: 1 },
+  { v: 1, ts: 5, kind: "gate.result", session_id: "ses_LIVE", attempt: 2, id: "backend/a.test.ts::alpha", status: "pass", phase: "backend" },
+];
+
+/** A campaign whose stream sits where the harness actually writes it. */
+async function fixture({ stream = STREAM } = {}) {
+  const root = await mkdtemp(join(tmpdir(), "livestream-"));
+  const runs = join(root, "runs");
+  const campaign = join(runs, "9999000000", "cloud", "p", "m", "mm");
+  const cell = join(campaign, "variantA", "cell-0000");
+  await mkdir(cell, { recursive: true });
+  await writeFile(
+    join(campaign, "manifest.json"),
+    JSON.stringify({ created_at: "2099-01-01T00:00:00Z", org_id: "o", task: "t", roster: [{ model: "synthetic/model" }] }),
+  );
+  await writeFile(join(campaign, "gate-roster.json"), JSON.stringify(ROSTER));
+  if (stream) await writeFile(join(cell, "live.jsonl"), stream.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const address = { run_dir: "9999000000/cloud/p/m/mm", sequence_index: 0 };
+  return { ctx: { runsRoot: runs, benchRoot: root, cell: address }, runs, campaign, cell, address };
+}
+
+test("cellLiveStreamPath finds the cell's stream in its own directory, not the campaign root", async () => {
+  const { runs, cell, address } = await fixture();
+  assert.equal(await cellLiveStreamPath(runs, address), join(cell, "live.jsonl"));
+});
+
+test("cellLiveStreamPath returns null rather than guessing when the cell does not exist", async () => {
+  const { runs, address } = await fixture({ stream: null });
+  assert.equal(await cellLiveStreamPath(runs, { ...address, sequence_index: 7 }), null);
+  assert.equal(await cellLiveStreamPath(runs, null), null);
+  assert.equal(await cellLiveStreamPath(runs, { run_dir: address.run_dir }), null);
+});
+
+// ── TWO CELLS, EACH ITS OWN ──────────────────────────────────────────────────
+// A campaign holds one cell dir per concurrent cell. The resolver used to
+// return whichever stream had the NEWEST mtime, so with N cells writing the
+// board flipped between them with every write. Each address now resolves its
+// own stream, whatever the other cells' mtimes.
+
+test("cellLiveStreamPath resolves each cell's own stream, whatever the mtimes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "livestream2-"));
+  const runs = join(root, "runs");
+  const cells = [0, 1].map((n) => join(runs, "camp", "variantA", `cell-000${n}`));
+  for (const c of cells) {
+    await mkdir(c, { recursive: true });
+    await writeFile(join(c, "live.jsonl"), JSON.stringify(STREAM[0]) + "\n");
+  }
+  const [a, b] = cells.map((c) => join(c, "live.jsonl"));
+  await utimes(a, new Date(1000), new Date(1000));
+  await utimes(b, new Date(2000), new Date(2000));
+  assert.equal(await cellLiveStreamPath(runs, { run_dir: "camp", sequence_index: 0 }), a, "cell 0 is cell 0 even when cell 1 wrote last");
+  assert.equal(await cellLiveStreamPath(runs, { run_dir: "camp", sequence_index: 1 }), b);
+});
+
+test("the board reads verdicts from the cell-directory stream; later attempt wins", async () => {
+  const { ctx } = await fixture();
+  const res = await liveStream.readCell(ctx);
+  assert.equal(res.ok, true, res.reason);
+  const { live } = res.patch;
+  assert.equal(live.session_id, "ses_LIVE");
+  assert.equal(live.variant, "a");
+  assert.equal(live.attempt, 2);
+  // alpha failed on attempt 1 and passed on attempt 2 — the repair supersedes.
+  const alpha = live.gates.find((g) => g.id === "backend/a.test.ts::alpha");
+  assert.equal(alpha.status, "pass");
+  assert.equal(alpha.attempt, 2);
+  assert.deepEqual(live.gate_counts, { pass: 2, fail: 0, other: 0 });
+});
+
+// ── THE TRAJECTORY SURVIVES THE FOLD ────────────────────────────────────────
+//
+// The gate runner re-grades the WHOLE suite on every attempt, so a gate that
+// passed on attempt 1 emits `pass` again on attempt 2. The source used to keep
+// only the newest record per gate, which destroyed the trajectory; the wall
+// then had nothing to compute "first passed on attempt N" from and used the
+// newest attempt instead. Measured on a live run: 65 gates that passed first
+// try all rendered as `recovered` with a "2" in them, claiming a repair that
+// never happened. Attempts-to-green is a headline measurement of this bench.
+
+const REGRADED = [
+  { v: 1, ts: 1, kind: "cell.start", session_id: "ses_T", cell_seq: 0, variant: "a" },
+  // attempt 1: one pass, one fail
+  { v: 1, ts: 2, kind: "gate.result", session_id: "ses_T", attempt: 1, id: "CONF", status: "pass", phase: "conformance" },
+  { v: 1, ts: 3, kind: "gate.result", session_id: "ses_T", attempt: 1, id: "backend/a.test.ts::alpha", status: "fail", phase: "backend" },
+  { v: 1, ts: 4, kind: "attempt.end", session_id: "ses_T", attempt: 1, verdict: "FAIL", failed: 1 },
+  // attempt 2: the whole suite is re-graded — CONF passes AGAIN, alpha repairs
+  { v: 1, ts: 5, kind: "gate.result", session_id: "ses_T", attempt: 2, id: "CONF", status: "pass", phase: "conformance" },
+  { v: 1, ts: 6, kind: "gate.result", session_id: "ses_T", attempt: 2, id: "backend/a.test.ts::alpha", status: "pass", phase: "backend" },
+  { v: 1, ts: 7, kind: "attempt.end", session_id: "ses_T", attempt: 2, verdict: "PASS", failed: 0 },
+];
+
+test("a re-graded pass does not overwrite the attempt a gate FIRST passed on", async () => {
+  const { ctx } = await fixture({ stream: REGRADED });
+  const { live } = (await liveStream.readCell(ctx)).patch;
+  const byId = new Map(live.gates.map((g) => [g.id, g]));
+
+  // Passed first try, re-graded pass on attempt 2. It never failed, so it is
+  // green — NOT a repair, and it carries no attempt number on the wall.
+  const conf = byId.get("CONF");
+  assert.equal(conf.status, "pass");
+  assert.equal(conf.first_pass_attempt, 1, "a re-grade must not push first_pass_attempt to 2");
+  assert.equal(conf.ever_failed, false);
+
+  // Genuinely repaired: failed on 1, passed on 2.
+  const alpha = byId.get("backend/a.test.ts::alpha");
+  assert.equal(alpha.status, "pass");
+  assert.equal(alpha.first_pass_attempt, 2);
+  assert.equal(alpha.ever_failed, true);
+});
+
+test("the cell's phase and chunk are the producer's phase.start, not the log's last finished chunk", async () => {
+  const { ctx } = await fixture({
+    stream: [
+      { v: 1, ts: 1, kind: "cell.start", session_id: "ses_P", cell_seq: 0, variant: "a" },
+      { v: 1, ts: 2, kind: "phase.start", phase: "initial-chunk-2" },
+      { v: 1, ts: 3, kind: "phase.start", phase: "initial-chunk-3" },
+    ],
+  });
+  const { run } = (await liveStream.readCell(ctx)).patch;
+  assert.equal(run.phase, "initial-chunk-3");
+  assert.equal(run.chunk.current, 3);
+  // No phase.start: nothing stated, so nothing overwrites run-log's answer.
+  const bare = await fixture({ stream: [{ v: 1, ts: 1, kind: "cell.start", session_id: "s", cell_seq: 0 }] });
+  assert.equal((await liveStream.readCell(bare.ctx)).patch.run, null);
+});
+
+// ── RENDER-BLOCKED REACHES THE FEED ─────────────────────────────────────────
+// The harness emits `render_blocked` on attempt.end when the round could not
+// be rendered (null | {reason, evidence, gates}). The feed's field whitelist
+// used to drop it, so the dashboard never saw why a build was blocked. On the
+// wire the field is absent (healthy) or an object (blocked) — the reader
+// normalizes absence to null.
+
+test("attempt.end carries render_blocked through to the feed; absence reads null", async () => {
+  const blocked = {
+    reason: "server-not-answering",
+    evidence: "the backend did not answer /api/state",
+    gates: ["conformance:REQ-STATE/state.points"],
+  };
+  const { ctx } = await fixture({
+    stream: [
+      { v: 1, ts: 1, kind: "cell.start", session_id: "ses_RB", cell_seq: 0, variant: "a" },
+      { v: 1, ts: 2, kind: "gate.result", session_id: "ses_RB", attempt: 1, id: "CONF", status: "fail", phase: "conformance" },
+      { v: 1, ts: 3, kind: "attempt.end", session_id: "ses_RB", attempt: 1, verdict: "fail", failed: 1, render_blocked: blocked },
+    ],
+  });
+  const res = await liveStream.readCell(ctx);
+  assert.equal(res.ok, true, res.reason);
+  const attempt = res.patch.live.attempts.find((a) => a.attempt === 1);
+  assert.deepEqual(attempt.render_blocked, blocked, "reason, evidence and gates must survive the feed whitelist");
+
+  // The default fixture's attempt.end carries no render_blocked: healthy reads null.
+  const healthy = await fixture();
+  const hattempt = (await liveStream.readCell(healthy.ctx)).patch.live.attempts.find((a) => a.attempt === 1);
+  assert.equal(hattempt.render_blocked, null, "absence on the wire means healthy — normalized to null");
+});
+
+// ── A GRADED ATTEMPT NEVER SCROLLS AWAY ──────────────────────────────────────
+// The sources read live.jsonl by its tail. In run 1792089895 round 1's 217
+// gate.result rows sat ~550 KB back once round 2's activity was written after
+// them, and the wall showed 114 gates "not yet tested" mid-round. Each graded
+// attempt's verdicts are also in attempt-<n>-report.json in the cell directory,
+// which the sources now read first.
+
+test("a graded attempt's verdicts come from its report when the stream's tail no longer holds them", async () => {
+  // The stream as a long round leaves it: no gate.result rows in reach.
+  const tailOnly = [
+    { v: 1, ts: 1, kind: "cell.start", session_id: "ses_LIVE", cell_seq: 0, variant: "a" },
+    { v: 1, ts: 9, kind: "phase.start", session_id: "ses_LIVE", phase: "feedback-1" },
+  ];
+  const { ctx, cell } = await fixture({ stream: tailOnly });
+  await writeFile(
+    join(cell, "attempt-1-report.json"),
+    JSON.stringify({
+      verdict: "FAIL",
+      gate_results: [
+        { id: "CONF", status: "pass", phase: "conformance", duration_ms: 2 },
+        { id: "backend/a.test.ts::alpha", status: "fail", phase: "backend", duration_ms: 5 },
+        { id: "frontend/b.test.ts::beta", status: "pass", phase: "frontend", duration_ms: 7 },
+      ],
+    }),
+  );
+
+  const { live } = (await liveStream.readCell(ctx)).patch;
+  assert.equal(live.attempt, 1);
+  assert.deepEqual(live.gate_counts, { pass: 2, fail: 1, other: 0 }, "every graded gate is on the wall");
+  assert.equal(live.gates.find((g) => g.id === "backend/a.test.ts::alpha").status, "fail");
+});
+
+test("the tail still adds an attempt that is grading now, over the reports", async () => {
+  const { ctx, cell } = await fixture(); // stream: attempt 1 rows, then attempt 2 alpha=pass
+  await writeFile(
+    join(cell, "attempt-1-report.json"),
+    JSON.stringify({ gate_results: [
+      { id: "CONF", status: "pass" },
+      { id: "backend/a.test.ts::alpha", status: "fail" },
+      { id: "frontend/b.test.ts::beta", status: "fail" },
+    ] }),
+  );
+  const { live } = (await liveStream.readCell(ctx)).patch;
+  const alpha = live.gates.find((g) => g.id === "backend/a.test.ts::alpha");
+  assert.equal(alpha.status, "pass", "attempt 2's live row supersedes attempt 1's report");
+  assert.equal(alpha.first_pass_attempt, 2);
+  assert.equal(alpha.ever_failed, true);
+  assert.equal(live.gates.find((g) => g.id === "frontend/b.test.ts::beta").status, "fail", "report-only gate shown");
+});
