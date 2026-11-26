@@ -82,7 +82,7 @@ function sourceWord(source) {
     {
       environment: "exported in the control plane's environment",
       key_file: "stored in the bench key file",
-      shared_config: "read from the shared config file (OKP_DASHBOARD_CONFIG)",
+      shared_config: "read from the shared config file (BENCH_DASHBOARD_CONFIG)",
     }[source] ?? source
   );
 }

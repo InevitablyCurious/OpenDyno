@@ -36,9 +36,9 @@ function keyFilePath(benchRoot, env = process.env) {
  * isolated runs never pick up a developer's own key.
  */
 function sharedConfigPath(env = process.env) {
-  if (env.OKP_DASHBOARD_CONFIG) return env.OKP_DASHBOARD_CONFIG;
+  if (env.BENCH_DASHBOARD_CONFIG) return env.BENCH_DASHBOARD_CONFIG;
   const home = env.HOME ?? (env === process.env ? homedir() : null);
-  return home ? join(home, ".config", "okp", "dashboard.json") : null;
+  return home ? join(home, ".config", "opendyno", "dashboard.json") : null;
 }
 
 /** Minimal dotenv: `KEY=value`, `#` comments, optional surrounding quotes. */

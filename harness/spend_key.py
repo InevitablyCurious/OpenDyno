@@ -33,8 +33,8 @@ CLOUD_API_KEY_ENV = "ORCAROUTER_API_KEY"
 DEFAULT_CLOUD_KEY_FILE = _REPO_ROOT / "config" / "cloud.env"
 _CLOUD_KEY_FILE_ENV = "BENCH_CLOUD_KEY_FILE"
 
-# A shared settings file on the machine (OKP_DASHBOARD_CONFIG), and the field the router
-# credential lives under. Mirrors `shared_config_key` in control/routers.mjs.
+# A shared settings file on the machine (BENCH_DASHBOARD_CONFIG), and the field the
+# router credential lives under. Mirrors `shared_config_key` in control/routers.mjs.
 _SHARED_CONFIG_KEY = "orcarouter_api_key"
 
 
@@ -45,13 +45,13 @@ def _shared_config_path(env: Mapping[str, str]) -> Path | None:
     an isolated path — otherwise a test asking for "no key configured" would pick
     up the developer's own credential.
     """
-    override = str(env.get("OKP_DASHBOARD_CONFIG", "")).strip()
+    override = str(env.get("BENCH_DASHBOARD_CONFIG", "")).strip()
     if override:
         return Path(override).expanduser()
     home = env.get("HOME")
     if not home:
         return None
-    return Path(home) / ".config" / "okp" / "dashboard.json"
+    return Path(home) / ".config" / "opendyno" / "dashboard.json"
 
 
 class SpendKeyError(RuntimeError):
@@ -309,9 +309,9 @@ def resolve_cloud_api_key(
 
     Resolution order: explicit process-env export ``ORCAROUTER_API_KEY`` wins,
     then the key file (dotenv format), then the shared settings file
-    (OKP_DASHBOARD_CONFIG). ``_read_dotenv`` returns {} for a missing file (spend_key guard at
-    its head), so no separate existence guard is needed. The raw value is NEVER
-    logged — fingerprint only.
+    (BENCH_DASHBOARD_CONFIG). ``_read_dotenv`` returns {} for a missing file
+    (spend_key guard at its head), so no separate existence guard is needed. The
+    raw value is NEVER logged — fingerprint only.
 
     THE THIRD SOURCE MUST MATCH ``control/routers.mjs``. The control plane
     decides whether the board offers a cloud launch; this decides whether the
