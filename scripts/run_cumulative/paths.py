@@ -28,7 +28,9 @@ PROMPTS_DIR = REPO_ROOT / "task" / "backgammon" / "prompts"
 DEFAULT_MANIFEST_PATH = Path("runs") / "cumulative" / "manifest.json"
 DEFAULT_ORG_ID = "okp-org-0"
 DEFAULT_PROXY_RUNS_DIR = Path(
-    os.environ.get("BENCH_PROXY_RUNS_DIR", str(Path.home() / ".okp" / "proxy-runs"))
+    os.environ.get(
+        "BENCH_PROXY_RUNS_DIR", str(Path.home() / ".opendyno" / "proxy-runs")
+    )
 )
 # The challenge names its own campaign; the example calls itself
 # backgammon-cumulative-primary (task/backgammon/challenge.json).
