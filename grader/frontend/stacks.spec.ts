@@ -175,12 +175,15 @@ test("[F58] REQ-GEOMETRY — the top piece slides away", async ({ page }) => {
   const hints = page.getByTestId("hint");
   const back = page.locator('[data-testid="checker"][data-color="white"][data-loc="13"]');
   const backCount = await back.count();
-  try {
-    await playerClickUntilShown(back.last(), hints);
-  } catch (err) {
-    throw new Error(`[aspect: pickup] ${(err as Error).message}`);
-  }
-  await expect.poll(async () => hints.count(), "[needs: REQ-HINT/hint F60]").toBeGreaterThan(0);
+  // A click that cannot land is CLICK MISSED's (playerClick). Clicks that land and
+  // bring up no hint are this step's: playerClickUntilShown returns after eight
+  // tries without throwing, so the poll below is where the player's "I tapped it
+  // over and over" is measured (2026-11-25 C21 review: the aspect sat on the
+  // click's catch, where CLICK MISSED always spoke first).
+  await playerClickUntilShown(back.last(), hints);
+  await expect
+    .poll(async () => hints.count(), "[aspect: pickup] [needs: REQ-HINT/hint F60] the back piece was tapped eight times and no hint came up")
+    .toBeGreaterThan(0);
 
   // Click where the piece will sit — F45's own click: point 11's spot in the
   // bottom row, whose stacks start at the bottom edge, so the first piece of
@@ -272,12 +275,12 @@ test("[F59] REQ-GEOMETRY — a piece lands at the far end", async ({ page }) => 
 
   const hints = page.getByTestId("hint");
   const piece = page.locator('[data-testid="checker"][data-color="white"][data-loc="13"]');
-  try {
-    await playerClickUntilShown(piece.last(), hints);
-  } catch (err) {
-    throw new Error(`[aspect: pickup] ${(err as Error).message}`);
-  }
-  await expect.poll(async () => hints.count(), "[needs: REQ-HINT/hint F60]").toBeGreaterThan(0);
+  // As in F58: a click that cannot land is CLICK MISSED's; clicks that land and
+  // bring up no hint are told here.
+  await playerClickUntilShown(piece.last(), hints);
+  await expect
+    .poll(async () => hints.count(), "[aspect: pickup] [needs: REQ-HINT/hint F60] the piece on 13 was tapped eight times and no hint came up")
+    .toBeGreaterThan(0);
 
   // Play 13→11 by clicking the hint drawn over point 11. The point already
   // holds a checker, so the arrival spot — and the hint that plays it — sits

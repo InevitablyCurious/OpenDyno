@@ -612,13 +612,13 @@
     "F58": {
       "name": "The top piece slides away",
       "what": "When a checker leaves a stack, the piece farthest from the board's edge is the one that slides away, and the rest stay put.",
-      "how": "Opening position, 2-1: the pieces on 13 are held in the page, the top one is tapped to pick it up ([aspect: pickup]) and played to 11. When a held piece is the one now on 11 it must be the top one; a page that draws every piece afresh leaves none to follow and is not judged.",
+      "how": "Opening position, 2-1: the pieces on 13 are held in the page, the top one is tapped to pick it up, up to eight times, and a move hint must come up ([aspect: pickup]); it is played to 11. When a held piece is the one now on 11 it must be the top one; a page that draws every piece afresh leaves none to follow and is not judged.",
       "looks": "page"
     },
     "F59": {
       "name": "A piece lands at the far end",
       "what": "When a checker lands on a point that already holds checkers, it joins at the far end of the stack, farthest from the edge.",
-      "how": "White to move with a 2 left, one piece on 13 and one on 11: both are held in the page, and the piece on 13 is tapped to pick it up ([aspect: pickup]) and played onto 11. When both held pieces are the ones on 11, the arrival must be farther from the edge; a page that draws them afresh is not judged.",
+      "how": "White to move with a 2 left, one piece on 13 and one on 11: both are held in the page, and the piece on 13 is tapped to pick it up, up to eight times, and a move hint must come up ([aspect: pickup]); it is played onto 11. When both held pieces are the ones on 11, the arrival must be farther from the edge; a page that draws them afresh is not judged.",
       "looks": "page"
     },
     "F60": {
