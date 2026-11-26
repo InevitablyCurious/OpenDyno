@@ -24,6 +24,7 @@ from harness.adapters.docker_worker import (
     image_exists,
     worker_image_fingerprint,
 )
+from harness.variant_slot import is_secret_name
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -779,7 +780,12 @@ def test_no_seed_keystore_corpus_env_or_mounts_in_either_variant(
 ) -> None:
     """Neither variant may see identity seed, keystore, or corpus material — not
     as container env, not as a mount source. Generic isolation, asserted for
-    the B and A variant alike."""
+    the B and A variant alike.
+
+    The env check is the GENERAL credential-shape rule
+    (``harness.variant_slot.is_secret_name``), not a list of one project's brand
+    names: any name shaped like identity or secret material is refused, so a
+    rename cannot quietly weaken the guard."""
     _require_worker_image()
 
     # A NEUTRAL tmp dir, never `tmp_path`: pytest names `tmp_path` after the
@@ -792,18 +798,12 @@ def test_no_seed_keystore_corpus_env_or_mounts_in_either_variant(
     worktree_variant_b.mkdir(parents=True, exist_ok=True)
     worktree_variant_a.mkdir(parents=True, exist_ok=True)
 
-    forbidden_env_names = {
-        "OKP_IDENTITY_SEED_HEX",
-        "OKP_KEYSTORE_PATH",
-        "OKP_CORPUS_PATH",
-        "OKP_CORPUS_FILE",
-        "OKP_SEED",
-    }
-
     with _started_cell(worktree_variant_b, variant="b") as b_cell:
         b_env = _container_env(b_cell)
-        for forbidden in forbidden_env_names:
-            assert forbidden not in b_env
+        for env_name in b_env:
+            assert not is_secret_name(env_name), (
+                f"variant B cell env carries credential-shaped name {env_name!r}"
+            )
 
         mounts_b = _inspect_mounts(b_cell.container_name)
         _assert_mounts_are_only_worktree_and_settings(mounts_b, worktree_variant_b)
@@ -815,8 +815,10 @@ def test_no_seed_keystore_corpus_env_or_mounts_in_either_variant(
 
     with _started_cell(worktree_variant_a, variant="a") as a_cell:
         a_env = _container_env(a_cell)
-        for forbidden in forbidden_env_names:
-            assert forbidden not in a_env
+        for env_name in a_env:
+            assert not is_secret_name(env_name), (
+                f"variant A cell env carries credential-shaped name {env_name!r}"
+            )
 
         mounts_a = _inspect_mounts(a_cell.container_name)
         _assert_mounts_are_only_worktree_and_settings(mounts_a, worktree_variant_a)
@@ -824,6 +826,56 @@ def test_no_seed_keystore_corpus_env_or_mounts_in_either_variant(
             source_text = str(mount.get("Source", "")).lower()
             assert "keystore" not in source_text
             assert "corpus" not in source_text
+
+
+def test_credential_shape_rule_supersedes_the_old_brand_deny_list() -> None:
+    """The isolation guard must be a credential-SHAPE rule, never weaker than
+    the literal brand list it replaced.
+
+    The old guard named one project's secret env vars and asserted their
+    absence; renaming them left it passing vacuously. This pins the general
+    rule two ways: every name the old deny-list refused is still refused (so
+    the new rule is a superset, including under other brands), and the names a
+    cell legitimately forwards are not refused (so it does not over-catch).
+    Pure unit — no docker, no image, so CI always exercises it.
+    """
+    refused = (
+        # The old literal deny-list, kept as regression cases.
+        "OKP_IDENTITY_SEED_HEX",
+        "OKP_KEYSTORE_PATH",
+        "OKP_CORPUS_PATH",
+        "OKP_CORPUS_FILE",
+        "OKP_SEED",
+        # Same shapes under other brands: the rule must not depend on "OKP".
+        "EXAMPLE_KEYSTORE_PATH",
+        "EXAMPLE_SEED",
+        "EXAMPLE_CORPUS_PATH",
+        "ACME_IDENTITY_SEED_HEX",
+        "MY_MNEMONIC",
+        "SOME_PASSPHRASE",
+        "CORPUS_PATH",
+        "PRIVATE_KEY",
+    )
+    for env_name in refused:
+        assert is_secret_name(env_name), (
+            f"credential-shaped name must be refused as cell env: {env_name!r}"
+        )
+
+    forwarded = (
+        "LOCAL_LLM_PROXY_API_KEY",
+        "ORCAROUTER_API_KEY",
+        "HONCHO_API_KEY",
+        "HONCHO_BASE_URL",
+        "HONCHO_WORKSPACE_ID",
+        "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX",
+        "REQUIRE_TODOS",
+        "AUTH_USE_AUTH",
+        "LLM_OPENAI_API_KEY",
+    )
+    for env_name in forwarded:
+        assert not is_secret_name(env_name), (
+            f"legitimately forwarded setting must not be refused: {env_name!r}"
+        )
 
 
 @REQUIRES_DOCKER

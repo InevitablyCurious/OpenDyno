@@ -87,6 +87,24 @@ def test_a_name_that_decides_what_the_cell_is_is_refused(name: str) -> None:
         parse_settings(f"{name}=x\n")
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "OKP_IDENTITY_SEED_HEX",
+        "OKP_KEYSTORE_PATH",
+        "OKP_CORPUS_PATH",
+        "OKP_CORPUS_FILE",
+        "OKP_SEED",
+        "EXAMPLE_SEED",
+        "MY_MNEMONIC",
+        "PRIVATE_KEY",
+    ],
+)
+def test_a_credential_shaped_name_is_refused(name: str) -> None:
+    with pytest.raises(ValueError, match="identity/secret material"):
+        parse_settings(f"{name}=x\n")
+
+
 def test_the_server_address_is_filled_into_the_settings(tmp_path: Path) -> None:
     settings_file = tmp_path / "variant.env"
     settings_file.write_text(
@@ -130,6 +148,9 @@ def test_secret_looking_values_are_never_recorded() -> None:
         "HONCHO_BASE_URL": "http://sidecar:4560",
         "SOME_TOKEN": "***",
     }
+    assert redacted(
+        {"OKP_SEED": SECRET, "EXAMPLE_SEED": "abc", "OKP_KEYSTORE_PATH": "/k"}
+    ) == {"OKP_SEED": "***", "EXAMPLE_SEED": "***", "OKP_KEYSTORE_PATH": "***"}
 
 
 # --- the docker invocation -----------------------------------------------------

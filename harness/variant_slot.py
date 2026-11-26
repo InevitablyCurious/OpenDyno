@@ -47,6 +47,18 @@ _RESERVED = re.compile(
 #: Settings whose values are never recorded or printed.
 _SECRET = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH", re.IGNORECASE)
 
+#: Names that carry identity or secret material — a seed phrase, a keystore, a
+#: corpus of a member's own writing — rather than a setting a plugin reads. The
+#: refusal is by shape, not by brand, so whatever a project names its secrets:
+#: none of them may arrive as a variant setting. Bare KEY, TOKEN and AUTH are
+#: left out on purpose: the forwarded proxy and model keys are settings, and
+#: refusing them would forbid what a variant legitimately needs.
+_SECRET_NAME = re.compile(
+    r"KEYSTORE|SEED|MNEMONIC|PASSPHRASE|PASSWORD|CORPUS|IDENTITY|PRIVATE_KEY"
+    r"|CREDENTIAL|SECRET",
+    re.IGNORECASE,
+)
+
 
 def variant_upstream(env: dict | None = None) -> str:
     """The variant server's origin as the sidecar reaches it, or "" for none."""
@@ -55,10 +67,16 @@ def variant_upstream(env: dict | None = None) -> str:
     )
 
 
+def is_secret_name(name: str) -> bool:
+    """Whether a name carries identity or secret material, not a setting."""
+    return bool(_SECRET_NAME.search(name))
+
+
 def parse_settings(text: str) -> dict[str, str]:
     """NAME=value lines; blank lines, ``#`` comments and ``export`` are allowed.
 
-    Raises ValueError on a malformed line or a reserved name, naming the line.
+    Raises ValueError on a malformed line, a reserved name, or a name that
+    carries identity or secret material, naming the line.
     """
     settings: dict[str, str] = {}
     for number, raw in enumerate(text.splitlines(), start=1):
@@ -74,6 +92,11 @@ def parse_settings(text: str) -> dict[str, str]:
             raise ValueError(
                 f"line {number}: {name} is reserved by the benchmark and cannot "
                 "be a variant setting"
+            )
+        if is_secret_name(name):
+            raise ValueError(
+                f"line {number}: {name} carries identity/secret material and "
+                "cannot be a variant setting"
             )
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
@@ -110,6 +133,6 @@ def variant_settings(variant_url: str, env: dict | None = None) -> dict[str, str
 def redacted(settings: dict[str, str]) -> dict[str, str]:
     """The settings as they may be recorded: secret-looking values masked."""
     return {
-        name: ("***" if _SECRET.search(name) else value)
+        name: ("***" if _SECRET.search(name) or is_secret_name(name) else value)
         for name, value in sorted(settings.items())
     }
