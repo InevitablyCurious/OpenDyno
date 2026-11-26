@@ -327,8 +327,12 @@ test("[F03] REQ-HINT — clicking a piece shows its moves", async ({ page }) => 
   const pieceBefore = pieceClip ? await page.screenshot({ clip: pieceClip }).catch(() => null) : null;
   try {
     await revealHints(page, state.legalMoves, state.legalMoves[0]?.from);
-  } catch {
-    // Judged below, with its marker.
+  } catch (err) {
+    // A click that never landed is CLICK MISSED's, told as it is: swallowed here,
+    // the hint poll below told "clicking a piece shows no moves" of a piece the
+    // click never reached (2026-11-26 class matrix c21steps, c21-click-covered).
+    if (String((err as Error)?.message ?? err).includes("CLICK MISSED")) throw err;
+    // Anything else is judged below, with its marker.
   }
   // No hints for any piece is the setup check's complaint too (REQ-HINT/hint,
   // "selecting a movable checker shows move hints"): when both fail it is one
