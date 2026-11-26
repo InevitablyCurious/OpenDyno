@@ -166,14 +166,13 @@ test("status-stream: a cell's tokens are cost.json phases.total, not the last at
 
     const run = await cellView(root);
     assert.deepEqual(
-      { ...run.tokens, injected_block: undefined },
+      { ...run.tokens },
       {
         input: 1_000,
         output: 200,
         reasoning: 150,
         cache_read: 4_000,
         cache_write: 500,
-        injected_block: undefined,
       },
     );
     assert.notEqual(run.tokens.input, 333, "the second attempt's counters are not the cell's");

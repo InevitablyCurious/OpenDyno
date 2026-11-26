@@ -14,7 +14,7 @@ Invariants:
 - Torn-line-safe writer, matching ``StatusStream.append``: compact sorted-key
   JSON + newline, flush + fsync per record; readers skip unparseable lines.
 - None-honest: a field is None when its source does not carry it — never
-  zero-filled (``tree_id`` on the legacy flat layout, ``org_id``/``recall``
+  zero-filled (``tree_id`` on the legacy flat layout, ``org_id``
   on A cells, ``gate_totals``/``verdict`` when the stream lacks the record).
 """
 
@@ -34,24 +34,8 @@ _LOG = logging.getLogger(__name__)
 
 LEDGER_RELATIVE_PATH = ("data", "results-ledger.jsonl")
 
-# The recall-yield subset of the status-stream ``progress`` dict
-# (ProgressVector.to_dict fields). Fixed tuple: no invented metrics — the
-# ledger mirrors exactly what the cell published.
-RECALL_FIELDS = (
-    "recall_fired_total",
-    "recall_returned_total",
-    "recall_returned_count_sum",
-    "no_keywords_count",
-    "served_attempted",
-    "served_failed",
-    "served_confirmed",
-    "recall_return_rate",
-    "inject_yield",
-    "serve_success_rate",
-)
-
-# The contention-covariate subset of the same ``progress`` dict. Unlike
-# recall, NOT variant-gated: contention is measured on BOTH A and B cells (via
+# The contention-covariate subset of the same ``progress`` dict. Not
+# variant-gated: contention is measured on BOTH A and B cells (via
 # the spend DB), so every record carries the conditions it was gathered under.
 # A per-field None means not measured (spend DB unavailable) — never
 # zero-filled. Visibility only: these fields gate nothing.
@@ -175,14 +159,6 @@ def build_run_records(
                 "tokens": point.get("total_tokens"),
                 "wall_seconds": point.get("wall_seconds"),
                 "wall_cost_usd": point.get("wall_cost_usd"),
-                # recall: the recall-yield sub-dict on a B cell; None (not a
-                # dict of nulls) on an A cell — A progress carries these
-                # fields as None by construction.
-                "recall": (
-                    {field: progress.get(field) for field in RECALL_FIELDS}
-                    if variant == "b" and progress is not None
-                    else None
-                ),
                 # contention: the covariates this cell was gathered under,
                 # carried on BOTH variants (not gated on variant=="b"); None only
                 # when the attempt record published no progress mapping.
@@ -240,7 +216,6 @@ def append_run_records(
 __all__ = [
     "CONTENTION_FIELDS",
     "LEDGER_RELATIVE_PATH",
-    "RECALL_FIELDS",
     "append_run_records",
     "build_run_records",
     "read_tree_id",

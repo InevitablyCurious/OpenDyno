@@ -125,15 +125,14 @@ export function emptyBoard() {
       chunk: { current: null, total: null },
       attempt: { current: null, max: null },
       turns: null,
-      // Five categories + the injected-block estimate. A category a source cannot
-      // observe stays null; the panel never totals a subset.
+      // Five categories. A category a source cannot observe stays null; the
+      // panel never totals a subset.
       tokens: {
         input: null,
         output: null,
         reasoning: null,
         cache_read: null,
         cache_write: null,
-        injected_block: null,
       },
       // stalled and failed come only from the control plane's /api/run verdict (via
       // reconcileRunLiveness); no source derives them.

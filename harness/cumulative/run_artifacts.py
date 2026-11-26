@@ -34,19 +34,17 @@ Each record describes ONE attempt/cell of a scored session. Keys:
   record; for the terminal attempt of a cell this equals the cell's final
   progress.
 
-Token accounting (injected-block kept SEPARATE from work tokens):
+Token accounting:
 - ``work_input_tokens``, ``work_output_tokens``, ``work_reasoning_tokens``,
   ``work_cache_read_tokens``, ``work_cache_write_tokens``, and the derived
   ``work_total_tokens`` (all int | None; PER ATTEMPT, not the cell total —
   the cell total lives in ``cost.json``). A counter the adapter never reported
   is an explicit None, never 0; ``work_total_tokens`` sums the counters present
   and is None when none are present.
-- ``injected_block_est_tokens`` (int | None; None when the variant is a)
 
 Injection observability (null BY CONTRACT when the variant is a — that null is
 correct, not a defect):
-- ``injected_count``, ``injected_block_chars``,
-  ``injected_block_est_tokens``, ``consumer_injected_count`` (all int | None)
+- ``consumer_injected_count`` (int | None)
 
 Extraction-attempt observability:
 - ``extraction_state`` in {"never_invoked","invoked_cut_off",

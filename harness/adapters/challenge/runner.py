@@ -131,12 +131,7 @@ from .pricing import PricingMixin
 from .serve import ServeMixin
 from .telemetry import (
     TelemetryMixin,
-    _scan_cell_delivery,
-    _scan_funnel_snapshot,
-    _scan_injected_block_chars,
-    _scan_recall_funnel,
     _snapshot_state_hash,
-    _worktree_has_injection_record,
 )
 from .transport import (
     TransportMixin,
@@ -2619,51 +2614,6 @@ class ChallengeRunner(
             if isinstance(first_n_problems, int):
                 problems_before_count = first_n_problems
 
-        if _worktree_has_injection_record(worktree):
-            scanned_delivery = _scan_cell_delivery(worktree)
-            delivery = (
-                scanned_delivery if scanned_delivery is not None else "not_measured"
-            )
-            injected_block_chars = _scan_injected_block_chars(worktree)
-            injected_block_est_tokens = (
-                round(injected_block_chars / 4)
-                if injected_block_chars is not None
-                else None
-            )
-            funnel = _scan_recall_funnel(worktree)
-            funnel_snapshot = _scan_funnel_snapshot(worktree)
-            recall_fired_total = (
-                funnel.recall_fired_total if funnel is not None else None
-            )
-            recall_returned_total = (
-                funnel.recall_returned_total if funnel is not None else None
-            )
-            recall_returned_count_sum = (
-                funnel.recall_returned_count_sum if funnel is not None else None
-            )
-            no_keywords_count = funnel.no_keywords_count if funnel is not None else None
-            injected_count = funnel.injected_count if funnel is not None else None
-            served_attempted = funnel.served_attempted if funnel is not None else None
-            served_failed = funnel.served_failed if funnel is not None else None
-            served_confirmed = funnel.served_confirmed if funnel is not None else None
-        else:
-            delivery = "N/A"
-            injected_block_chars = None
-            injected_block_est_tokens = None
-            funnel_snapshot = None
-            recall_fired_total = None
-            recall_returned_total = None
-            recall_returned_count_sum = None
-            no_keywords_count = None
-            injected_count = None
-            served_attempted = None
-            served_failed = None
-            served_confirmed = None
-        self._progress(
-            f"PROGRESS run_label={run_label} step=delivery-scan delivery={delivery} "
-            f"variant={self.variant}"
-        )
-
         return ChallengeCellResult(
             build_chunks=build_chunk_completion(
                 chunk_reports=tuple(chunk_reports),
@@ -2684,7 +2634,6 @@ class ChallengeRunner(
             turns=turns_total,
             wall_seconds=wall_seconds,
             paused_seconds=round(self._paused_seconds, 3),
-            delivery=delivery,
             failed_gates=failed_gates_final,
             problems_final=problems_final,
             attempt_reports=attempt_reports,
@@ -2698,17 +2647,6 @@ class ChallengeRunner(
             test_invocations=test_invocations_count,
             agentic_cycles=agentic_cycles_count,
             problems_before=problems_before_count,
-            injected_block_chars=injected_block_chars,
-            injected_block_est_tokens=injected_block_est_tokens,
-            recall_fired_total=recall_fired_total,
-            recall_returned_total=recall_returned_total,
-            recall_returned_count_sum=recall_returned_count_sum,
-            no_keywords_count=no_keywords_count,
-            injected_count=injected_count,
-            served_attempted=served_attempted,
-            served_failed=served_failed,
-            served_confirmed=served_confirmed,
-            funnel_snapshot=funnel_snapshot,
             provider_truncations=provider_truncations_total,
             cap_cutoffs=cap_cutoffs_total,
             cap_cutoffs_nudged=cap_cutoffs_nudged_total,

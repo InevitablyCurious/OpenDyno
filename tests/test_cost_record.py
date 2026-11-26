@@ -67,7 +67,6 @@ def _cell_result(**overrides: Any) -> ChallengeCellResult:
         "output_tokens": 50,
         "turns": 3,
         "wall_seconds": 12.5,
-        "delivery": "verified",
         "failed_gates": [],
         "problems_final": [],
         "attempt_reports": [],

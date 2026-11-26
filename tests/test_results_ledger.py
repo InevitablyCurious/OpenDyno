@@ -2,11 +2,10 @@
 
 Builds a synthetic scorecard (real RunManifest / ConvergencePoint to_dict()
 shape) plus a real StatusStream of per-cell attempt records, then asserts the
-emitted JSONL line's exact fields: the A cell carries variant=="a",
-recall is None (not a dict of nulls), org_id is None; the B cell carries a
-populated recall sub-dict (the recall-yield fields of the published progress)
-and its per-cell org_id. WO-CONCUR-07: both variants also carry the ``contention``
-covariates sub-dict (None only when the attempt published no progress). No
+emitted JSONL line's exact fields: the A cell carries variant=="a" and
+org_id is None; the B cell carries its per-cell org_id. WO-CONCUR-07: both
+variants also carry the ``contention`` covariates sub-dict (None only when the
+attempt published no progress). No
 metrics are invented: every value flows from the
 same surfaces a real run publishes.
 """
@@ -21,7 +20,6 @@ from typing import Any
 from harness.cumulative.convergence import CONTENTION_FIELDS, ConvergencePoint
 from harness.cumulative.progress import progress_from_cell_result
 from harness.cumulative.results_ledger import (
-    RECALL_FIELDS,
     append_run_records,
     build_run_records,
     read_tree_id,
@@ -66,7 +64,7 @@ def _point(sequence_index: int, session_fp: str) -> ConvergencePoint:
 
 
 def _a_telemetry() -> dict[str, Any]:
-    """ChallengeCellResult-shaped telemetry with NO recall fields (A cell)."""
+    """ChallengeCellResult-shaped telemetry with only the core counters."""
     return {
         "problems_before": 3,
         "problems_final": ["problem-1"],
@@ -81,21 +79,6 @@ def _a_telemetry() -> dict[str, Any]:
         "wall_cost_usd": 0.25,
         "verdict": "PASS",
         "termination_reason": "verdict_composed",
-    }
-
-
-def _b_telemetry() -> dict[str, Any]:
-    """A telemetry plus the recall funnel a B cell publishes."""
-    return {
-        **_a_telemetry(),
-        "recall_fired_total": 4,
-        "recall_returned_total": 3,
-        "recall_returned_count_sum": 5,
-        "no_keywords_count": 1,
-        "injected_count": 2,
-        "served_attempted": 3,
-        "served_failed": 1,
-        "served_confirmed": 2,
     }
 
 
@@ -191,7 +174,6 @@ def test_a_cell_record_shape(tmp_path: Path) -> None:
     assert record["tokens"] == 900
     assert record["wall_seconds"] == 12.5
     assert record["wall_cost_usd"] == 0.25
-    assert record["recall"] is None, "A recall is None, not a dict of nulls"
     # This fixture publishes no contention: the covariates stay per-field None
     # (not measured), never zero-filled — and the key itself is still present.
     assert record["contention"] == {field: None for field in CONTENTION_FIELDS}, (
@@ -200,55 +182,6 @@ def test_a_cell_record_shape(tmp_path: Path) -> None:
     assert record["session_fp"] == "fp-a-cell"
     assert record["session_id"] == "ses-a-cell"
     assert record["timestamp"] == "2026-08-29T13:00:00Z"
-
-
-def test_b_cell_recall_populated(tmp_path: Path) -> None:
-    manifest_path = tmp_path / "manifest.json"
-    stream_path = _write_attempt_records(
-        manifest_path,
-        [
-            {
-                "type": "attempt",
-                "sequence_index": 1,
-                "variant": "b",
-                "org_id": "org-b-target",
-                "served_model": "served/test-model",
-                "verdict": "PASS",
-                "gate_totals": {"passed": 4, "failed": 0},
-                "session_fp": "fp-b-cell",
-                "session_id": "ses-b-cell",
-                "progress": progress_from_cell_result(_b_telemetry()).to_dict(),
-            }
-        ],
-    )
-    scorecard = _scorecard([_point(1, "fp-b-cell")])
-
-    records = build_run_records(
-        tree_id=None,
-        task="backgammon",
-        scorecard=scorecard,
-        status_stream_path=stream_path,
-        timestamp="2026-08-29T13:00:00Z",
-    )
-    assert len(records) == 1
-    record = records[0]
-    assert record["variant"] == "b"
-    assert record["org_id"] == "org-b-target"
-    assert record["tree_id"] is None, "legacy flat layout has no tree pointer"
-    recall = record["recall"]
-    assert isinstance(recall, dict)
-    assert set(recall) == set(RECALL_FIELDS)
-    assert recall["recall_fired_total"] == 4
-    assert recall["recall_returned_total"] == 3
-    assert recall["recall_returned_count_sum"] == 5
-    assert recall["no_keywords_count"] == 1
-    assert recall["served_attempted"] == 3
-    assert recall["served_failed"] == 1
-    assert recall["served_confirmed"] == 2
-    assert recall["recall_return_rate"] == 0.75
-    assert recall["inject_yield"] == 0.4
-    assert recall["serve_success_rate"] == 2 / 3
-    assert record["model"] == "local/test-model", "requested_model wins over served"
 
 
 def test_convergence_point_carries_contention_covariates() -> None:
@@ -303,7 +236,7 @@ def test_ledger_records_carry_contention_on_both_variants(tmp_path: Path) -> Non
                 "session_fp": "fp-b-cell",
                 "session_id": "ses-b-cell",
                 "progress": progress_from_cell_result(
-                    {**_b_telemetry(), "contention": _contention()}
+                    {**_a_telemetry(), "contention": _contention()}
                 ).to_dict(),
             },
             {

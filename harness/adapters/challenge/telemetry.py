@@ -24,14 +24,12 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-import re
 import sqlite3
 import time
 
 from harness.outcomes.predicate_emitter import walk_manifest
 
 from .constants import _SPEC
-from .models import RecallFunnelScan
 
 _LOG = logging.getLogger(__name__)
 
@@ -51,114 +49,6 @@ def _snapshot_state_hash(worktree: Path) -> str | None:
         return walk_manifest(worktree)[1]
     except Exception:
         return None
-
-
-def _worktree_has_injection_record(worktree: Path) -> bool:
-    return (Path(worktree) / ".okp" / "org.json").is_file()
-
-
-def _scan_cell_delivery(worktree: Path) -> str | None:
-    plugin_log = worktree / ".okp" / "logs" / "okp-plugin-errors.log"
-    try:
-        payload = plugin_log.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError, UnicodeDecodeError):
-        return None
-
-    matches = re.findall(r"\[inject\] injected count=(\d+)", payload)
-    if not matches:
-        return None
-    if any(int(count) >= 1 for count in matches):
-        return "YES"
-    return "NO"
-
-
-def _scan_injected_block_chars(worktree: Path) -> int | None:
-    plugin_log = worktree / ".okp" / "logs" / "okp-plugin-errors.log"
-    try:
-        payload = plugin_log.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError, UnicodeDecodeError):
-        return None
-
-    block_matches = re.findall(r"\[inject\] injected[^\n]*\bblock_chars=(\d+)", payload)
-    if block_matches:
-        return sum(int(chars) for chars in block_matches)
-
-    legacy_matches = re.findall(r"\[inject\] injected[^\n]*\bchars=(\d+)", payload)
-    if legacy_matches:
-        return sum(int(chars) for chars in legacy_matches)
-
-    return None
-
-
-def _scan_recall_funnel(worktree: Path) -> RecallFunnelScan | None:
-    plugin_log = worktree / ".okp" / "logs" / "okp-plugin-errors.log"
-    try:
-        payload = plugin_log.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError, UnicodeDecodeError):
-        return None
-
-    fired_matches = re.findall(r"\brecall_fired\s+trigger=repeat_failure\b", payload)
-
-    returned_matches = re.findall(
-        r"\brecall_returned\s+status=\S+\s+count=(\d+)\s+reason_code=(\S+)\s+dur_ms=\d+\s+error=",
-        payload,
-    )
-    recall_returned_count_sum = sum(
-        int(count) for count, _reason_code in returned_matches
-    )
-    no_keywords_count = sum(
-        1 for _count, reason_code in returned_matches if reason_code == "no_keywords"
-    )
-
-    injected_matches = re.findall(r"\[inject\]\s+injected\s+count=(\d+)", payload)
-    injected_count = sum(int(count) for count in injected_matches)
-
-    served_attempted = len(re.findall(r"\[serve\]\s+upsert\s+cid=", payload))
-    served_failed = len(re.findall(r"\[serve\]\s+receipt\s+failed\b", payload))
-
-    return RecallFunnelScan(
-        recall_fired_total=len(fired_matches),
-        recall_returned_total=len(returned_matches),
-        recall_returned_count_sum=recall_returned_count_sum,
-        no_keywords_count=no_keywords_count,
-        injected_count=injected_count,
-        served_attempted=served_attempted,
-        served_failed=served_failed,
-        served_confirmed=served_attempted - served_failed,
-    )
-
-
-def _scan_funnel_snapshot(worktree: Path) -> dict[str, dict[str, int | None]] | None:
-    """Read the plugin's per-session funnel counters from funnel-snapshot.json.
-
-    The plugin writes this file into its state dir (``{worktree}/.okp/state``)
-    periodically and on ``session.idle``. Content is a flat JSON object mapping
-    sessionId -> counter dict (all numeric; ``gate_decision_ms`` is int|null).
-
-    Mirrors the tolerant style of ``_scan_recall_funnel``: an absent or
-    unreadable/corrupt file yields None (never a raise); a file that exists but
-    carries no sessions yields ``{}``.
-    """
-    snapshot_path = worktree / ".okp" / "state" / "funnel-snapshot.json"
-    try:
-        payload = snapshot_path.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError, UnicodeDecodeError):
-        return None
-
-    try:
-        parsed = json.loads(payload)
-    except (ValueError, TypeError):
-        return None
-
-    if not isinstance(parsed, dict):
-        return None
-
-    sessions: dict[str, dict[str, int | None]] = {}
-    for session_id, counters in parsed.items():
-        if not isinstance(counters, dict):
-            continue
-        sessions[str(session_id)] = dict(counters)
-    return sessions
 
 
 # Harness-declared verification/test commands for the challenge.

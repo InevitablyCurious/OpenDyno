@@ -38,7 +38,6 @@ from .exceptions import (
     ErrorCapExceeded,
 )
 from .models import (
-    RecallFunnelScan,
     _OpencodeRunStats,
     ChallengeCellResult,
 )
@@ -101,12 +100,7 @@ from .feedback import (
 )
 from .telemetry import (
     DECLARED_TEST_COMMANDS,
-    _scan_cell_delivery,
-    _scan_funnel_snapshot,
-    _scan_injected_block_chars,
-    _scan_recall_funnel,
     _snapshot_state_hash,
-    _worktree_has_injection_record,
 )
 from .transport import (
     _build_truncation_evidence,

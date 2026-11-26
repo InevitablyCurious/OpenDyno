@@ -14,18 +14,6 @@ from typing import Any
 
 
 @dataclass(frozen=True)
-class RecallFunnelScan:
-    recall_fired_total: int = 0
-    recall_returned_total: int = 0
-    recall_returned_count_sum: int = 0
-    no_keywords_count: int = 0
-    injected_count: int = 0
-    served_attempted: int = 0
-    served_failed: int = 0
-    served_confirmed: int = 0
-
-
-@dataclass(frozen=True)
 class _OpencodeRunStats:
     input_tokens: int
     output_tokens: int
@@ -122,7 +110,6 @@ class ChallengeCellResult:
     output_tokens: int
     turns: int
     wall_seconds: float
-    delivery: str
     failed_gates: list[str]
     problems_final: list[dict[str, Any]]
     attempt_reports: list[dict[str, Any]]
@@ -142,17 +129,6 @@ class ChallengeCellResult:
     test_invocations: int | None = None
     agentic_cycles: int | None = None
     problems_before: int | None = None
-    injected_block_chars: int | None = None
-    injected_block_est_tokens: int | None = None
-    recall_fired_total: int | None = None
-    recall_returned_total: int | None = None
-    recall_returned_count_sum: int | None = None
-    no_keywords_count: int | None = None
-    injected_count: int | None = None
-    served_attempted: int | None = None
-    served_failed: int | None = None
-    served_confirmed: int | None = None
-    funnel_snapshot: dict[str, dict[str, int | None]] | None = None
     # Truncation accounting split (WO-CUTOFF): provider_truncations are genuine
     # provider truncations (unknown / stream-incomplete / length BELOW our cap);
     # cap_cutoffs are the model hitting OUR output cap (length AT/above the cap),

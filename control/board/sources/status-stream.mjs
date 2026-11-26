@@ -53,7 +53,6 @@ export async function readCell(ctx) {
           reasoning: c.reasoning_tokens,
           cache_read: c.cache_read_tokens,
           cache_write: c.cache_write_tokens,
-          injected_block: c.injected_block_est_tokens,
         },
       },
       honesty: {
@@ -102,7 +101,6 @@ function cellsFromRecords(records, dirName) {
         reasoning_tokens: null,
         cache_read_tokens: null,
         cache_write_tokens: null,
-        injected_block_est_tokens: null,
         truncated_turns: 0,
         guard_aborted_turns: 0,
         finalize_timeout_turns: 0,
@@ -138,7 +136,6 @@ function cellsFromRecords(records, dirName) {
     const p = r.progress ?? {};
     c.turns = int(p.turns) ?? c.turns;
     c.wall_seconds = Math.round(Number(p.wall_seconds ?? 0)) || c.wall_seconds;
-    c.injected_block_est_tokens = int(r.injected_block_est_tokens) ?? c.injected_block_est_tokens;
     c.truncated_turns = Math.max(c.truncated_turns, int(r.truncated_turns) ?? 0);
     c.guard_aborted_turns = Math.max(c.guard_aborted_turns, int(r.guard_aborted_turns) ?? 0);
     // Carried on the status stream; absent on older records stays 0.

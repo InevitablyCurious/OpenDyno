@@ -23,24 +23,6 @@ CONSTRUCTION_DEFERRED_TELEMETRY_SEAMS: frozenset[str] = frozenset(
         "rejected_count",
     }
 )
-ON_ONLY_TELEMETRY_SEAMS: frozenset[str] = frozenset(
-    {
-        "injected_count",
-        "injected_block_chars",
-        "injected_block_est_tokens",
-        "recall_fired_total",
-        "recall_returned_total",
-        "recall_returned_count_sum",
-        "no_keywords_count",
-        "served_attempted",
-        "served_failed",
-        "served_confirmed",
-        "consumer_injected_count",
-        "extraction_candidate_count",
-        "accepted_count",
-        "rejected_count",
-    }
-)
 
 
 def _enum_value(value: Any) -> str:
@@ -239,20 +221,6 @@ class ProgressVector:
     total_tokens: int | None = None
     wall_seconds: float | None = None
     wall_cost_usd: float | None = None
-    injected_count: int | None = None
-    injected_block_chars: int | None = None
-    injected_block_est_tokens: int | None = None
-    recall_fired_total: int | None = None
-    recall_returned_total: int | None = None
-    recall_returned_count_sum: int | None = None
-    no_keywords_count: int | None = None
-    served_attempted: int | None = None
-    served_failed: int | None = None
-    served_confirmed: int | None = None
-    # Derived ratios: None means not derivable (for example, zero denominator), not missing telemetry.
-    recall_return_rate: float | None = None
-    inject_yield: float | None = None
-    serve_success_rate: float | None = None
     consumer_injected_count: int | None = None
     extraction_candidate_count: int | None = None
     accepted_count: int | None = None
@@ -281,8 +249,6 @@ class ProgressVector:
 
     def __post_init__(self) -> None:
         excluded_seams = set(CONSTRUCTION_DEFERRED_TELEMETRY_SEAMS)
-        if self.injected_count is None:
-            excluded_seams.update(ON_ONLY_TELEMETRY_SEAMS)
         self.missing_telemetry_seams = _normalize_missing_telemetry_seams(
             self.missing_telemetry_seams,
             seam_values={
@@ -297,16 +263,6 @@ class ProgressVector:
                 "total_tokens": self.total_tokens,
                 "wall_seconds": self.wall_seconds,
                 "wall_cost_usd": self.wall_cost_usd,
-                "injected_count": self.injected_count,
-                "injected_block_chars": self.injected_block_chars,
-                "injected_block_est_tokens": self.injected_block_est_tokens,
-                "recall_fired_total": self.recall_fired_total,
-                "recall_returned_total": self.recall_returned_total,
-                "recall_returned_count_sum": self.recall_returned_count_sum,
-                "no_keywords_count": self.no_keywords_count,
-                "served_attempted": self.served_attempted,
-                "served_failed": self.served_failed,
-                "served_confirmed": self.served_confirmed,
                 "consumer_injected_count": self.consumer_injected_count,
                 "extraction_candidate_count": self.extraction_candidate_count,
                 "accepted_count": self.accepted_count,
@@ -324,7 +280,9 @@ class ProgressVector:
 
     def to_dict(self) -> dict[str, Any]:
         excluded_seams = (
-            ON_ONLY_TELEMETRY_SEAMS if self.injected_count is None else frozenset()
+            CONSTRUCTION_DEFERRED_TELEMETRY_SEAMS
+            if self.variant != "b"
+            else frozenset()
         )
         missing_telemetry_seams = _normalize_missing_telemetry_seams(
             self.missing_telemetry_seams,
@@ -340,16 +298,6 @@ class ProgressVector:
                 "total_tokens": self.total_tokens,
                 "wall_seconds": self.wall_seconds,
                 "wall_cost_usd": self.wall_cost_usd,
-                "injected_count": self.injected_count,
-                "injected_block_chars": self.injected_block_chars,
-                "injected_block_est_tokens": self.injected_block_est_tokens,
-                "recall_fired_total": self.recall_fired_total,
-                "recall_returned_total": self.recall_returned_total,
-                "recall_returned_count_sum": self.recall_returned_count_sum,
-                "no_keywords_count": self.no_keywords_count,
-                "served_attempted": self.served_attempted,
-                "served_failed": self.served_failed,
-                "served_confirmed": self.served_confirmed,
                 "consumer_injected_count": self.consumer_injected_count,
                 "extraction_candidate_count": self.extraction_candidate_count,
                 "accepted_count": self.accepted_count,
@@ -377,20 +325,6 @@ class ProgressVector:
             "total_tokens": self.total_tokens,
             "wall_seconds": self.wall_seconds,
             "wall_cost_usd": self.wall_cost_usd,
-            "injected_count": self.injected_count,
-            "injected_block_chars": self.injected_block_chars,
-            "injected_block_est_tokens": self.injected_block_est_tokens,
-            "recall_fired_total": self.recall_fired_total,
-            "recall_returned_total": self.recall_returned_total,
-            "recall_returned_count_sum": self.recall_returned_count_sum,
-            "no_keywords_count": self.no_keywords_count,
-            "served_attempted": self.served_attempted,
-            "served_failed": self.served_failed,
-            "served_confirmed": self.served_confirmed,
-            # Derived ratios: not telemetry seams.
-            "recall_return_rate": self.recall_return_rate,
-            "inject_yield": self.inject_yield,
-            "serve_success_rate": self.serve_success_rate,
             "consumer_injected_count": self.consumer_injected_count,
             "extraction_candidate_count": self.extraction_candidate_count,
             "accepted_count": self.accepted_count,
@@ -428,19 +362,6 @@ class ProgressVector:
             total_tokens=_optional_int(d.get("total_tokens")),
             wall_seconds=_optional_float(d.get("wall_seconds")),
             wall_cost_usd=_optional_float(d.get("wall_cost_usd")),
-            injected_count=_optional_int(d.get("injected_count")),
-            injected_block_chars=_optional_int(d.get("injected_block_chars")),
-            injected_block_est_tokens=_optional_int(d.get("injected_block_est_tokens")),
-            recall_fired_total=_optional_int(d.get("recall_fired_total")),
-            recall_returned_total=_optional_int(d.get("recall_returned_total")),
-            recall_returned_count_sum=_optional_int(d.get("recall_returned_count_sum")),
-            no_keywords_count=_optional_int(d.get("no_keywords_count")),
-            served_attempted=_optional_int(d.get("served_attempted")),
-            served_failed=_optional_int(d.get("served_failed")),
-            served_confirmed=_optional_int(d.get("served_confirmed")),
-            recall_return_rate=_optional_float(d.get("recall_return_rate")),
-            inject_yield=_optional_float(d.get("inject_yield")),
-            serve_success_rate=_optional_float(d.get("serve_success_rate")),
             consumer_injected_count=_optional_int(d.get("consumer_injected_count")),
             extraction_candidate_count=_optional_int(
                 d.get("extraction_candidate_count")

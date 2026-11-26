@@ -275,7 +275,6 @@ def test_progress_from_cell_result_maps_problem_and_telemetry_math() -> None:
         output_tokens=203,
         turns=7,
         wall_seconds=4.5,
-        delivery="N/A",
         failed_gates=["tests"],
         problems_final=[{}, {}, {}],
         attempt_reports=[],
@@ -311,7 +310,6 @@ def test_progress_from_cell_result_preserves_none_for_nullable_fields() -> None:
         output_tokens=0,
         turns=0,
         wall_seconds=0.0,
-        delivery="N/A",
         failed_gates=[],
         problems_final=[{}, {}, {}],
         attempt_reports=[],
@@ -346,16 +344,6 @@ def test_progress_vector_construction_does_not_report_late_populated_seams() -> 
         resolved_count=2,
         remaining_count=1,
         attempts_to_green=1,
-        injected_count=2,
-        injected_block_chars=120,
-        injected_block_est_tokens=30,
-        recall_fired_total=2,
-        recall_returned_total=2,
-        recall_returned_count_sum=2,
-        no_keywords_count=0,
-        served_attempted=2,
-        served_failed=0,
-        served_confirmed=2,
         tool_calls=4,
         test_invocations=1,
         agentic_cycles=1,
@@ -391,16 +379,6 @@ def test_progress_vector_to_dict_reports_unresolved_late_on_seams() -> None:
         resolved_count=1,
         remaining_count=0,
         attempts_to_green=1,
-        injected_count=1,
-        injected_block_chars=80,
-        injected_block_est_tokens=20,
-        recall_fired_total=1,
-        recall_returned_total=1,
-        recall_returned_count_sum=1,
-        no_keywords_count=0,
-        served_attempted=1,
-        served_failed=0,
-        served_confirmed=1,
         tool_calls=2,
         test_invocations=1,
         agentic_cycles=1,
@@ -427,39 +405,8 @@ def test_progress_vector_a_variant_does_not_report_b_only_seams() -> None:
     progress = ProgressVector(variant="a")
     seams = progress.to_dict()["missing_telemetry_seams"]
 
-    assert "injected_count" not in seams
     assert "consumer_injected_count" not in seams
     assert "accepted_count" not in seams
-
-
-def test_progress_from_cell_result_maps_injected_block_fields_when_present() -> None:
-    result = ChallengeCellResult(
-        verdict="PASS",
-        attempts_to_green=0,
-        termination_reason="gates_green",
-        conformed=True,
-        input_tokens=10,
-        output_tokens=20,
-        turns=1,
-        wall_seconds=1.0,
-        delivery="YES",
-        failed_gates=[],
-        problems_final=[],
-        attempt_reports=[],
-        worktree="/tmp/worktree",
-        session_id="sess-block-present",
-        variant="b",
-        model="openrouter/anthropic/claude-opus-4.8",
-        injected_block_chars=2400,
-        injected_block_est_tokens=600,
-    )
-
-    progress = progress_from_cell_result(result)
-
-    assert progress.injected_block_chars == 2400
-    assert progress.injected_block_est_tokens == 600
-    assert "injected_block_chars" not in progress.missing_telemetry_seams
-    assert "injected_block_est_tokens" not in progress.missing_telemetry_seams
 
 
 def test_progress_from_cell_result_persists_worker_image_fingerprint() -> None:
@@ -472,7 +419,6 @@ def test_progress_from_cell_result_persists_worker_image_fingerprint() -> None:
         output_tokens=20,
         turns=1,
         wall_seconds=1.0,
-        delivery="N/A",
         failed_gates=[],
         problems_final=[],
         attempt_reports=[],
@@ -492,36 +438,6 @@ def test_progress_from_cell_result_persists_worker_image_fingerprint() -> None:
     assert payload["worker_image_created"] == "2026-07-31T01:25:11Z"
 
 
-def test_progress_from_cell_result_preserves_none_for_injected_block_fields() -> None:
-    result = ChallengeCellResult(
-        verdict="PASS",
-        attempts_to_green=0,
-        termination_reason="gates_green",
-        conformed=True,
-        input_tokens=10,
-        output_tokens=20,
-        turns=1,
-        wall_seconds=1.0,
-        delivery="YES",
-        failed_gates=[],
-        problems_final=[],
-        attempt_reports=[],
-        worktree="/tmp/worktree",
-        session_id="sess-block-missing",
-        variant="a",
-        model="openrouter/anthropic/claude-opus-4.8",
-        injected_block_chars=None,
-        injected_block_est_tokens=None,
-    )
-
-    progress = progress_from_cell_result(result)
-
-    assert progress.injected_block_chars is None
-    assert progress.injected_block_est_tokens is None
-    assert "injected_block_chars" not in progress.missing_telemetry_seams
-    assert "injected_block_est_tokens" not in progress.missing_telemetry_seams
-
-
 def test_progress_vector_serde_round_trip_with_new_fields() -> None:
     vector = ProgressVector(
         problems_before=9,
@@ -536,8 +452,6 @@ def test_progress_vector_serde_round_trip_with_new_fields() -> None:
         total_tokens=300,
         wall_seconds=6.0,
         wall_cost_usd=1.25,
-        injected_block_chars=2400,
-        injected_block_est_tokens=600,
         tool_calls=22,
         test_invocations=5,
         agentic_cycles=3,
@@ -548,8 +462,6 @@ def test_progress_vector_serde_round_trip_with_new_fields() -> None:
     restored = ProgressVector.from_dict(payload)
 
     assert restored.to_dict() == payload
-    assert restored.injected_block_chars == 2400
-    assert restored.injected_block_est_tokens == 600
     assert restored.tool_calls == 22
     assert restored.test_invocations == 5
     assert restored.agentic_cycles == 3
@@ -571,8 +483,6 @@ def test_progress_vector_from_dict_coerces_garbage_to_none_and_normalizes_seams(
             "total_tokens": "0",
             "wall_seconds": "0.0",
             "wall_cost_usd": "0.0",
-            "injected_block_chars": "2400",
-            "injected_block_est_tokens": "600",
             "tool_calls": None,
             "test_invocations": None,
             "agentic_cycles": None,
@@ -583,10 +493,6 @@ def test_progress_vector_from_dict_coerces_garbage_to_none_and_normalizes_seams(
     assert restored.tool_calls is None
     assert restored.test_invocations is None
     assert restored.agentic_cycles is None
-    assert restored.injected_block_chars == 2400
-    assert restored.injected_block_est_tokens == 600
-    assert "injected_block_chars" not in restored.missing_telemetry_seams
-    assert "injected_block_est_tokens" not in restored.missing_telemetry_seams
     assert "tool_calls" in restored.missing_telemetry_seams
     assert "agentic_cycles" in restored.missing_telemetry_seams
     assert "custom-seam" in restored.missing_telemetry_seams
@@ -596,31 +502,6 @@ def test_progress_vector_from_dict_coerces_garbage_to_none_and_normalizes_seams(
     )
     assert "tool_calls" in normalized.missing_telemetry_seams
     assert "agentic_cycles" not in normalized.missing_telemetry_seams
-
-
-def test_progress_vector_from_dict_rejects_corrupt_injected_block_fields() -> None:
-    payload = {
-        "problems_before": None,
-        "problems_after": None,
-        "resolved_count": None,
-        "remaining_count": None,
-        "attempts_to_green": None,
-        "turns": "0",
-        "input_tokens": "0",
-        "output_tokens": "0",
-        "total_tokens": "0",
-        "wall_seconds": "0.0",
-        "wall_cost_usd": "0.0",
-        "injected_block_chars": "bad",
-        "injected_block_est_tokens": "600",
-        "tool_calls": None,
-        "test_invocations": None,
-        "agentic_cycles": None,
-        "missing_telemetry_seams": [],
-    }
-
-    with pytest.raises(ValueError):
-        ProgressVector.from_dict(payload)
 
 
 def test_build_convergence_trend_math_hash_and_dict_shape() -> None:
@@ -757,12 +638,11 @@ def _make_backgammon_cell_result(**overrides: Any) -> ChallengeCellResult:
         "output_tokens": 20,
         "turns": 2,
         "wall_seconds": 1.5,
-        "delivery": "YES",
         "failed_gates": [],
         "problems_final": [],
         "attempt_reports": [],
         "worktree": "/tmp/worktree",
-        "session_id": "sess-recall-funnel",
+        "session_id": "sess-progress-helper",
         "variant": "b",
         "model": "openrouter/anthropic/claude-opus-4.8",
     }
@@ -797,150 +677,6 @@ def test_progress_from_cell_result_full_green_from_mapping_verdict() -> None:
         is False
     )
     assert progress_from_cell_result({"conformed": True}).full_green is False
-
-
-def test_progress_from_cell_result_maps_all_recall_serve_telemetry_fields() -> None:
-    result = _make_backgammon_cell_result(
-        recall_fired_total=5,
-        recall_returned_total=4,
-        recall_returned_count_sum=9,
-        no_keywords_count=1,
-        served_attempted=4,
-        served_failed=1,
-        served_confirmed=3,
-    )
-
-    progress = progress_from_cell_result(result)
-
-    assert progress.recall_fired_total == 5
-    assert progress.recall_returned_total == 4
-    assert progress.recall_returned_count_sum == 9
-    assert progress.no_keywords_count == 1
-    assert progress.served_attempted == 4
-    assert progress.served_failed == 1
-    assert progress.served_confirmed == 3
-
-
-def test_progress_from_cell_result_computes_recall_funnel_ratios() -> None:
-    result = _make_backgammon_cell_result(
-        recall_fired_total=4,
-        recall_returned_total=3,
-        recall_returned_count_sum=6,
-        injected_count=3,
-        served_attempted=4,
-        served_confirmed=3,
-        served_failed=1,
-    )
-
-    progress = progress_from_cell_result(result)
-
-    assert progress.recall_return_rate == pytest.approx(0.75)
-    assert progress.inject_yield == pytest.approx(0.5)
-    assert progress.serve_success_rate == pytest.approx(0.75)
-
-
-def test_progress_from_cell_result_ratio_fields_are_none_with_zero_denominators() -> (
-    None
-):
-    result = _make_backgammon_cell_result(
-        recall_fired_total=0,
-        recall_returned_total=0,
-        recall_returned_count_sum=0,
-        injected_count=0,
-        served_attempted=0,
-        served_confirmed=0,
-    )
-
-    progress = progress_from_cell_result(result)
-
-    assert progress.recall_return_rate is None
-    assert progress.inject_yield is None
-    assert progress.serve_success_rate is None
-
-
-def test_progress_from_cell_result_coalesces_injected_count_result_then_cell() -> None:
-    result_value = _make_backgammon_cell_result(injected_count=7)
-    progress_value = progress_from_cell_result(result_value)
-    assert progress_value.injected_count == 7
-
-    fallback_result = _make_backgammon_cell_result(injected_count=None)
-    fallback_progress = progress_from_cell_result(
-        fallback_result,
-        cell={"injection_count": 5},
-    )
-    assert fallback_progress.injected_count == 5
-
-
-def test_progress_from_cell_result_preserves_none_and_registers_funnel_seams_only() -> (
-    None
-):
-    result = _make_backgammon_cell_result(
-        recall_fired_total=None,
-        recall_returned_total=None,
-        recall_returned_count_sum=None,
-        no_keywords_count=None,
-        injected_count=0,
-        served_attempted=None,
-        served_failed=None,
-        served_confirmed=None,
-    )
-
-    progress = progress_from_cell_result(result)
-
-    assert progress.recall_fired_total is None
-    assert progress.recall_returned_total is None
-    assert progress.recall_returned_count_sum is None
-    assert progress.no_keywords_count is None
-    assert progress.injected_count == 0
-    assert progress.served_attempted is None
-    assert progress.served_failed is None
-    assert progress.served_confirmed is None
-
-    assert "recall_fired_total" in progress.missing_telemetry_seams
-    assert "recall_returned_total" in progress.missing_telemetry_seams
-    assert "recall_returned_count_sum" in progress.missing_telemetry_seams
-    assert "no_keywords_count" in progress.missing_telemetry_seams
-    assert "injected_count" not in progress.missing_telemetry_seams
-    assert "served_attempted" in progress.missing_telemetry_seams
-    assert "served_failed" in progress.missing_telemetry_seams
-    assert "served_confirmed" in progress.missing_telemetry_seams
-
-    assert progress.recall_return_rate is None
-    assert progress.inject_yield is None
-    assert progress.serve_success_rate is None
-    assert "recall_return_rate" not in progress.missing_telemetry_seams
-    assert "inject_yield" not in progress.missing_telemetry_seams
-    assert "serve_success_rate" not in progress.missing_telemetry_seams
-
-
-def test_progress_vector_round_trip_preserves_recall_funnel_fields() -> None:
-    vector = ProgressVector(
-        recall_fired_total=8,
-        recall_returned_total=6,
-        recall_returned_count_sum=12,
-        no_keywords_count=2,
-        injected_count=4,
-        served_attempted=5,
-        served_failed=1,
-        served_confirmed=4,
-        recall_return_rate=0.75,
-        inject_yield=4 / 12,
-        serve_success_rate=0.8,
-        missing_telemetry_seams=[],
-    )
-
-    payload = vector.to_dict()
-    restored = ProgressVector.from_dict(payload)
-
-    assert restored.to_dict() == payload
-    assert restored.recall_fired_total == 8
-    assert restored.recall_returned_total == 6
-    assert restored.recall_returned_count_sum == 12
-    assert restored.no_keywords_count == 2
-    assert restored.injected_count == 4
-    assert restored.served_attempted == 5
-    assert restored.served_failed == 1
-    assert restored.served_confirmed == 4
 
 
 # ── the dropped-connection detector ──────────────────────────────────────────

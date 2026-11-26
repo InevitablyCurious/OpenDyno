@@ -86,7 +86,6 @@ def test_run_cell_forwards_cell_identity_and_no_variant(
             output_tokens=0,
             turns=0,
             wall_seconds=0.0,
-            delivery="N/A",
             failed_gates=[],
             problems_final=[],
             attempt_reports=[],

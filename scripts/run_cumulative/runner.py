@@ -756,7 +756,6 @@ class RealSessionRunner:
             "cache_read_tokens": cache_read_tokens,
             "cache_write_tokens": cache_write_tokens,
         }
-        progress_injected_est = progress_dict.get("injected_block_est_tokens")
         progress_consumer_injected = progress_dict.get("consumer_injected_count")
 
         session_id = getattr(result, "session_id", None)
@@ -783,9 +782,6 @@ class RealSessionRunner:
             # cached run reports ~100x more cache reads than input+output
             # (measured: 178,120 against 9,977,856), so a total that omits them
             # is not a comparable number, merely a small one.
-            "injected_block_est_tokens": progress_injected_est,
-            "injected_count": getattr(result, "injected_count", None),
-            "injected_block_chars": getattr(result, "injected_block_chars", None),
             "consumer_injected_count": progress_consumer_injected,
             "extraction_state": "unknown",
             "extraction_candidate_count": None,
