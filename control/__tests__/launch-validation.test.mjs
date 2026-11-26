@@ -4,12 +4,19 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { confirmationToken, restatement, refuse } from "../contract.mjs";
+import { confirmationToken, restatement, refuse, DEFAULT_BENCH_PURPOSE } from "../contract.mjs";
 import { finishValidate } from "../lib/validate.mjs";
 import { RETIRED_ALIASES, readRoster } from "../roster.mjs";
 import { COMPACT_DEFAULT_CEILING, CONTEXT_ADVISORY_FLOOR } from "../cloud.mjs";
 
 import { HERE, BENCH } from "./_shared.mjs";
+
+// The proxy in this repo's fixtures tags its bench aliases `okp-bench`, and the
+// roster reads the purpose setting lazily per call — so the environment is set
+// here, at module load, before any test builds a roster. (These fixtures are the
+// REASON the neutral default is not asserted here: the setting is what makes a
+// differently-tagged proxy usable at all.)
+process.env.BENCH_PROXY_PURPOSE = "okp-bench";
 
 test("ROSTER: declared context comes from the proxy, never a local table", async () => {
   // The bench used to keep its own copy of each alias's window, and that copy
@@ -89,6 +96,21 @@ test("DRIFT: retired aliases match RETIRED_MODEL_ALIASES in config.py", () => {
     Object.keys(RETIRED_ALIASES).sort(),
     pythonIds.sort(),
     "a retirement is declared on one side only — the bench and the board disagree about what may run",
+  );
+});
+
+test("DRIFT: bench purpose default matches model_catalog.py", () => {
+  // One setting, one default, two languages. A machine with no BENCH_PROXY_PURPOSE
+  // resolves bench aliases by the default, so if the bench and the board disagreed
+  // about it they would disagree about WHICH MODELS MAY RUN — the board offering
+  // cells the harness cannot resolve, or the reverse. Neither can import the other.
+  const src = readFileSync(join(BENCH, "harness", "model_catalog.py"), "utf8");
+  const pyDefault = /DEFAULT_BENCH_PURPOSE\s*=\s*"([^"]+)"/.exec(src);
+  assert.ok(pyDefault, "DEFAULT_BENCH_PURPOSE not found in harness/model_catalog.py");
+  assert.equal(
+    DEFAULT_BENCH_PURPOSE,
+    pyDefault[1],
+    "the bench and the board disagree about the proxy purpose default",
   );
 });
 

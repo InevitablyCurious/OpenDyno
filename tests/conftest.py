@@ -89,6 +89,7 @@ def _fake_model_proxy(monkeypatch):
     `harness.model_catalog.fetch_proxy_models` itself."""
     from harness import model_catalog
 
+    monkeypatch.setenv("BENCH_PROXY_PURPOSE", "okp-bench")
     monkeypatch.setattr(
         model_catalog,
         "fetch_proxy_models",

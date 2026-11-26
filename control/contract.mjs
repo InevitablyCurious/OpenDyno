@@ -44,8 +44,8 @@ export const RESUME_UNSUPPORTED = {
  * @typedef {Object} ModelOption
  * @property {string}      id             — the alias to pass as --model
  * @property {string|null} upstream_model — the concrete model behind the alias
- * @property {string|null} purpose        — "okp-bench" | "interactive-*"
- * @property {boolean}     bench_eligible — purpose === "okp-bench"
+ * @property {string|null} purpose        — the alias's purpose tag; bench-eligible iff it equals benchPurpose()
+ * @property {boolean}     bench_eligible — purpose === benchPurpose()
  * @property {boolean}     resident       — currently loaded in the runtime
  * @property {number|null} declared_context — the proxy's context_length for the alias
  * @property {number|null} max_context    — runtime ceiling, null if unobserved
@@ -56,8 +56,16 @@ export const RESUME_UNSUPPORTED = {
 /**
  * Bench-eligible is computed here: the proxy serves interactive aliases on the
  * same endpoint, and benchmarking one would contend with live use.
+ *
+ * The tag is a SETTING, not a literal: a machine whose proxy labels its bench
+ * profiles differently overrides BENCH_PROXY_PURPOSE (the same variable the
+ * harness reads). Read lazily by callers, so an environment set after import
+ * still takes effect.
  */
-export const BENCH_PURPOSE = "okp-bench";
+export const DEFAULT_BENCH_PURPOSE = "bench";
+export function benchPurpose() {
+  return process.env.BENCH_PROXY_PURPOSE ?? DEFAULT_BENCH_PURPOSE;
+}
 
 // ── RUN STATE ── every live run at once (N concurrent cells). `runs[]` holds
 // one entry per live run, newest log first; the legacy top-level single-run

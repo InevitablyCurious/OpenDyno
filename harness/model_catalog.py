@@ -7,7 +7,8 @@ actually serves the models. The list now comes from one place: the proxy's
 ``GET /v1/models``, which reports each alias with ``purpose``, ``name``,
 ``context_length`` and ``max_output_tokens`` taken live from the runtime.
 
-A model is a local worker model when its ``purpose`` is ``BENCH_PURPOSE``.
+A model is a local worker model when its ``purpose`` matches
+``BENCH_PROXY_PURPOSE`` (default ``bench``).
 Retired aliases are still refused by ``harness.rosters.RETIRED_MODEL_ALIASES``.
 
 THE PROXY BEING DOWN IS A HARD ERROR. There is no built-in fallback list: a
@@ -27,8 +28,10 @@ import urllib.request
 from functools import lru_cache
 from typing import Any
 
-# Must match control/contract.mjs BENCH_PURPOSE and the proxy's bench profiles.
-BENCH_PURPOSE = "okp-bench"
+# Must match control/contract.mjs DEFAULT_BENCH_PURPOSE and the proxy's bench
+# profiles; a machine with a different purpose tag overrides it via
+# BENCH_PROXY_PURPOSE.
+DEFAULT_BENCH_PURPOSE = "bench"
 
 DEFAULT_PROXY_URL = "http://127.0.0.1:4545"
 
@@ -93,12 +96,11 @@ def model_block(row: dict[str, Any]) -> dict[str, Any]:
 
 def build_registry(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Worker model blocks keyed by alias, for every row with the bench purpose."""
+    purpose = os.environ.get("BENCH_PROXY_PURPOSE", DEFAULT_BENCH_PURPOSE)
     return {
         str(row["id"]): model_block(row)
         for row in rows
-        if isinstance(row, dict)
-        and row.get("purpose") == BENCH_PURPOSE
-        and row.get("id")
+        if isinstance(row, dict) and row.get("purpose") == purpose and row.get("id")
     }
 
 

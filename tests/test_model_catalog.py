@@ -9,9 +9,7 @@ from tests.conftest import PROXY_BENCH_ROWS
 
 def test_registry_is_the_proxy_bench_rows() -> None:
     registry = model_catalog.worker_model_registry()
-    bench_ids = {
-        r["id"] for r in PROXY_BENCH_ROWS if r["purpose"] == model_catalog.BENCH_PURPOSE
-    }
+    bench_ids = {r["id"] for r in PROXY_BENCH_ROWS if r["purpose"] == "okp-bench"}
     assert set(registry) == bench_ids, "interactive aliases are never worker models"
     block = registry["deepseek-v4-flash-bench"]
     assert block["name"] == "DeepSeek V4 Flash 0731 MXFP4 via Proxy (bench)"

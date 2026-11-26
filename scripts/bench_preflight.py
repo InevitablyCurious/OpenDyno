@@ -15,7 +15,8 @@ Run this instead. It prints a GO / NO-GO verdict and, on GO, the exact
 launch command with `< /dev/null` and the flag ordering already correct.
 
 Local cell (default — the resident model behind the :4545 relay proxy;
-`--model` is a bench alias served by the model proxy, purpose okp-bench):
+`--model` is a bench alias served by the model proxy, purpose from
+BENCH_PROXY_PURPOSE):
 
     .venv/bin/python scripts/bench_preflight.py --model qwen3.6-35b-a3b-bench
 

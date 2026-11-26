@@ -6,7 +6,7 @@
 // context_match computed. An unreachable side is null with a reason, never an
 // empty list that looks like "no models".
 
-import { BENCH_PURPOSE } from "./contract.mjs";
+import { benchPurpose } from "./contract.mjs";
 
 /**
  * Retired aliases: advertised by the proxy (which lives outside this repo),
@@ -107,7 +107,7 @@ export async function readRoster({ proxyUrl, runtimeUrl }) {
       upstream_model: upstream,
       purpose,
       // A retired alias is never bench-eligible; the reason travels with the row.
-      bench_eligible: purpose === BENCH_PURPOSE && !retired,
+      bench_eligible: purpose === benchPurpose() && !retired,
       retired_reason: retired,
       // null when the runtime is unreachable — unknown, not "not loaded".
       resident: runtimeRes.ok ? rt?.state === "loaded" : null,

@@ -5,7 +5,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { findChallenge } from "../challenges.mjs";
-import { confirmationToken, restatement, refuse } from "../contract.mjs";
+import { confirmationToken, restatement, refuse, benchPurpose } from "../contract.mjs";
 import {
   resolveCloudModel,
   readCloudKey,
@@ -106,7 +106,7 @@ export async function validateStart(
       id: cloud.key,
       upstream_model: cloud.slug,
       bench_eligible: true,
-      purpose: "okp-bench",
+      purpose: benchPurpose(),
       resident: null,
       declared_context: cloud.context,
       max_context: cloud.context,

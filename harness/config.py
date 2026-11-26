@@ -282,7 +282,8 @@ class LadderRung:
 
 
 # Local worker models are NOT declared here any more. They are read from the
-# model proxy's own list (GET /v1/models, purpose "okp-bench") by
+# model proxy's own list (GET /v1/models, purpose from BENCH_PROXY_PURPOSE,
+# default "bench") by
 # harness/model_catalog.py, so alias, name, context window and output budget
 # can never drift from what the proxy actually serves. ``WORKER_MODEL_REGISTRY``
 # below is still importable by name for callers that read it lazily.
