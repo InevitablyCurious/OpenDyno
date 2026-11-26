@@ -38,7 +38,9 @@ A variant A cell has no such route.
 `{variant_url}` in a value becomes the address the cell reaches the server at. Values are handed over by name, so
 they never show up in a command line or in `docker inspect`, and names that look secret (`KEY`, `TOKEN`,
 `SECRET`, `PASSWORD`, `AUTH`) are masked wherever they are recorded. Names that decide what the cell is
-(`HOME`, `PATH`, `OPENCODE_*`, `BENCH_*`, the proxy variables, the model keys, and the like) are refused.
+(`HOME`, `PATH`, `OPENCODE_*`, `BENCH_*`, the proxy variables, the model keys, and the like) are refused, and so
+are names shaped like secret material (a seed, a keystore, a password, a private key, a credential, a secret): the
+model can read a cell's settings.
 
 **Ready.** Some changes keep working after a cell ends; a memory system digests the cell's messages in the
 background. `BENCH_VARIANT_READY_CMD` is a host command, run with `sh -c` from the repo root, that exits 0 once

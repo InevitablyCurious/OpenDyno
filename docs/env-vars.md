@@ -43,15 +43,16 @@ How variant B's change gets in. [variants.md](variants.md) explains each one.
 | Name | Default | What it does | Read in |
 |---|---|---|---|
 | BENCH_CONTROL_PROXY_URL | http://127.0.0.1:4545 | the local model proxy: where the model list comes from | control/state.mjs, harness/model_catalog.py |
+| BENCH_PROXY_PURPOSE | bench | the purpose tag your proxy gives the models set aside for benchmarking; only a model carrying it can run a cell | harness/model_catalog.py, control/contract.mjs, scripts/bench_preflight.py |
 | BENCH_CONTROL_RUNTIME_URL | http://127.0.0.1:1234 | a local model runtime (LM Studio) | control/state.mjs |
 | LOCAL_LLM_PROXY_API_KEY | (unset) | the local proxy's key; set here, it wins over `.env` | harness/spend_key.py, harness/adapters/challenge/worker_config.py |
 | ORCAROUTER_API_KEY | (unset) | the cloud router's key; set here, it wins over the key file | harness/spend_key.py, control/cloud.mjs |
 | BENCH_CLOUD_KEY_FILE | config/cloud.env | where the board stores the cloud router's key | harness/spend_key.py, control/routers.mjs |
-| OKP_DASHBOARD_CONFIG | ~/.config/okp/dashboard.json | a shared settings file holding router keys; other tools on the machine read it too, so its name stays | harness/spend_key.py, control/routers.mjs |
+| BENCH_DASHBOARD_CONFIG | ~/.config/opendyno/dashboard.json | a shared settings file that can hold router keys, for a machine that keeps them in one place | harness/spend_key.py, control/routers.mjs |
 | BENCH_SPEND_DB_DSN | a local Postgres | the spend meter's database | harness/spend_key.py |
 | BENCH_WORKER_SPEND_PROXY_BASE_URL | worked out from the sidecar | the proxy address as a cell sees it | harness/spend_key.py |
 | BENCH_PROXY_CHECKPOINT | (unset) | the proxy's price list, for cost | harness/adapters/challenge/constants.py |
-| BENCH_PROXY_RUNS_DIR | ~/.okp/proxy-runs | where the proxy logs which run a request came from | scripts/run_cumulative/runner.py |
+| BENCH_PROXY_RUNS_DIR | ~/.opendyno/proxy-runs | where the proxy logs which run a request came from | scripts/run_cumulative/runner.py |
 | BENCH_REASONING_EFFORT | (unset) | the agent's reasoning effort, for models that take one | harness/adapters/challenge/runner.py |
 
 ## The cell
