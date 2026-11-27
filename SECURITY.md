@@ -1,8 +1,8 @@
 # Security Policy
 
-OpenDyno is in alpha. It runs code a model wrote, on your machine: every cell lives in its own containers, on a
-network whose only way out is its sidecar, and a build you play from the board runs in the grader image with no
-internet and no host access. A way through any of that is the kind of report we most want.
+OpenDyno is under active development. It runs code a model wrote, on your machine: every cell lives in its own
+containers, on a network whose only way out is its sidecar, and a build you play from the board runs in the
+grader image with no internet and no host access. A way through any of that is the kind of report we most want.
 
 ## Reporting a vulnerability
 
@@ -22,17 +22,17 @@ Please include what you have — a partial report is better than none:
 - Which component or file is affected
 - A suggested mitigation, if you have one
 
-**What to expect.** This is an alpha project with a very small maintainer
-group, so we are not going to promise a response time we cannot honour. You
-will get an acknowledgement, and if the report is valid you will be credited in
-the advisory unless you would rather not be. If you have heard nothing after two
-weeks, please comment on the advisory — that is a lapse on our side, not a
-judgement on your report.
+**What to expect.** This is a small, actively developed project with a very
+small maintainer group, so we are not going to promise a response time we
+cannot honour. You will get an acknowledgement, and if the report is valid you
+will be credited in the advisory unless you would rather not be. If you have
+heard nothing after two weeks, please comment on the advisory — that is a lapse
+on our side, not a judgement on your report.
 
 ## Supported versions
 
-During alpha, only the latest commit on `main` receives security updates.
-There are no released versions to backport to yet.
+Only the latest commit on `main` receives security updates. There are no
+released versions to backport to yet.
 
 ## Scope
 

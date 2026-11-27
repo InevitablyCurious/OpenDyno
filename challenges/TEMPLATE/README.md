@@ -44,9 +44,11 @@ These come from runs where one added line changed how the model behaved.
 
 Two rules for everything in `prompts/`:
 
-1. **Never say it is a test.** No mention of benchmarks, graders, gates or
-   scoring. A model that knows it is being measured is not the model you meant
-   to measure.
+1. **Never tell the model it is being benchmarked.** No mention of the grader,
+   the benchmark, or the run's score. A model that knows it is being measured is
+   not the model you meant to measure. The domain's own words are fine: a game's
+   "match score" or an integration team's "their tests" is what those people
+   would say.
 2. **Give what a test needs, not what a developer should know.** Exact names,
    shapes and addresses your grading suite depends on: yes. The rules of the
    domain, the design, the algorithm: no — that is the thing being measured.

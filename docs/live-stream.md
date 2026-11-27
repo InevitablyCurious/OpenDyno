@@ -120,8 +120,7 @@ construction.
 > evidence, a live verdict corrects a board-claimed stall, and a dead process
 > still overrides — and the STALLED chip renders `heartbeat_age_s`, never
 > `log_silent_s`. A live-but-quiet cell (a long build phase) now stays `running`
-> while its log silence climbs. The prior defect is traced in
-> `dev/workspace/reports/1788591600-WO-HDR-01-trace-stalled-header.md`.
+> while its log silence climbs.
 
 Three rules for a reader:
 

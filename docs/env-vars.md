@@ -1,7 +1,8 @@
 # Settings
 
 Every environment variable OpenDyno reads, grouped by the part it controls, with the file that reads it. Most
-have a working default; a fresh clone needs none of them set except a model key.
+have a working default. A fresh clone still needs a model: a local alias served by the proxy and tagged for
+benchmark use, or a cloud router key. The README's quick start shows both.
 
 ## Running and the control plane
 
@@ -10,7 +11,7 @@ have a working default; a fresh clone needs none of them set except a model key.
 | BENCH_CONTROL_PORT | 8718 | the control plane's port | control/state.mjs |
 | BENCH_CONTROL_BENCH_ROOT | the repo | the checkout the control plane serves | control/state.mjs |
 | BENCH_CONTROL_PYTHON | `.venv/bin/python` | the Python the control plane runs jobs with | control/state.mjs, control/tools.mjs |
-| BENCH_TASK_DIR | task/backgammon | the challenge a run uses | control/routes/run.mjs, control/board/sources/ |
+| BENCH_TASK_DIR | task/backgammon | the challenge a run uses; the bundled backgammon example by default | control/routes/run.mjs, control/board/sources/ |
 | BENCH_DEV_MODE | (unset) | pins dev mode on or off; pinned, the settings drawer can't change it | control/devmode.mjs |
 | BENCH_DEV_MODE_FILE | config/devmode.json | where dev mode's on/off is kept | control/devmode.mjs |
 | BENCH_NOTICES | set per run | the run's notices file; the harness appends, the board reads | harness/live_stream.py |
@@ -75,7 +76,7 @@ How variant B's change gets in. [variants.md](variants.md) explains each one.
 
 | Name | Default | What it does | Read in |
 |---|---|---|---|
-| BENCH_TARGET | task/backgammon/golden | the build being graded | grader/report.mjs, grader/lib/harness.ts |
+| BENCH_TARGET | task/backgammon/golden | the build being graded; the bundled reference by default | grader/report.mjs, grader/lib/harness.ts |
 | BENCH_LAYER | set per grade | the phase being graded; only that phase's checks run | grader/conformance/pregate.ts, grader/frontend/ |
 | BENCH_PORT | 8002 | the first port a graded build's server gets; each grading worker adds its number | grader/lib/harness.ts |
 | BENCH_WORKERS | from CPU and memory | how many grading workers run at once | grader/lib/workers.mjs |

@@ -17,8 +17,10 @@ only reads from it.
 ## Models
 
 A model is an alias with an OpenAI-compatible endpoint: local (oMLX, LM Studio, vLLM, llama.cpp behind a proxy)
-or cloud. Its context window and settings are part of every cell's fingerprint, so a run on a different model, or
-the same model with different settings, is a different baseline.
+or cloud. The model alias and compaction mode are part of every cell's fingerprint, so a run on a different
+alias, or with a different compaction mode, is a different baseline. The proxy's live context window and output
+limit are not in the fingerprint; a change there is outside what it can see. The README's quick start shows the
+local and cloud setup.
 
 ## Running
 
@@ -63,3 +65,5 @@ machine grading may use; dev mode; router credentials.
 - [live-stream.md](live-stream.md): the per-cell event record, `live.jsonl`.
 - [custom-tools.md](custom-tools.md): adding your own buttons to the board's tool drawer.
 - [architecture.md](architecture.md): the parts, a cell from start to finish, where a run writes.
+- [SECURITY.md](../SECURITY.md): the isolation model and how to report a vulnerability.
+- [CONTRIBUTING.md](../CONTRIBUTING.md): auditing the grader and proving a fix.

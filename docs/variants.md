@@ -3,6 +3,9 @@
 Variant A is the harness as it is. Variant B is the same harness with one change in. This page is how the change
 gets in.
 
+The model, the challenge (including its rules and spec) and the compaction mode are baseline settings; a
+variant B holds them fixed.
+
 ## Plugging a change in
 
 | What | Setting | Reaches |
@@ -13,8 +16,9 @@ gets in.
 | "Has it finished?" | `BENCH_VARIANT_READY_CMD` | runs on the host, around each variant B cell |
 | "What has it spent?" | `BENCH_VARIANT_COST_CMD` | runs on the host, around each variant B cell |
 
-Only the plugin is needed by every change. A change that lives in files or prompts needs nothing else. A change
-with its own server and background work, like a memory system, uses all five.
+Every variant B needs a plugin package. If the change itself lives only in files or prompts, the plugin is just
+the loader and needs nothing else. A change with its own server and background work, like a memory system, uses
+all five.
 
 **The plugin.** Today's agent harness is opencode, so a change comes in as an opencode plugin package. Its
 `package.json` names the file opencode loads (`exports`, `module` or `main`), and that file must exist, built.

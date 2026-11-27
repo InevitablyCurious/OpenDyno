@@ -5,7 +5,7 @@ variant B.
 
 ```bash
 docker compose up -d          # http://127.0.0.1:8717
-node server.mjs               # or on the host, no install (Node 18+)
+node server.mjs               # or on the host, no install (Node 22+)
 ```
 
 It is read-only. Every panel reads from the control plane on `:8718`, the only process that reads run files or
