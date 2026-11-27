@@ -700,12 +700,12 @@ describe("Backgammon backend server-path integrity", () => {
     // and the dice survive there after the hand-back clears the state's own
     // `dice` (task/backgammon/golden/src/server.ts:418, :422). A cube offer
     // first carries none; the roll comes on a later step.
+    // A build need not answer with the golden's aiDice: the state's own dice, read
+    // while it is still the computer's turn, are its roll just the same.
+    const numbers = (xs: unknown): number[] | null =>
+      Array.isArray(xs) && xs.length > 0 && xs.every((d: unknown) => typeof d === "number") ? (xs as number[]) : null;
     const diceOf = (answer: any): number[] | null =>
-      Array.isArray(answer?.aiDice) &&
-      answer.aiDice.length > 0 &&
-      answer.aiDice.every((d: unknown) => typeof d === "number")
-        ? (answer.aiDice as number[])
-        : null;
+      numbers(answer?.aiDice) ?? (answer?.turn === "black" ? numbers(answer?.dice) : null);
     // The queued call's own answer too: a build may play the whole turn inside it
     // (harness.ts assertRollTook notes one doing that in /api/roll), and those
     // dice were the queue's just the same.
@@ -726,12 +726,15 @@ describe("Backgammon backend server-path integrity", () => {
     // The dice proof comes last: a turn never handed back is G25's finding and a
     // message without the words is F05's, both told first; only a turn that came
     // back with the wrong numbers is the queue's.
+    // Refused only when the roll was SEEN and is not the queue's. The board is stuck
+    // on any roll, so a build that never shows the computer's dice is judged rightly
+    // without them; refusing it told five real builds "rolled none" (2026-11-26 class
+    // matrices after WO-C08-IMPLEMENT: higherdie, popupshown, openingqueue,
+    // seededflag, stuckplayed).
     const rolledDice = rolled === null ? null : [...rolled].sort((a, b) => a - b);
-    if (JSON.stringify(rolledDice) !== JSON.stringify([5, 6])) {
+    if (rolledDice !== null && JSON.stringify(rolledDice) !== JSON.stringify([5, 6])) {
       throw new Error(
-        `${SETUP_REFUSED}: /api/debug/roll did not take dice (sent 6, 5) [rolled ${
-          rolledDice === null ? "none" : rolledDice.join(", ")
-        }]`,
+        `${SETUP_REFUSED}: /api/debug/roll did not take dice (sent 6, 5) [rolled ${rolledDice.join(", ")}]`,
       );
     }
   });
