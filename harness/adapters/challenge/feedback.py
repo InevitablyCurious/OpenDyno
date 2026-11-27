@@ -494,6 +494,32 @@ def no_answer_line(observed: str, *, pass_kind: str) -> str | None:
     return template.format(method=m.group("method"), path=m.group("path"))
 
 
+# ── A MOVE A CHECK PLAYED TO SET UP ITS POSITION, THAT DID NOT TAKE ──────────
+# Checks play to their positions (class C08). A scripted move the build refuses
+# leaves the check judging a turn that never happened; the grader marks it
+# (grader/lib/harness.ts MOVE_REFUSED) with the move, and it is told as what the
+# team saw, whatever check met it (run 1795614488 a3: G39 told the computer
+# "moved 0 pips" of a turn it never had, because its server refused 3->2).
+MOVE_REFUSED = "MOVE REFUSED"
+_MOVE_REFUSED_RE = re.compile(
+    r"MOVE REFUSED:\s*(?P<frm>\d+)->(?P<to>\d+) with the (?P<die>\d)"
+)
+_MOVE_REFUSED_FIRST = "They played {frm}->{to} with the {die} through your server, a legal move in that position, and it did not take."
+_MOVE_REFUSED_REPEAT = "They played {frm}->{to} with the {die} through your server again, and it still did not take."
+
+
+def move_refused_line(observed: str, *, pass_kind: str) -> str | None:
+    """The true line for a setup move the build refused, or None."""
+    text = finding_message(observed)
+    if MOVE_REFUSED not in text:
+        return None
+    m = _MOVE_REFUSED_RE.search(text)
+    if not m:
+        return None
+    template = _MOVE_REFUSED_REPEAT if pass_kind == "repeat" else _MOVE_REFUSED_FIRST
+    return template.format(frm=m.group("frm"), to=m.group("to"), die=m.group("die"))
+
+
 # ── A PRESS OF ROLL THAT ROLLED NOTHING ─────────────────────────────────────
 # The grader marks it (grader/lib/harness.ts ROLL_DEAD) wherever it happens; the
 # gate's own line would describe a later step the player never reached.
@@ -953,6 +979,8 @@ class FeedbackMixin:
             return "unclickable"
         if SERVER_NOT_UP in observed:
             return "boot"
+        if MOVE_REFUSED in observed:
+            return "moverefused"
         m = _ASPECT_RE.search(observed)
         return m.group(1) if m else None
 
@@ -999,6 +1027,7 @@ class FeedbackMixin:
             or setup_refusal_line(observed, pass_kind=pass_kind)
             or http_error_line(observed, pass_kind=pass_kind)
             or no_answer_line(observed, pass_kind=pass_kind)
+            or move_refused_line(observed, pass_kind=pass_kind)
         )
         if setup_line:
             return setup_line, "team"

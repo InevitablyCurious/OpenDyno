@@ -1,5 +1,5 @@
 import { type Locator, type Page } from "@playwright/test";
-import { expect, expectPopupShown, hintPositions, pickUpAPiece, pictureChange, playerClick, playerClickUntilShown, PORT, press, rollAndCheck, seedRolled, settledHintPositions, setupState, test } from "./fixtures.ts";
+import { expect, expectPopupShown, hintPositions, pickUpAPiece, pictureChange, playerClick, playerClickUntilShown, playMoveThroughServer, PORT, press, rollAndCheck, seedRolled, settledHintPositions, setupState, test } from "./fixtures.ts";
 import { readColumnBox, readPointBoxes, sampleBoxBrightness, sampleBoxContrast, waitForBoardSettled } from "./board-geometry.ts";
 
 type Player = "white" | "black";
@@ -3332,7 +3332,7 @@ test("[F21] REQ-RELOAD — remaining dice survive a reload", async ({ page }) =>
   await postJson<ApiState>(page, "/api/new", {});
   await postJson<ApiState>(page, "/api/debug/roll", { dice: [5, 2] });
   await rollAndCheck(page, [5, 2], () => page.getByTestId("rollBtn").click());
-  await postJson<ApiState>(page, "/api/move", { from: 13, to: 8, die: 5 });
+  await playMoveThroughServer(page, { from: 13, to: 8, die: 5 });
   await page.reload();
   await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
   await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);

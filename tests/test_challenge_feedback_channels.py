@@ -889,3 +889,28 @@ def test_a_call_that_got_no_answer_is_told_as_that_in_any_gate() -> None:
     assert voice == "team"
     repeat, _ = R._told_label(record, pass_kind="repeat")
     assert repeat == "They called POST /api/state again and still nothing answered."
+
+
+def test_a_setup_move_the_build_refused_is_told_as_that_in_any_gate() -> None:
+    # Checks play to their positions (class C08). A scripted setup move the build
+    # refuses is marked by the grader (MOVE REFUSED: <from>-><to> with the <die>),
+    # and told as what the team saw, in a player's gate as in a team's — never as
+    # the check's own line about a turn that never happened (run 1795614488 a3:
+    # G39 told "the computer's turn moved 0 pips" because 3->2 did not take).
+    from harness.adapters.challenge import ChallengeRunner as R
+
+    for check in (
+        "[G39] REQ-DEBUG-ROLL — the computer's roll takes the queued dice",
+        "[F59] REQ-GEOMETRY — a piece lands at the far end",
+    ):
+        record = {"check": check, "observed": "Error: MOVE REFUSED: 3->2 with the 1"}
+        first, voice = R._told_label(record, pass_kind="first")
+        assert first == (
+            "They played 3->2 with the 1 through your server, a legal move in that position, and it did not take."
+        )
+        assert voice == "team"
+        repeat, _ = R._told_label(record, pass_kind="repeat")
+        assert (
+            repeat
+            == "They played 3->2 with the 1 through your server again, and it still did not take."
+        )

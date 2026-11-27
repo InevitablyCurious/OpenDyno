@@ -14,6 +14,7 @@ import {
   ordinaryTurn,
   seedRolled,
   SETUP_REFUSED,
+  playMove,
 } from "../lib/harness.ts";
 
 type Move = { from: number; to: number; die: number };
@@ -275,7 +276,7 @@ describe("Backgammon backend server-path integrity", () => {
     let state = await getState();
     for (let guard = 0; guard < 12 && state.turn === "white" && state.phase === "move" && (state.legalMoves?.length ?? 0) > 0; guard++) {
       const move = state.legalMoves[0];
-      state = await api("/api/move", { from: move.from, to: move.to, die: move.die });
+      state = await playMove(move);
     }
     let play = await api("/api/endturn", {});
     for (let guard = 0; guard < 12 && play.turn === "black" && play.phase !== "doubleOffered" && !play.winner; guard++) {
@@ -762,8 +763,8 @@ describe("Backgammon backend server-path integrity", () => {
         }),
       );
       await debugRollVerified([3, 1]);
-      await api("/api/move", { from: 8, to: 5, die: 3 });
-      await api("/api/move", { from: 6, to: 5, die: 1 });
+      await playMove({ from: 8, to: 5, die: 3 });
+      await playMove({ from: 6, to: 5, die: 1 });
       let state = await api("/api/endturn", {});
       let guard = 0;
       while (state.turn !== "white" && guard < 12) {
@@ -835,8 +836,8 @@ describe("Backgammon backend server-path integrity", () => {
         }),
         [2, 1],
       );
-      await api("/api/move", { from: 3, to: 1, die: 2 });
-      await api("/api/move", { from: 3, to: 2, die: 1 });
+      await playMove({ from: 3, to: 1, die: 2 });
+      await playMove({ from: 3, to: 2, die: 1 });
       await debugRoll([...dice]);
       const state = await playParkedCubeTurn({ points, bar: { white: 0, black: 0 }, off: { white: 13, black: 14 } }, "easy");
       expect(state.turn, "[needs: G25] the computer never finished its turn").toBe("white");
@@ -903,7 +904,7 @@ describe("Backgammon backend server-path integrity", () => {
             }),
             [2, 1],
           );
-          for (const m of spot.moves) await api("/api/move", { from: m.from, to: m.to, die: m.die });
+          for (const m of spot.moves) await playMove(m);
           await debugRoll(spot.dice);
           const state = await playParkedCubeTurn({ points, bar: { white: 0, black: 0 }, off: spot.off }, difficulty);
           expect(state.turn, "[needs: G25 G39] the computer never finished its turn").toBe("white");

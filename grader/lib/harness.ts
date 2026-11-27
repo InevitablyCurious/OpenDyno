@@ -443,6 +443,33 @@ export const HARNESS_INFRA = "HARNESS INFRA";
 // path. Read by feedback.py's `no_answer_line`.
 export const NO_ANSWER = "NO ANSWER";
 
+// A MOVE A CHECK PLAYED TO REACH ITS POSITION, THAT DID NOT TAKE. Since checks play to
+// their positions instead of loading them (class C08, 2026-11-26), a scripted move the
+// build refuses leaves the check judging a turn that never happened: run 1795614488
+// a3's server listed only the bear-off for a 1 with a piece on 3, so G39's 3->2 did
+// not take, End Turn was refused, and the computer was told it "moved 0 pips" of a
+// turn it never had. Every move a check plays to set up its position goes through
+// `playMove`, which confirms it took (the board changed, or a die was spent) and
+// otherwise throws this marker. Read by feedback.py's `move_refused_line`.
+export const MOVE_REFUSED = "MOVE REFUSED";
+
+/** Plays one move through the server and confirms it took; throws MOVE_REFUSED if not. */
+export async function playMove(m: { from: number; to: number; die: number }): Promise<any> {
+  const before = await getState();
+  const after = await api("/api/move", { from: m.from, to: m.to, die: m.die });
+  if (!moveTook(before, after)) throw new Error(`${MOVE_REFUSED}: ${m.from}->${m.to} with the ${m.die}`);
+  return after;
+}
+
+/** Whether a move changed the game: the board moved, or a die was spent. */
+export function moveTook(before: any, after: any): boolean {
+  const left = (s: any) => (Array.isArray(s?.remainingDice) ? s.remainingDice.length : null);
+  const board = (s: any) => JSON.stringify([s?.points, s?.bar, s?.off]);
+  const b = left(before);
+  const a = left(after);
+  return board(after) !== board(before) || (a !== null && b !== null && a < b);
+}
+
 // What a setup is judged on: the fields that DEFINE the position. Everything
 // else in a written body is the build's to derive or to display, so an echo
 // that recomputes it is not a setup that did not take.

@@ -36,7 +36,7 @@
 
 import { test as base, expect, type Locator, type Page } from "@playwright/test";
 
-import { BASE_URL, CLICK_MISSED, PORT, ROLL_DEAD, SETUP_REFUSED, assertRollTook, assertSetupTook, startServer, stopServer, type ServerHandle } from "../lib/harness.ts";
+import { BASE_URL, CLICK_MISSED, MOVE_REFUSED, PORT, ROLL_DEAD, SETUP_REFUSED, assertRollTook, assertSetupTook, moveTook, startServer, stopServer, type ServerHandle } from "../lib/harness.ts";
 import { boardGeometryDrawn, waitForBoardSettled } from "./board-geometry.ts";
 
 export const test = base.extend<{ gameServer: ServerHandle }>({
@@ -532,3 +532,13 @@ export async function settledHintPositions(page: Page): Promise<{ x: number; y: 
   return last;
 }
 
+/** Plays one move through the server for a check's setup and confirms it took
+ *  (lib/harness.ts MOVE_REFUSED): a refused setup move is told as that, never as
+ *  the check's own fault on a turn that never happened. */
+export async function playMoveThroughServer(page: Page, m: { from: number; to: number; die: number }): Promise<any> {
+  const read = async () => (await page.request.post("/api/state", { data: {} })).json();
+  const before = await read();
+  const after = await (await page.request.post("/api/move", { data: m })).json().catch(() => null);
+  if (!moveTook(before, after)) throw new Error(`${MOVE_REFUSED}: ${m.from}->${m.to} with the ${m.die}`);
+  return after;
+}

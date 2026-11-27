@@ -38,7 +38,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type Page } from "@playwright/test";
-import { expect, playerClickUntilShown, rollAndCheck, setupState, test } from "./fixtures.ts";
+import { expect, playerClickUntilShown, playMoveThroughServer, rollAndCheck, setupState, test } from "./fixtures.ts";
 import { readCheckerBoxes, readCheckerShapes, typicalWidth, waitForBoardSettled } from "./board-geometry.ts";
 
 /**
@@ -264,7 +264,7 @@ test("[F59] REQ-GEOMETRY — a piece lands at the far end", async ({ page }) => 
   await rollAndCheck(page, [2, 6], () => page.getByTestId("rollBtn").click());
   // Play the 6 through the server (24→18), leaving the 2 — white to move with a
   // 2 left to play: the piece on 13 has one move, onto 11.
-  await page.request.post("/api/move", { data: { from: 24, to: 18, die: 6 } });
+  await playMoveThroughServer(page, { from: 24, to: 18, die: 6 });
   await page.reload();
   await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
 
