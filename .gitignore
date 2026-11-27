@@ -49,7 +49,6 @@ task/**/test-results/
 grader/test-results/
 task/**/playwright-report/
 task/**/.last-run.json
-.okp/
 
 # Local orchestration docs (never committed)
 # The repo's OWN agent instructions, root only. A bare `AGENTS.md` here also

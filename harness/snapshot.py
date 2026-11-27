@@ -18,7 +18,7 @@ from typing import Any
 # Top-level worktree entries that are never captured: VCS and agent internals
 # plus harness config are not graded code, and test-results is run debris.
 SNAPSHOT_EXCLUDED: frozenset[str] = frozenset(
-    {".git", ".okp", "AGENTS.md", "opencode.json", "test-results"}
+    {".git", "AGENTS.md", "opencode.json", "test-results"}
 )
 
 

@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 import subprocess
 
 from .constants import _GRADER_DIR
@@ -189,10 +188,8 @@ class BootstrapMixin:
         cell lists the baked plugin — _write_worker_permission_config), never by
         files in the worktree: the model sees the worktree, so anything put there
         for one variant only would be a difference between the variants beyond the
-        variant itself. A seed snapshot taken under the old OKP wiring can still
-        carry its ``.okp/`` state dir; it is removed in both variants.
+        variant itself.
         """
-        shutil.rmtree(worktree / ".okp", ignore_errors=True)
         pure = self.variant != "b"
         self._progress(
             f"PROGRESS step=variant variant={self.variant} pure={str(pure).lower()}"

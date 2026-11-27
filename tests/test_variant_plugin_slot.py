@@ -113,11 +113,9 @@ def test_both_variants_start_from_the_same_worktree(
     tmp_path: Path, variant: str, pure: bool
 ) -> None:
     """The variant is switched on in the cell's config, never by files the model sees:
-    no marker, predicate or runner is added for one variant, and a stale ``.okp/``
-    from a previous cell is removed in both."""
+    no marker, predicate or runner is added for one variant."""
     worktree = tmp_path / "worktree"
-    (worktree / ".okp").mkdir(parents=True)
-    (worktree / ".okp" / "org.json").write_text("{}")
+    worktree.mkdir(parents=True)
     (worktree / "package.json").write_text("{}")
     runner = ChallengeRunner(
         task_dir=TASK_DIR,

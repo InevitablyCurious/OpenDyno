@@ -94,11 +94,10 @@ __all__ = [
 #: optional field, is not breaking: readers ignore what they do not know.
 SCHEMA_VERSION = 1
 
-#: Lives beside the other run artifacts, NOT inside any backend's state
-#: directory. OpenDyno scopes its own state under ``.okp/`` and deliberately
-#: leaves the baseline variant unbound, which is exactly why a backend-owned location
-#: cannot host this: the A variant would go dark and the variants would stop being
-#: comparable on the one surface meant to compare them.
+#: Lives beside the other run artifacts, NOT inside any variant's state
+#: directory: the baseline variant has none, so a variant-owned location would
+#: leave the A variant dark and the variants would stop being comparable on the
+#: one surface meant to compare them.
 #:
 #: "Beside the run artifacts" means beside the CELL's artifacts:
 #: :meth:`LiveStream.for_run` is called from ``BackgammonAdapter.run_cell`` with

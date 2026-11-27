@@ -213,7 +213,7 @@ def seed_worktree_from_checkpoint(*, worktree: Path, cp_dir: Path) -> dict:
     A RESUME CONTINUES THE MODEL'S OWN CODE, NOT A COPY OF IT LAID OVER THE
     SCAFFOLD. Every top-level entry the snapshot captures is removed first (a
     scaffold file the model deleted must stay deleted), the excluded ones —
-    the harness's AGENTS.md, opencode.json, .git, .okp — are left to the cell,
+    the harness's AGENTS.md, opencode.json, .git — are left to the cell,
     and the captured tree is copied in. Then the two are compared file for
     file, byte for byte, both ways: any difference raises
     :class:`CheckpointSeedError` and nothing is resumed from a tree that is not
