@@ -83,7 +83,9 @@ ALLOWLIST = {
 _SKIP_HELPER_WRITES = frozenset({"setupState", "postDebugState", "debugSetState"})
 
 _GATE_RE = re.compile(r"\[([A-Z]+[0-9]*)\]")
-_WRITE_RE = re.compile(r"(?<![\w$.])(setupState|postDebugState|debugSetState|seedRolled)\s*\(")
+_WRITE_RE = re.compile(
+    r"(?<![\w$.])(setupState|postDebugState|debugSetState|seedRolled)\s*\("
+)
 _API_RE = re.compile(r"(?<![\w$.])api\s*\(\s*(['\"`])/api/debug/state\1")
 _FUNC_RE = re.compile(
     r"(?m)^[ \t]*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\("
@@ -101,6 +103,7 @@ _UNKNOWN = object()
 # ---------------------------------------------------------------------------
 # Small JS-aware text helpers
 # ---------------------------------------------------------------------------
+
 
 def _skip_string(text, i):
     """Return the index just past the string starting at text[i]."""
@@ -210,6 +213,7 @@ def _line_of(text, offset):
 # Value / object parsing
 # ---------------------------------------------------------------------------
 
+
 def _parse_string(v):
     if len(v) < 2 or v[0] not in "\"'":
         return _UNKNOWN
@@ -217,7 +221,15 @@ def _parse_string(v):
     if v[-1] != q:
         return _UNKNOWN
     body = v[1:-1]
-    mapping = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", "\"": "\"", "'": "'", "`": "`"}
+    mapping = {
+        "n": "\n",
+        "t": "\t",
+        "r": "\r",
+        "\\": "\\",
+        '"': '"',
+        "'": "'",
+        "`": "`",
+    }
     out = []
     i = 0
     n = len(body)
@@ -271,7 +283,7 @@ def _parse_literal_object(text):
         if idx == -1:
             continue
         key = e[:idx].strip()
-        val = e[idx + 1:].strip()
+        val = e[idx + 1 :].strip()
         if key.startswith("...") or key.startswith("["):
             continue
         if len(key) >= 2 and key[0] in "\"'" and key[-1] == key[0]:
@@ -319,7 +331,7 @@ def _parse_value(v):
         return arr
     if v[0] == "{":
         close = _match(v, 0)
-        if close == -1 or v[close + 1:].strip():
+        if close == -1 or v[close + 1 :].strip():
             return _UNKNOWN
         return _parse_literal_object(v)
     return _UNKNOWN
@@ -370,6 +382,7 @@ def _resolve_payload(kind, arg_text):
 # Decision rule
 # ---------------------------------------------------------------------------
 
+
 def _fmt(v):
     if isinstance(v, bool):
         return "true" if v else "false"
@@ -404,7 +417,11 @@ def decide(payload):
         forbidden.append("turnOver=true")
     if "cube" in payload:
         cube = payload["cube"]
-        if not isinstance(cube, dict) or cube.get("value") != 1 or cube.get("owner") is not None:
+        if (
+            not isinstance(cube, dict)
+            or cube.get("value") != 1
+            or cube.get("owner") is not None
+        ):
             forbidden.append("cube=" + _fmt(cube))
     if payload.get("winner") is not None:
         forbidden.append("winner=" + _fmt(payload["winner"]))
@@ -420,7 +437,11 @@ def decide(payload):
         forbidden.append("gamesPlayed=" + _fmt(games_played))
     if "score" in payload:
         score = payload["score"]
-        if not isinstance(score, dict) or score.get("white", 0) != 0 or score.get("black", 0) != 0:
+        if (
+            not isinstance(score, dict)
+            or score.get("white", 0) != 0
+            or score.get("black", 0) != 0
+        ):
             forbidden.append("score=" + _fmt(score))
     return forbidden
 
@@ -428,6 +449,7 @@ def decide(payload):
 # ---------------------------------------------------------------------------
 # Span discovery
 # ---------------------------------------------------------------------------
+
 
 def _find_function_body(text, close_paren):
     i = close_paren + 1
@@ -515,7 +537,7 @@ def _find_tests(text):
         if i >= close or text[i] not in "\"'`":
             continue
         j = _skip_string(text, i)
-        title = text[i + 1:j - 1]
+        title = text[i + 1 : j - 1]
         gate = _GATE_RE.search(title)
         if not gate:
             continue
@@ -558,6 +580,7 @@ def _find_writes(text):
 # Attribution
 # ---------------------------------------------------------------------------
 
+
 def _closure(start, calls):
     seen = set()
     stack = list(start)
@@ -571,7 +594,10 @@ def _closure(start, calls):
 
 
 def _name_called(pattern_name, haystack):
-    return re.search(r"(?<![\w$.])" + re.escape(pattern_name) + r"\s*\(", haystack) is not None
+    return (
+        re.search(r"(?<![\w$.])" + re.escape(pattern_name) + r"\s*\(", haystack)
+        is not None
+    )
 
 
 def _attribute(rel, offset, text, tests, helpers, calls, test_helpers):
@@ -593,12 +619,15 @@ def _attribute(rel, offset, text, tests, helpers, calls, test_helpers):
 # Public surface
 # ---------------------------------------------------------------------------
 
+
 def _repo_root():
     here = Path(__file__).resolve().parent
     for candidate in (here, *here.parents):
         if (candidate / "grader").is_dir():
             return candidate
-    raise RuntimeError("could not locate the repository root (a directory holding grader/)")
+    raise RuntimeError(
+        "could not locate the repository root (a directory holding grader/)"
+    )
 
 
 def find_findings(allowlist=None):
@@ -636,15 +665,16 @@ def find_findings(allowlist=None):
             }
         for kind, offset, arg_text in _find_writes(text):
             if any(
-                h[0] in _SKIP_HELPER_WRITES and h[1] <= offset <= h[3]
-                for h in helpers
+                h[0] in _SKIP_HELPER_WRITES and h[1] <= offset <= h[3] for h in helpers
             ):
                 continue
             payload = _resolve_payload(kind, arg_text)
             forbidden = decide(payload)
             if not forbidden:
                 continue
-            for gate in _attribute(rel, offset, text, tests, helpers, calls, test_helpers):
+            for gate in _attribute(
+                rel, offset, text, tests, helpers, calls, test_helpers
+            ):
                 if (rel, gate) in allow:
                     continue
                 line = _line_of(text, offset)
@@ -658,7 +688,9 @@ def find_findings(allowlist=None):
                         "gate": gate,
                         "line": line,
                         "forbidden": list(forbidden),
-                        "payload": json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                        "payload": json.dumps(
+                            payload, sort_keys=True, separators=(",", ":")
+                        ),
                     }
                 )
     findings.sort(key=lambda f: (f["file"], f["line"], f["gate"]))
@@ -666,16 +698,19 @@ def find_findings(allowlist=None):
 
 
 def _selftest():
-    assert decide(
-        {
-            "phase": "roll",
-            "dice": [],
-            "remainingDice": [],
-            "turnOver": False,
-            "cube": {"value": 1, "owner": None},
-            "winner": None,
-        }
-    ) == [], "legal start of turn was flagged"
+    assert (
+        decide(
+            {
+                "phase": "roll",
+                "dice": [],
+                "remainingDice": [],
+                "turnOver": False,
+                "cube": {"value": 1, "owner": None},
+                "winner": None,
+            }
+        )
+        == []
+    ), "legal start of turn was flagged"
 
     got = decide({"phase": "move", "dice": [6, 5]})
     assert any(x.startswith("phase=") for x in got), "phase=move not flagged"
@@ -684,18 +719,32 @@ def _selftest():
     payload = _resolve_payload("debug", 'makeState({ turn: "white" })')
     assert payload["phase"] == "move", "makeState base phase was not inherited"
     assert "dice" in payload, "makeState base dice was not inherited"
-    assert any(x.startswith("phase=") for x in decide(payload)), "inherited phase not flagged"
+    assert any(x.startswith("phase=") for x in decide(payload)), (
+        "inherited phase not flagged"
+    )
 
     assert "turnOver=true" in decide({"phase": "roll", "dice": [], "turnOver": True})
 
-    assert any(x.startswith("cube=") for x in decide({"cube": {"value": 2, "owner": "black"}}))
-    assert decide({"cube": {"value": 1, "owner": None}}) == [], "default cube was flagged"
+    assert any(
+        x.startswith("cube=") for x in decide({"cube": {"value": 2, "owner": "black"}})
+    )
+    assert decide({"cube": {"value": 1, "owner": None}}) == [], (
+        "default cube was flagged"
+    )
 
-    seeded = _resolve_payload("seedRolled", 'makeState({ cube: { value: 2, owner: "white" } })')
+    seeded = _resolve_payload(
+        "seedRolled", 'makeState({ cube: { value: 2, owner: "white" } })'
+    )
     assert seeded["phase"] == "roll", "seedRolled did not force a roll phase"
-    assert seeded["dice"] == [] and seeded["remainingDice"] == [], "seedRolled did not force empty dice"
-    assert any(x.startswith("cube=") for x in decide(seeded)), "parked cube via seedRolled not flagged"
-    assert decide(_resolve_payload("seedRolled", "makeState({})")) == [], "a default-cube seedRolled was flagged"
+    assert seeded["dice"] == [] and seeded["remainingDice"] == [], (
+        "seedRolled did not force empty dice"
+    )
+    assert any(x.startswith("cube=") for x in decide(seeded)), (
+        "parked cube via seedRolled not flagged"
+    )
+    assert decide(_resolve_payload("seedRolled", "makeState({})")) == [], (
+        "a default-cube seedRolled was flagged"
+    )
     return "PASS"
 
 
@@ -718,7 +767,13 @@ def _main(argv):
 
     if "--save" in argv:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        log = _repo_root() / "dev" / "runs" / "c08-guard" / ("bite-proof-" + stamp + ".log")
+        log = (
+            _repo_root()
+            / "dev"
+            / "runs"
+            / "c08-guard"
+            / ("bite-proof-" + stamp + ".log")
+        )
         log.write_text(output + "\n", encoding="utf-8")
         print("SAVED: " + str(log))
 
@@ -731,8 +786,23 @@ if __name__ == "__main__":
 
 _FIXED_C08_GATES = frozenset(
     {
-        "G24", "G35", "G33", "G39", "G30",
-        "F33", "F39", "F09", "F11", "F86", "F59", "F51", "F53", "F90", "F18", "F21", "F20",
+        "G24",
+        "G35",
+        "G33",
+        "G39",
+        "G30",
+        "F33",
+        "F39",
+        "F09",
+        "F11",
+        "F86",
+        "F59",
+        "F51",
+        "F53",
+        "F90",
+        "F18",
+        "F21",
+        "F20",
     }
 )
 
