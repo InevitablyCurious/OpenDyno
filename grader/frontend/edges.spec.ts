@@ -79,7 +79,7 @@ test("[F09] REQ-HIT — hit -> bar visual", async ({ page }) => {
     bar: { white: 0, black: 1 },
     off: { white: 0, black: 0 },
     turn: "white",
-    phase: "move",
+    phase: "roll",
   });
 
   await page.reload();
@@ -215,7 +215,7 @@ test("[F11] REQ-BEAROFF — bear-off visual", async ({ page }) => {
     bar: { white: 0, black: 0 },
     off: { white: 3, black: 0 },
     turn: "white",
-    phase: "move",
+    phase: "roll",
   });
 
   await page.reload();

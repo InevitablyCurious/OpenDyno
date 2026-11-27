@@ -2906,12 +2906,12 @@ test("[F51] REQ-ENDSCREEN — the finishing pop-up names the winner and the stak
   ).not.toContain("match score");
 });
 
-// The last move of a game, played the way a player plays it: pick up the one
-// white checker left, click the "off" hint. Both sides hold exactly fifteen
-// checkers (white: fourteen off + one on point 1; black: fifteen on point 24),
-// the count the golden client draws — any other total leaves the page stuck on
-// "Loading…". The die is a 1 and the checker sits on point 1, so the bear-off is
-// the exact final move. Shared by F53 (the pop-up opens) and F51 (what it says).
+// The last move of a game, played the way a player plays it: seed the one white
+// checker left (fourteen off + one on point 1; black: fifteen on point 24 — the
+// count the golden client draws, any other total leaves the page stuck on
+// "Loading…") at a legal start of turn, queue 1-6, roll it through the page,
+// then pick up the checker and click the "off" hint so the 1 bears it off and
+// wins. Shared by F53 (the pop-up opens) and F51 (what it says).
 async function bearOffTheLastPiece(page: Page): Promise<void> {
   await openApp(page);
   const points = emptyPoints();
@@ -2922,16 +2922,20 @@ async function bearOffTheLastPiece(page: Page): Promise<void> {
     bar: { white: 0, black: 0 },
     off: { white: 14, black: 0 },
     turn: "white",
-    phase: "move",
-    dice: [1],
-    remainingDice: [1],
-    turnOver: false,
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
     cube: { value: 1, owner: null },
     difficulty: "hard",
     message: "",
   });
+  await postJson(page, "/api/debug/roll", { dice: [1, 6] });
   await page.reload();
   await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+
+  // Roll the queued 1-6 through the page and prove the build's own roll took it
+  // (ruling 3d): the dice the page shows are the queued 1-6, ascending.
+  await rollAndCheck(page, [1, 6], () => page.getByTestId("rollBtn").click());
 
   const hints = page.getByTestId("hint");
   const picked = await pickUpAPiece(page, hints);
@@ -2939,7 +2943,7 @@ async function bearOffTheLastPiece(page: Page): Promise<void> {
 
   // The bear-off hint reads "off" or the die it uses, as every hint may (the
   // prompt asks for a hint per playable die, not a word): a 1 bearing off from
-  // point 1 is the only move, so either is it. Run 1793780359's hint read "1",
+  // point 1 is the move, so either is it. Run 1793780359's hint read "1",
   // and both checks told the player the pop-up never came.
   const hintCount = await hints.count();
   let offHint: Locator | null = null;
