@@ -126,6 +126,25 @@ describe("Backgammon edge gates", () => {
     expect(game.singleMoves(b, "white", 3).some((m: any) => m.from === 3 && m.to === 25)).toBe(true);
   });
 
+  // Bearing off is a choice. Jerry, 2026-11-27: run 1795660344's final build (it had
+  // passed every check) offered ONLY the exact bear-off when one existed — with a 4 left
+  // and pieces on 6 and 4 it listed 4->off and never 6->2. Run 1795614488 a3's build did
+  // the same with a 1 (only 1->off, never 3->2).
+  it("[E03] REQ-BEAROFF-EXACT — an exact bear-off leaves ordinary moves offered", () => {
+    const b = emptyBoard();
+    b.points[6] = 1;
+    b.points[4] = 1;
+    b.points[22] = -1;
+    b.off.white = 13;
+    b.off.black = 14;
+    const moves = game.legalMovesNow(b, "white", [4]);
+    expect(moves.some((m: any) => m.from === 4 && m.to === 25), "the exact bear-off from 4 was not offered").toBe(true);
+    expect(
+      moves.some((m: any) => m.from === 6 && m.to === 2),
+      "[aspect: optional] with white on 6 and 4 and a 4 to play, your engine offers bearing off from 4 but not 6->2",
+    ).toBe(true);
+  });
+
   // ── the bar ───────────────────────────────────────────────────────────────
 
   it("[E04] REQ-BAR-BLOCKED — a shut-out player has no legal move at all", () => {

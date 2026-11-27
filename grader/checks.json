@@ -240,7 +240,7 @@
     "E03": {
       "name": "Exact die always bears off",
       "what": "A die that exactly matches a checker's distance always bears it off.",
-      "how": "White on 6 and 3 with a 3: bearing off from 3 must be allowed.",
+      "how": "White on 6 and 3 with a 3: bearing off from 3 must be allowed. White on 6 and 4 with a 4: the moves offered must hold both 4->off and 6->2 ([aspect: optional]) — bearing off is a choice.",
       "looks": "code"
     },
     "E04": {
@@ -360,7 +360,7 @@
     "F12": {
       "name": "Win announced",
       "what": "A win ends the game with a banner or popup that says the player won.",
-      "how": "Sets a won position with the message \"You win!\": the win must be announced on the page \u2014 the banner says \"You win\" or a pop-up on screen says win; a pop-up on screen must say win in its title ([aspect: popup]); and the banner must say \"You win\" ([aspect: banner], told by the team: the brief's wording).",
+      "how": "Sets a won position with the message \"You win!\": the win must be announced on the page — the banner says \"You win\" or a pop-up on screen says win; a pop-up on screen must say win in its title ([aspect: popup]); and the banner must say \"You win\" ([aspect: banner], told by the team: the brief's wording).",
       "looks": "page"
     },
     "F15": {
@@ -828,7 +828,7 @@
     "F95": {
       "name": "Clicking the off tray bears the picked piece off",
       "what": "With a piece picked up that can bear off, clicking anywhere in the off tray bears it off, the same as its off hint.",
-      "how": "In a browser: every white piece home, the roll dealt 5-4 by the build's own roll; picks up the piece on 5 and clicks inside the off tray clear of every hint. The piece must be borne off within 3 s.",
+      "how": "In a browser: every white piece home, the roll dealt 5-4 by the build's own roll; picks up the piece on 5 and clicks inside the off tray clear of every hint. The piece must be borne off within 3 s. Then, as Jerry played it (2026-11-27): pieces on the 6- and 4-points, a 6-4 rolled, one piece borne off the 6-point with the 6; with the 4 left, the other piece on the 6-point must show a move ([aspect: optional]).",
       "looks": "page"
     },
     "G36": {

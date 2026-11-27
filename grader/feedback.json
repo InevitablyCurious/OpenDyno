@@ -331,6 +331,10 @@
       "first": "They ask your engine to bear off with white on 6 and 3 and a 3 rolled, and it won't take the checker on 3 off — a number that exactly matches a checker's point always bears it off.",
       "repeat": "Your engine still won't bear off with an exact number."
     },
+    "E03.optional": {
+      "first": "They ask your engine for the moves with white on 6 and 4 and a 4 to play, and it offers bearing off from the 4-point but not 6->2. With every piece home, bearing off is a choice: ordinary moves inside home stay legal.",
+      "repeat": "With white on 6 and 4 and a 4 to play, your engine still offers only the bear-off, not 6->2."
+    },
     "E04": {
       "first": "They ask your engine for the moves with one of their pieces on the bar and every point it could come in on covered, and it doesn't come back empty — it offers moves for their other pieces, or it fails outright. A piece that can't come in off the bar means no move at all that turn.",
       "repeat": "They asked your engine again with a piece shut out on the bar, and it still offers moves for their other pieces, or fails outright."
@@ -2314,6 +2318,10 @@
     "F95": {
       "first": "When I pick up a piece to bear it off, clicking the off tray doesn't take it off — I have to click its hint. I expect the piece to come off when I click anywhere for it to go, such as the off tray itself (the rectangle that holds the borne-off pieces) or its hint.",
       "repeat": "Clicking the off tray still doesn't bear my piece off — only its hint does."
+    },
+    "F95.optional": {
+      "first": "I bore a piece off with my 6 and had a 4 left, and the game would only let me bear off from the 4-point — clicking my pieces on the 6-point showed no move at all.",
+      "repeat": "With a 4 left after bearing off, I still couldn't move my pieces on the 6-point — the game only let me bear off."
     },
     "G36": {
       "first": "They roll again through your app's API after the dice are already rolled, and it gives them a new roll instead of ignoring it.",

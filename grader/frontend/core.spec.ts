@@ -2351,6 +2351,58 @@ test("[F95] REQ-BEAROFF — clicking the off tray bears the picked piece off", a
     .toBe(1);
 });
 
+// [F95] Bearing off is a choice. Jerry, 2026-11-27, playing run 1795660344's final
+// build (it had passed every check): he rolled 6-4, bore a piece off with the 6, and
+// with the 4 left could not move his pieces on the 6-point to the 2-point — the build
+// offered only the bear-off from the 4-point. Played the way he played it: the 6 bears
+// one piece off the 6-point, then the other piece on the 6-point must move with the 4.
+test("[F95] REQ-BEAROFF — bearing off is a choice: the other pieces still move", async ({ page }) => {
+  test.setTimeout(60_000);
+  await openApp(page);
+  const points = emptyPoints();
+  points[6] = 2; // white: two on the 6-point, one on the 4-point, twelve off
+  points[4] = 1;
+  for (let p = 19; p <= 23; p++) points[p] = -3; // black at home, nothing on white's side
+  await seedRolled(
+    page,
+    { points, bar: { white: 0, black: 0 }, off: { white: 12, black: 0 }, cube: { value: 1, owner: null }, message: "" },
+    [6, 4],
+  );
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await waitForBoardSettled(page).catch(() => undefined);
+
+  const hints = page.getByTestId("hint");
+  const onSix = page.locator('[data-testid="checker"][data-color="white"][data-loc="6"]');
+  expect(await onSix.count(), "[needs: F03 F25] no piece on 6 to pick up").toBeGreaterThan(0);
+  await playerClickUntilShown(onSix.last(), hints);
+  await expect.poll(async () => hints.count(), "[needs: REQ-HINT/hint F03 F60 G08 E03]").toBeGreaterThan(0);
+  let offHint: Locator | null = null;
+  const hintCount = await hints.count();
+  for (let i = 0; i < hintCount; i++) {
+    const words = hintWords(await hints.nth(i).innerText());
+    if (words.includes("off") || words.includes("6")) {
+      offHint = hints.nth(i);
+      break;
+    }
+  }
+  expect(offHint, "[needs: F03 F04 G08 E03] no hint bore the piece on the 6-point off with the 6").not.toBeNull();
+  await playerClick(offHint!);
+  await expect
+    .poll(async () => (await readState(page)).remainingDice?.length ?? -1, "[needs: G08 E03] the bear-off with the 6 was not played")
+    .toBe(1);
+  await waitForBoardSettled(page).catch(() => undefined);
+
+  // The 4 left: the other piece on the 6-point moves to the 2-point.
+  await playerClickUntilShown(onSix.last(), hints);
+  await expect
+    .poll(async () => hints.count(), {
+      message: "[aspect: optional] [needs: REQ-HINT/hint F03] with a 4 left after bearing off with the 6, the piece on the 6-point showed no move",
+      timeout: 5_000,
+    })
+    .toBeGreaterThan(0);
+});
+
 // [F92] REQ-TURN — one roll per turn. The operator, 2026-11-12, playing run
 // 1794488314's build: after he played his whole roll, End Turn showed "like it
 // should but also the 'roll' button … when i click it, it allows me to roll
@@ -2935,14 +2987,15 @@ async function bearOffTheLastPiece(page: Page): Promise<void> {
   expect(picked, "[needs: F03] the last white checker on point 1 could not be picked up").toBe(true);
 
   // The bear-off hint reads "off" or the die it uses, as every hint may (the
-  // prompt asks for a hint per playable die, not a word): a 1 bearing off from
-  // point 1 is the move, so either is it. Run 1793780359's hint read "1",
-  // and both checks told the player the pop-up never came.
+  // prompt asks for a hint per playable die, not a word). The roll is a real 1-6
+  // (C08: played, not loaded), and from point 1 EITHER die bears the piece off, so
+  // a hint reading "6" is the bear-off too: 22 of 108 corpus builds labelled it so
+  // and were told no hint said "off" (2026-11-27 sweep). Run 1793780359's read "1".
   const hintCount = await hints.count();
   let offHint: Locator | null = null;
   for (let i = 0; i < hintCount; i++) {
     const words = hintWords(await hints.nth(i).innerText());
-    if (words.includes("off") || words.includes("1")) {
+    if (words.includes("off") || words.includes("1") || words.includes("6")) {
       offHint = hints.nth(i);
       break;
     }
@@ -3301,8 +3354,11 @@ test("[F19] REQ-RELOAD — difficulty survives a reload", async ({ page }) => {
 });
 
 test("[F20] REQ-RELOAD — the doubling cube survives a reload", async ({ page }) => {
+  // F07's setup: the standard position in the roll phase, no fresh /api/new first (a
+  // build may hold the cube dead until a new game's opening is rolled). Only a double
+  // that TOOK is judged across the reload: 69 of 108 corpus builds had refused it here
+  // and were told "the cube went back to the middle on its own" (2026-11-27 sweep).
   await openApp(page);
-  await postJson<ApiState>(page, "/api/new", {});
   await setupState(page, {
     points: startingPoints(),
     bar: { white: 0, black: 0 },
@@ -3316,15 +3372,18 @@ test("[F20] REQ-RELOAD — the doubling cube survives a reload", async ({ page }
   });
   await page.reload();
   await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  expect((await readState(page)).canDouble, "[needs: G11 G35]").toBe(true);
   const doubled = await postJson<ApiState>(page, "/api/double", {});
   expect(doubled.winner ?? null, "[needs: G12] the computer passed an even double").toBeNull();
+  const taken = await readState(page);
+  expect(taken.cube?.value === 2 && taken.cube?.owner === "black", "[needs: F07 G12] the computer's take did not leave the cube at 2 with it").toBe(true);
   await page.reload();
   await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
   await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);
   const state = await readState(page);
-  expect(state.cube.value).toBe(2);
-  expect(state.cube.owner).toBe("black");
-  expect(state.canDouble).toBe(false);
+  expect(state.cube.value, `after the reload the cube read ${state.cube.value}, not 2`).toBe(2);
+  expect(state.cube.owner, `after the reload the cube's owner was ${state.cube.owner}, not the computer`).toBe("black");
+  expect(state.canDouble, "after the reload the player could double again").toBe(false);
 });
 
 test("[F21] REQ-RELOAD — remaining dice survive a reload", async ({ page }) => {
