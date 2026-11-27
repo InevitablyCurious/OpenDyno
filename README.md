@@ -1,6 +1,6 @@
 # OpenDyno
 
-A dyno for agent harnesses.
+A dyno for agent harnesses. You need an A/B test suite, but nothing meets the bar - until now. 
 
 Bolt a harness on. Run it. Change one thing. Run it again. Same model, same task, same grader. The difference
 between the two runs is what your change did.
