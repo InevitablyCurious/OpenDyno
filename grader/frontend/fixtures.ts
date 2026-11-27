@@ -121,9 +121,11 @@ export { expect, PORT, BASE_URL };
 
 /**
  * Put the server into a position through the candidate's debug endpoint, and
- * fail with the SETUP_REFUSED marker when it did not take (see lib/harness.ts
- * assertSetupTook) — so a refused setup is never reported as the behaviour
- * the gate goes on to judge.
+ * fail with the SETUP_REFUSED marker when it did not take — the same narrowed
+ * rule as lib/harness.ts assertSetupTook, which this delegates to: only the
+ * position-defining fields are compared, while derived fields the build
+ * recomputes and display text it rewrites are never refused. A refused setup is
+ * never reported as the behaviour the gate goes on to judge.
  */
 export async function setupState(page: Page, body: Record<string, any>): Promise<any> {
   const response = await page.request.post("/api/debug/state", { data: body });

@@ -13,6 +13,7 @@ import {
   stopServer,
   ordinaryTurn,
   seedRolled,
+  SETUP_REFUSED,
 } from "../lib/harness.ts";
 
 type Move = { from: number; to: number; die: number };
@@ -686,11 +687,29 @@ describe("Backgammon backend server-path integrity", () => {
         message: "",
       }),
     );
-    await debugRoll([6, 5]);
+    const queued = await debugRoll([6, 5]);
     // One AI step per call (chunk-03): step until the turn comes back, and read
     // what the game said along the way.
     let state = await getState();
     const said: string[] = [];
+    // THE QUEUED DICE MUST BE THE DICE ROLLED (G39's seam, on this check's own
+    // board): the board is stuck on ANY roll, so only the values can tell a build
+    // that took the queue from one that rolled fresh dice (WO-GATE-WALL-FLUKES).
+    // The answer to a roll carries them — the golden's /api/ai answers the
+    // serialized state MERGED with { aiDice, aiMoves } (server.ts aiPlayDice),
+    // and the dice survive there after the hand-back clears the state's own
+    // `dice` (task/backgammon/golden/src/server.ts:418, :422). A cube offer
+    // first carries none; the roll comes on a later step.
+    const diceOf = (answer: any): number[] | null =>
+      Array.isArray(answer?.aiDice) &&
+      answer.aiDice.length > 0 &&
+      answer.aiDice.every((d: unknown) => typeof d === "number")
+        ? (answer.aiDice as number[])
+        : null;
+    // The queued call's own answer too: a build may play the whole turn inside it
+    // (harness.ts assertRollTook notes one doing that in /api/roll), and those
+    // dice were the queue's just the same.
+    let rolled = diceOf(queued);
     // A double offered on the way is answered as a player would, by taking it:
     // run 1793637084's computer counted its own bar piece as a lead and doubled
     // here, and the loop that never answered was told "never gives the turn back".
@@ -699,10 +718,22 @@ describe("Backgammon backend server-path integrity", () => {
         state.phase === "doubleOffered"
           ? await api("/api/double/respond", { accept: true })
           : await api("/api/ai", {});
+      rolled = rolled ?? diceOf(state);
       said.push(String(state.message ?? ""));
     }
     expect(state.turn, "[aspect: pass] [needs: G25]").toBe("white");
     expect(said.join(" | "), "[aspect: wording] [needs: F05]").toMatch(/no moves available/i);
+    // The dice proof comes last: a turn never handed back is G25's finding and a
+    // message without the words is F05's, both told first; only a turn that came
+    // back with the wrong numbers is the queue's.
+    const rolledDice = rolled === null ? null : [...rolled].sort((a, b) => a - b);
+    if (JSON.stringify(rolledDice) !== JSON.stringify([5, 6])) {
+      throw new Error(
+        `${SETUP_REFUSED}: /api/debug/roll did not take dice (sent 6, 5) [rolled ${
+          rolledDice === null ? "none" : rolledDice.join(", ")
+        }]`,
+      );
+    }
   });
 
   // The computer offers a double when it is well ahead, not after every turn: from

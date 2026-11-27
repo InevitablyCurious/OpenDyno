@@ -396,6 +396,13 @@ export async function getState(): Promise<any> {
 // judged, and a setup that did not take fails with this marker. The harness
 // routes a marked failure to a true line about the debug endpoint
 // (harness/adapters/challenge/feedback.py SETUP_REFUSED), never the gate's own.
+//
+// ONLY THE FIELDS THAT DEFINE THE POSITION ARE COMPARED (SETUP_CHECKED below).
+// The echo is not the state: a correct build may recompute a derived field on
+// the way back, and refusing the setup for that told the model its position had
+// not taken when the position — the part the gate goes on to judge — had. The
+// fields a gate writes to place pieces are the ones this checks; the rest of
+// the body is the build's to derive or to display.
 export const SETUP_REFUSED = "SETUP REFUSED";
 
 // A PRESS OF ROLL THAT ROLLED NOTHING (WO-LI-HIDDEN-FREEZE-SWEEP). The roll helper
@@ -436,8 +443,34 @@ export const HARNESS_INFRA = "HARNESS INFRA";
 // path. Read by feedback.py's `no_answer_line`.
 export const NO_ANSWER = "NO ANSWER";
 
-// Display text the app may legitimately rewrite as the state changes.
-const SETUP_UNCHECKED = new Set(["message"]);
+// What a setup is judged on: the fields that DEFINE the position. Everything
+// else in a written body is the build's to derive or to display, so an echo
+// that recomputes it is not a setup that did not take.
+//
+//   compared      points, bar, off, turn, phase, dice, remainingDice, cube,
+//                 difficulty, score — the pieces on the board, whose turn and
+//                 phase it is, the dice in hand, the cube, the difficulty and
+//                 the match score a check seeds.
+//   derived       pip, legalMoves, canDouble, turnOver, pointsWon — a correct
+//                 build recomputes these from the position, so a differing (or
+//                 missing) echo value never refuses the setup.
+//   display       message — text the app may rewrite as the state changes.
+//   not compared  winner, winType, doubleOfferedBy — defining fields, but no
+//                 check reads them back after seeding (verified), so per ruling
+//                 they stay out of the comparison rather than risk refusing a
+//                 setup over a field the gate never asks about again.
+const SETUP_CHECKED = new Set([
+  "points",
+  "bar",
+  "off",
+  "turn",
+  "phase",
+  "dice",
+  "remainingDice",
+  "cube",
+  "difficulty",
+  "score",
+]);
 
 function sameValue(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) || Array.isArray(b)) {
@@ -451,12 +484,11 @@ function sameValue(a: unknown, b: unknown): boolean {
   return a === b;
 }
 
-/** The fields of `sent` that the echo does not carry back unchanged. */
+/** The defining fields of `sent` that the echo does not carry back unchanged. */
 export function setupNotTaken(sent: Record<string, any>, echo: unknown): string[] {
-  if (!echo || typeof echo !== "object") return Object.keys(sent).filter((k) => !SETUP_UNCHECKED.has(k));
-  return Object.keys(sent).filter(
-    (k) => !SETUP_UNCHECKED.has(k) && !sameValue(sent[k], (echo as any)[k]),
-  );
+  const defining = Object.keys(sent).filter((k) => SETUP_CHECKED.has(k));
+  if (!echo || typeof echo !== "object") return defining;
+  return defining.filter((k) => !sameValue(sent[k], (echo as any)[k]));
 }
 
 export function assertSetupTook(sent: Record<string, any>, echo: unknown): void {
@@ -466,12 +498,14 @@ export function assertSetupTook(sent: Record<string, any>, echo: unknown): void 
     // difficulty" are different requests, and a candidate that tested the one
     // it was told about found it working (run 1790191629: the gate sent only
     // {difficulty}, the model was told "a position", sent a full board, and
-    // saw it take).
+    // saw it take). Only the DEFINING fields are named: the rest of the body
+    // is derived or display text, never something the setup could fail to take.
     // And the app's own error text, when it answered with one: it is what the
     // integrating team would have in front of them.
     const said = echo && typeof (echo as any).error === "string" ? ` [error: ${(echo as any).error}]` : "";
+    const sentDefining = Object.keys(sent).filter((k) => SETUP_CHECKED.has(k)).join(", ");
     throw new Error(
-      `${SETUP_REFUSED}: /api/debug/state did not take ${missed.join(", ")} (sent ${Object.keys(sent).join(", ")})${said}`,
+      `${SETUP_REFUSED}: /api/debug/state did not take ${missed.join(", ")} (sent ${sentDefining})${said}`,
     );
   }
 }

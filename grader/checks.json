@@ -672,7 +672,7 @@
     "F67": {
       "name": "A computer double stops Fast Forward until you answer",
       "what": "If the computer offers a double while Fast Forward is running, the play-out stops and stays stopped; after you answer the double it still stays stopped until you click Fast Forward again.",
-      "how": "In a browser: sets F49's position (hard, the player's moves done, a race the computer doubles in by the published thresholds) and clicks Fast Forward. Requires the offer on screen wherever the page shows it ([aspect: offer]), the button not reading Pause 1.5 s later ([aspect: stopped]), a button to take the double ([aspect: answer]); after taking it, the turn back with the player ([aspect: back]), the position unchanged from 2 s to 5 s after ([aspect: stays]), and the button showing and reading Fast Forward ([aspect: back]).",
+      "how": "In a browser, played through twice — once carrying on before the player rolls and once after: reaches a race the hard computer doubles in by walking the build's own ladder of races (offerRace) and playing white's 2-1 turn out (playRolledTurn), then clicks Fast Forward. Requires the offer on screen wherever the page shows it ([aspect: offer]), the button not reading Pause 1.5 s later ([aspect: stopped]), and a button to take the double ([aspect: answer]); after taking it, the turn back with the player ([aspect: frozen], waits on G20), the position unchanged from 2 s to 5 s after ([aspect: stays]), the button showing again ([aspect: back]) and reading Fast Forward ([aspect: label], waits on F64); then clicks Fast Forward again and requires the position to change ([aspect: carry]).",
       "looks": "page"
     },
     "F68": {

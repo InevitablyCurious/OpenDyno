@@ -2,6 +2,7 @@ import { chromium } from "@playwright/test";
 import {
   type ServerHandle,
   BASE_URL,
+  SETUP_REFUSED,
   api,
   debugRoll,
   emptyPoints,
@@ -179,6 +180,48 @@ function sortedDice(value: unknown): number[] | null {
     return null;
   }
   return [...value].sort((a, b) => a - b);
+}
+
+/**
+ * Prove the PAGE's own roll came up the dice queued for it.
+ *
+ * The two page-click rolls below queue `[3, 1]` through the debug seam and then
+ * press the app's Roll button, which POSTs `/api/roll` itself. Reading only the
+ * state afterwards could not tell a build that used the queue from one that
+ * rolled at random and drew those dice — it was graded on dice it never
+ * received. The caller arms a `waitForResponse` for the page's own POST
+ * /api/roll BEFORE the press (`page.waitForResponse`, the same capture
+ * `frontend/fixtures.ts rollAndCheck` uses) and hands the answer here.
+ *
+ * NO ANSWER CAPTURED IS SILENCE, NOT A REFUSAL: the button may have been
+ * disabled, and the roll nobody made is REQ-RENDER/die's "never evaluated"
+ * finding. Nor is an answer carrying no dice refused — a build that clears them
+ * before answering (a roll with no move hands the turn on) has drawn none,
+ * which REQ-RENDER/die reports. Dice SEEN and different are the finding,
+ * including dice that are not a flat list of numbers (`[[3, 1]]`), exactly as
+ * lib/harness.ts assertRollTook treats them. The wording is that function's, so
+ * the feedback parser (harness/adapters/challenge/feedback.py) tells the model
+ * a roll it queued did not come up.
+ */
+async function assertPageRollUsedQueue(
+  answered: Promise<import("@playwright/test").Response | null>,
+  queued: number[],
+): Promise<void> {
+  const response = await answered;
+  if (!response) return;
+  const body = await response.json().catch(() => null);
+  const rolled = isRecord(body) ? body.dice : undefined;
+  if (!Array.isArray(rolled) || rolled.length === 0) return;
+  const got = sortedDice(rolled);
+  const want = [...queued].sort((a, b) => a - b);
+  const same =
+    got !== null && got.length === want.length && got.every((die, i) => die === want[i]);
+  if (same) return;
+  throw new Error(
+    `${SETUP_REFUSED}: /api/debug/roll did not take dice (sent ${queued.join(", ")}) [rolled ${
+      got === null ? JSON.stringify(rolled) : got.join(", ")
+    }]`,
+  );
 }
 
 /** One tagged population, counted by whether it is DRAWN rather than tagged. */
@@ -638,6 +681,17 @@ export async function runPreGate(): Promise<PreGateResult> {
       let rolled = false;
       if (gameplayScoped) {
         await debugRoll([3, 1]);
+        // The page's own roll is what the queue is for, so arm the listener for
+        // the button's POST /api/roll BEFORE pressing it, and prove below that
+        // this roll came up the queued [3, 1] (the opening roll: white 3, black
+        // 1). `.catch` for the same reason the click has one — a Roll button
+        // that cannot be pressed never answers, and that is not a refusal.
+        const queuedRoll = page
+          .waitForResponse(
+            (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/roll",
+            { timeout: 5_000 },
+          )
+          .catch(() => null);
         // Bounded: a Roll button that is disabled (an app that opens a game with
         // the opening roll already made) was retried for Playwright's default
         // 30s — the whole pre-gate budget — so a candidate that passed every
@@ -658,6 +712,11 @@ export async function runPreGate(): Promise<PreGateResult> {
             { timeout: 2_000 },
           )
           .catch(() => undefined);
+        // Only a roll that happened can be refused: when the button could not be
+        // pressed, REQ-RENDER/die below reports "never evaluated" instead.
+        if (rolled) {
+          await assertPageRollUsedQueue(queuedRoll, [3, 1]);
+        }
 
         // NON-RELOAD render check: did the roll draw the dice at all? Distinct
         // from the reload-survival check below — "the dice didn't draw" vs "the
@@ -846,6 +905,15 @@ export async function runPreGate(): Promise<PreGateResult> {
         for (let turn = 0; turn < 4 && hintCount < 1; turn++) {
           if (turn > 0) {
             await debugRoll([3, 1]);
+            // The same proof as the opening roll: capture this button's own
+            // POST /api/roll, armed before the press, and check after the dice
+            // settle that the roll came up the queued [3, 1].
+            const queuedRoll = page
+              .waitForResponse(
+                (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/roll",
+                { timeout: 5_000 },
+              )
+              .catch(() => null);
             const again = await page
               .locator('[data-testid="rollBtn"]')
               .click({ timeout: 2_000 })
@@ -857,6 +925,7 @@ export async function runPreGate(): Promise<PreGateResult> {
                 timeout: 2_000,
               })
               .catch(() => undefined);
+            await assertPageRollUsedQueue(queuedRoll, [3, 1]);
           }
           hintCount = await page.locator('[data-testid="hint"]').count();
           if (hintCount < 1) {
