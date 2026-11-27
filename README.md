@@ -4,6 +4,8 @@
 
 A dyno measures an engine under controlled load. OpenDyno measures an agent harness the same way: the same model, the same build task, the same grader, and the same feedback, twice. Change one thing between the runs. The difference — once it beats the noise — is what your change did.
 
+> **Under active development.** OpenDyno is a proof of concept, not a finished measurement instrument. The run loop and board work end to end, but the grader is still being audited and changes often, and no run should be treated as a final measurement yet. Treat a difference as evidence to inspect, not a verdict.
+
 ## What it is
 
 A **harness** is everything around the model: how context is kept or compacted, whether work goes to sub-agents, the loop that plans and retries, the tools, the memory, the instructions, and the way feedback comes back. Change any of those and the agent gets better or worse at real work. OpenDyno measures by how much.
@@ -19,7 +21,7 @@ This is not a test runner with a leaderboard bolted on. The task, the checks and
 
 A benchmark can produce a number without producing evidence. These three conditions are not features; they are what the number has to satisfy before OpenDyno will call it a result.
 
-**The same instrument.** Every cell records the challenge, spec, grader, feedback lines, worker image, model and its settings. Two runs are compared only when those match. This does not make the agent repeatable — it is stochastic, and no fingerprint changes that. It makes the comparison *admissible*: if you swapped the model, rebuilt the image, or edited the grader between A and B, the difference is not your change, and the board will not subtract the runs. It also catches silent drift — a provider updating a model behind an alias, a changed plugin version, a rebuilt image — that would otherwise look like a result.
+**The same instrument.** Every cell records the challenge, spec, grader, feedback lines, worker image, model alias and compaction mode. Two runs are compared only when those match. This does not make the agent repeatable — it is stochastic, and no fingerprint changes that. It makes the comparison *admissible*: if you swapped the model, rebuilt the image, or edited the grader between A and B, the difference is not your change, and the board will not subtract the runs. It also catches changes to the recorded inputs — a rebuilt image, an edited grader or prompt, a changed plugin version — that would otherwise look like a result. It cannot see a provider changing the weights behind the same model alias, and a matching fingerprint does not prove the grader is right; it only means the two runs are comparable.
 
 **The same feedback, and no answer key.** The agent never sees the grader's assertion, selectors, check ids or expected values. It gets a stable, user-voice report of the fault instead. That keeps the feedback a constant across A and B and keeps the agent solving the user's problem rather than the grader's. The next section shows what that means in practice.
 
@@ -48,24 +50,24 @@ The agent has to find the bar, trace the click, and implement the hint logic. Th
 
 That is the curation. Every line is a fixed artifact, not a summary generated at runtime. It has to be true for the build it describes, actionable enough to fix, general enough not to hand over the implementation, and told at the moment a person would meet it.
 
-The same fault produces the same words; measured values are included when a number is what the agent needs; the spec's own passage comes back when the agent keeps missing a rule. The lines never mention tests, graders, gates or scoring — a model that knows it is being measured is not the model you meant to measure. When a line fails any of those, the run is measuring the grader, not the harness. That is why the feedback is part of the instrument, not error copy.
+The same fault produces the same words; measured values are included when a number is what the agent needs; the spec's own passage comes back when the agent keeps missing a rule. The lines never tell the agent it is being benchmarked — no grader, no gate, no benchmark run, no score for the experiment. They do use the domain's own words, like a player's "match score" or an integration team's "their tests," because that is what those people would say. A model that knows it is being measured is not the model you meant to measure. When a line fails any of those, the run is measuring the grader, not the harness. That is why the feedback is part of the instrument, not error copy.
 
 ## What you can put on the dyno
 
-Anything that sits between the model and the work:
+Anything the variant can change at runtime, between the model and the work:
 
-- **Context** — compaction on or off, when it fires, how it summarises, window size, prompt caching.
+- **Context handling** — when compaction fires, how it summarises, what it keeps, prompt caching.
 - **Delegation** — sub-agents against inline work, how much context they burn, manager and worker tiers.
 - **Loops** — plan / act / check, retry and repair, self-critique, stop rules, loop guards.
 - **Memory** — long-term memory, retrieval, notes files, skill libraries.
 - **The harness itself** — tool sets and how they are described, hooks, permission modes, system prompts, instruction files, MCP servers.
-- **Feedback at inference time** — what the agent is told after each attempt, in whose voice, how much detail.
-- **Spec style** — one long brief against phased chunks.
-- **Models** — swaps, sizes, quantisation, reasoning budget, local against cloud.
+- **Feedback delivery** — how the agent is told after each attempt, in whose voice, at what detail.
+- **Spec delivery** — one long brief against phased chunks, with the challenge's rules held fixed.
 - **Self-verification** — agents that run their own tests or look at their own screen.
-- **Cost** — tokens, cache hits and wall time per working build. Every run records all of it.
 
-Variant B arrives as a plugin for the agent's harness. [docs/variants.md](docs/variants.md) shows how, with a memory system as the worked example.
+The model, the challenge (including its rules and spec), and the harness's compaction mode are baseline settings, not variant B changes. Changing one of those starts a new baseline; the board will not subtract it from an older one. Run it as its own baseline. Cost is recorded for every run; it is an outcome, not an input.
+
+Variant B arrives as a plugin for the agent's harness. It must be baked into the worker image; a variant B cell on a vanilla image refuses to start. [docs/variants.md](docs/variants.md) shows how, with a memory system as the worked example.
 
 ## How a run works
 
@@ -82,6 +84,7 @@ A phase passes when every check up to it passes.
 
 ### You need
 
+- Git.
 - Docker with Compose v2.
 - Python 3.11+.
 - Node 22+.
@@ -154,18 +157,17 @@ In a second terminal:
 
 Open [http://127.0.0.1:8717](http://127.0.0.1:8717).
 
-## Your first comparison
+## Your first baseline
 
 1. **`+ BASELINE`** picks the model and the challenge and runs your harness as it is. Run it three times. That spread is your noise floor.
-2. **`+ run`** on a baseline row runs the same thing with your change in. Run it three times too.
-3. **Read the board.** Once each side has three scored runs, it shows the difference: phases passed and in how many attempts, checks still failing, tokens and cache, turns and wall time.
-4. **Change one thing.** A/B testing only works when one thing changes. Change one model-facing thing per run.
+2. **Read the board.** Once you have three scored runs, you have a baseline: the reference for a later variant B, and the first measure of how much the agent varies on its own.
+3. **Stop and resume when you need to.** Stop ends a cell and tears down its containers. Dev mode pauses after every grade so you can inspect exactly what the agent is about to be told. Any graded attempt can be resumed from its checkpoint. [docs/operating.md](docs/operating.md) covers all three.
 
-Use **Stop** to end a cell and tear down its containers. Use **dev mode** to pause after every grade and inspect exactly what the agent is about to be told. Any graded attempt can be resumed from its checkpoint. [docs/operating.md](docs/operating.md) covers all three.
+Variant B is the same loop with a plugin baked into the worker image. It is not part of the first run: a variant B cell on a vanilla image refuses to start. When you are ready, [docs/variants.md](docs/variants.md) shows how, with a memory system as the worked example.
 
 ## What to expect
 
-- **Time.** One local cell in our sample run took about 22 minutes on a 35B model, with four grades of 245 checks. A first comparable result needs three baseline cells and three variant B cells, so budget hours, not minutes.
+- **Time.** One local cell in our sample run took about 22 minutes on a 35B model, with four grades of 245 checks. A first comparable result needs three baseline cells and three variant B cells, so budget hours, not minutes. Those numbers are from an early sample run, not a published measurement; your model, hardware and challenge will differ.
 - **Cost.** Every cell records tokens by category, cache reads and writes, turns and wall time in `cost.json`. A variant B with its own server can also report its own running cost, recorded separately.
 - **Output.** Each run writes under `runs/<tree>/`: the campaign manifest, one folder per cell, the fingerprint, the cost, the report and board image for every attempt, the live event record, and checkpoints.
 - **Invalid runs.** An infrastructure fault or grader alarm is counted as excluded, never as a zero.
@@ -174,7 +176,17 @@ Use **Stop** to end a cell and tear down its containers. Use **dev mode** to pau
 
 Today's challenge is backgammon against a computer opponent: an engine, a server, a page, a doubling cube, and an AI with three difficulties. It is big enough to need real work, small enough to finish, and nobody's novel invention, so the agent is graded on building, not on guessing what we meant.
 
-It is the worked example, not the product. To write your own challenge — its spec, scaffold, reference solution and grading suite — start from [challenges/TEMPLATE](challenges/TEMPLATE/README.md).
+It is the worked example, not the product. To write your own challenge — its spec, scaffold, reference solution and grading suite — start from [challenges/TEMPLATE](challenges/TEMPLATE/README.md). A challenge is its own git repo; [challenges/README.md](challenges/README.md) explains how it is loaded.
+
+## Roadmap
+
+OpenDyno is under active development. This is the current order of work, not a schedule.
+
+- **Done:** the run loop, board, fingerprints, checkpoints and resume path work end to end. A cell can build, grade, tell, retry and finish.
+- **Now:** finish the grader audit. Every check, finding and told line is being checked against the build it describes. Until that settles, a run is evidence to inspect, not a final measurement.
+- **Next:** run the first scored baseline set. Three scored runs per model, with their spread, so the noise floor is visible.
+- **Then:** exercise the first variant B. Take one change from the list, bake it as a plugin, and validate the baseline-to-variant comparison end to end.
+- **Later:** broaden the corpus. A second challenge and more variant kits, so the instrument is not tied to backgammon or one change.
 
 ## Glossary
 
@@ -189,7 +201,7 @@ It is the worked example, not the product. To write your own challenge — its s
 | **Phase** | One stage of the build, with its own slice of the spec and its own checks. |
 | **Moment** | The point where a person first meets a fault, in the order they would meet it. |
 | **Problem-speak** | The deterministic line the agent is told when a check fails. |
-| **Fingerprint** | Everything a result depends on. Cells only compare when their fingerprints match. |
+| **Fingerprint** | The recorded inputs a comparison requires to match: challenge, spec, grader, feedback lines, images, model alias and compaction mode. |
 | **Baseline** | The average of the scored variant A cells on one fingerprint. |
 
 ## Documentation
@@ -204,6 +216,9 @@ It is the worked example, not the product. To write your own challenge — its s
 | [docs/live-stream.md](docs/live-stream.md) | The per-cell event record, `live.jsonl`. |
 | [docs/custom-tools.md](docs/custom-tools.md) | Adding your own buttons to the board's tool drawer. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Auditing the grader and proving a fix. |
+| [SECURITY.md](SECURITY.md) | The isolation model and how to report a vulnerability. |
+| [challenges/README.md](challenges/README.md) | How a challenge is loaded; it is its own git repo. |
+| [dashboard/README.md](dashboard/README.md) | The board, its tests, and viewing it from another machine. |
 
 ## Repository layout
 
@@ -219,12 +234,14 @@ images/      worker and grader containers
 scripts/     entry points: run, rebuild, preflight
 tools/       the class-matrix tool and example matrices, for auditing the grader
 tests/       the instrument's own tests
+config/      local settings: model keys, dev mode, cloud credentials
+data/        results ledger and custom-tool job history
 docs/        how it's built, the problem-speak rules, operating it, variants
 ```
 
 ## Contributing
 
-The best way in: clone it, run it, and audit the grader.
+The roadmap above puts the grader audit first. The best way in is still: clone it, run it, and audit the grader.
 
 Everything rests on one promise: every line the agent is told is true for the build it was told about. When a line is wrong, the run is measuring the grader, not the harness. So the most useful work is checking that pipeline, from a check, to its finding, to the words the agent reads. [CONTRIBUTING.md](CONTRIBUTING.md) shows how, and [docs/problem-speak.md](docs/problem-speak.md) has the rules every line follows.
 
