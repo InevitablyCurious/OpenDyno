@@ -331,9 +331,23 @@ export async function playerClick(target: Locator): Promise<void> {
           // It never held still: another try, and MOVING once every try is spent.
           if (!box) return { thing: named, cause: "moving" };
           const clickThrough = getComputedStyle(el).pointerEvents === "none";
+          // A copy of the same thing drawn on the same spot is not a cover: a click
+          // there lands on what the player meant. Run 1794568362 cp-02 drew a double's
+          // four hints for 24->18 stacked as four identical elements; the first was
+          // "covered" by the other three, and F33 told "something on screen lay over
+          // the hint" of a hint a player clicks without trouble (2026-11-27 sweep).
+          const testid = el.getAttribute("data-testid");
+          const sameSpot = (other: Element) => {
+            if (!testid || other.getAttribute("data-testid") !== testid) return false;
+            const o = other.getBoundingClientRect();
+            return Math.abs(o.x - box!.x) <= 2 && Math.abs(o.y - box!.y) <= 2 && Math.abs(o.width - box!.width) <= 2 && Math.abs(o.height - box!.height) <= 2;
+          };
           const shows = (x: number, y: number) => {
             const hit = document.elementFromPoint(x, y);
-            return !!hit && (hit === el || el.contains(hit));
+            if (!hit) return false;
+            if (hit === el || el.contains(hit)) return true;
+            const copy = hit.closest(`[data-testid="${testid}"]`);
+            return !!copy && sameSpot(copy);
           };
           const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
           if (clickThrough || shows(centre.x, centre.y)) return { thing: named, point: centre };
