@@ -2347,6 +2347,10 @@
       "first": "Some of the pieces I take off are drawn past the edges of the off tray, not inside it — I expect every piece I take off to sit wholly inside the tray.",
       "repeat": "Pieces I take off are still drawn past the edges of the off tray."
     },
+    "F11.trayend": {
+      "first": "When I bore a piece off, it landed in the computer's end of the tray, away from my home. i expect my pieces to start on my side of the board and stack inward towards the middle accumulating inside the bear off tray, and for my opponent their pieces stack on their end of the board and stack inward towards the middle accumulating inside the bear off tray.",
+      "repeat": "The pieces I bear off still land in the computer's end of the tray. I expect my pieces to start on my side of the board and stack inward towards the middle accumulating inside the bear off tray, and for my opponent their pieces stack on their end of the board and stack inward towards the middle accumulating inside the bear off tray."
+    },
     "F33.twice": {
       "first": "I rolled a double, and one click played two of its moves at once — I clicked to move one piece and two of my moves were used up.",
       "repeat": "Rolled a double again and one click still played two of its moves at once."

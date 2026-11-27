@@ -244,8 +244,14 @@ test("[F11] REQ-BEAROFF — bear-off visual", async ({ page }) => {
     // a piece of the top and bottom (the tray may be a little short for a tall
     // stack). Run 1791408711's build put them in the bar's column, x 480
     // against a tray at x 956: not in the tray a player looks at.
+    // INSIDE is judged against the WHOLE tray, so "past the edges" is said only of a
+    // piece past them. Which END it lies in is its own finding (trayend): a build that
+    // drew the player's borne-off pieces in the computer's end, inside the tray, was told
+    // "drawn past the edges of the off tray" (2026-11-27 class matrix trayend; Jerry,
+    // playing run 1795660344's final build). The player's end is the half of the tray on
+    // the side of their home points (1-6), read from where those are drawn.
     const tagged = await page.evaluate(() => {
-      const tray = ['[data-testid="off-you"]', '[data-testid="off-tray"]']
+      const tray = ['[data-testid="off-tray"]', '[data-testid="off-you"]']
         .map((sel) => document.querySelector(sel)?.getBoundingClientRect())
         .find((r) => r && r.width >= 2 && r.height >= 2);
       const drawn = [
@@ -253,7 +259,7 @@ test("[F11] REQ-BEAROFF — bear-off visual", async ({ page }) => {
       ]
         .map((el) => el.getBoundingClientRect())
         .filter((r) => r.width > 0 && r.height > 0);
-      if (!tray) return { drawn: drawn.length, inside: 0 };
+      if (!tray) return { drawn: drawn.length, inside: 0, farEnd: 0, judged: false };
       const inside = drawn.filter((r) => {
         const slack = r.width / 6;
         const y = r.top + r.height / 2;
@@ -264,7 +270,14 @@ test("[F11] REQ-BEAROFF — bear-off visual", async ({ page }) => {
           y <= tray.bottom + r.height / 2
         );
       }).length;
-      return { drawn: drawn.length, inside };
+      const home = [1, 2, 3, 4, 5, 6]
+        .map((n) => document.querySelector(`[data-testid="point"][data-point="${n}"]`)?.getBoundingClientRect())
+        .filter((r): r is DOMRect => !!r && r.height > 0);
+      if (home.length === 0) return { drawn: drawn.length, inside, farEnd: 0, judged: false };
+      const mid = tray.top + tray.height / 2;
+      const homeLow = home.reduce((sum, r) => sum + r.top + r.height / 2, 0) / home.length > mid;
+      const farEnd = drawn.filter((r) => r.top + r.height / 2 > mid !== homeLow).length;
+      return { drawn: drawn.length, inside, farEnd, judged: drawn.length > 0 };
     });
     if (tagged.inside >= 3 || tagged.drawn >= 3) return tagged;
     const untagged = await page.evaluate(() => {
@@ -285,10 +298,14 @@ test("[F11] REQ-BEAROFF — bear-off visual", async ({ page }) => {
         return x >= t.left && x <= t.right && y >= t.top && y <= t.bottom;
       }).length;
     });
-    return { drawn: Math.max(tagged.drawn, untagged), inside: untagged };
+    return { drawn: Math.max(tagged.drawn, untagged), inside: untagged, farEnd: 0, judged: false };
   };
   await expect.poll(async () => (await offPieces()).drawn, { timeout: 5_000 }).toBeGreaterThanOrEqual(3);
   expect((await offPieces()).inside, "[aspect: outside] pieces taken off are drawn past the edges of the off tray").toBeGreaterThanOrEqual(3);
+  const placed = await offPieces();
+  if (placed.judged) {
+    expect(placed.farEnd, "[aspect: trayend] the pieces taken off are drawn in the computer's end of the tray, away from the player's home").toBe(0);
+  }
 });
 
 test("[F12] REQ-NEWGAME — the win is announced", async ({ page }) => {
