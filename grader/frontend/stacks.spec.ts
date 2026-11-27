@@ -50,6 +50,7 @@ const SPREAD_MAX = 1.05;
 
 interface ApiState {
   legalMoves: { from: number; to: number; die: number }[];
+  remainingDice?: number[];
 }
 
 async function postJson<T>(page: Page, path: string, data: unknown = {}): Promise<T> {
@@ -231,9 +232,11 @@ test("[F59] REQ-GEOMETRY — a piece lands at the far end", async ({ page }) => 
   await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
 
   // A crafted position: one white on 11, one on 13, fifteen per side, black
-  // out of the way on its opening points. The roll is fixed to a single 2, so
-  // the piece on 13 has exactly one move — onto the point that ALREADY holds
-  // a white checker.
+  // out of the way on its opening points. White is at the START of their turn,
+  // so the 6-2 is rolled through the page and its 6 played through the server
+  // (24→18): the move history is real, for a build that recomputes the
+  // remaining dice from what it has played. The 2 that is left gives the piece
+  // on 13 exactly one move — onto the point that ALREADY holds a white checker.
   const points = emptyPoints();
   points[5] = 5;
   points[6] = 3;
@@ -245,23 +248,31 @@ test("[F59] REQ-GEOMETRY — a piece lands at the far end", async ({ page }) => 
   points[12] = -5;
   points[17] = -3;
   points[19] = -5;
-  // White to move with a 2 left to play (the 6 of a 6-2 already used): the
-  // piece on 13 has one move, onto 11.
   await setupState(page, {
     points,
     bar: { white: 0, black: 0 },
     off: { white: 0, black: 0 },
     turn: "white",
-    phase: "move",
-    dice: [2, 6],
-    remainingDice: [2],
-    turnOver: false,
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
     message: "",
   });
   await page.reload();
   await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  await page.request.post("/api/debug/roll", { data: { dice: [2, 6] } });
+  await rollAndCheck(page, [2, 6], () => page.getByTestId("rollBtn").click());
+  // Play the 6 through the server (24→18), leaving the 2 — white to move with a
+  // 2 left to play: the piece on 13 has one move, onto 11.
+  await page.request.post("/api/move", { data: { from: 24, to: 18, die: 6 } });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
 
   const before = await readState(page);
+  expect(
+    [...(before.remainingDice ?? [])].sort((a, b) => a - b),
+    `the 6 played through the server as 24→18 is still unspent: the dice left to play read ${JSON.stringify(before.remainingDice)} where only the 2 may be left`,
+  ).toEqual([2]);
   expect(before.legalMoves.some((m) => m.from === 13 && m.to === 11), "[needs: G03]").toBe(true);
 
   // The mover and the piece already on 11, held in the page.

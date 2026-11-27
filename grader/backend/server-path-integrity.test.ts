@@ -264,20 +264,18 @@ describe("Backgammon backend server-path integrity", () => {
     cube: { value: number; owner: "white" | "black" | null } = { value: 1, owner: null },
   ) => {
     await api("/api/new", {});
-    await debugSetState(
-      makeState({
-        ...race,
-        bar: { white: 0, black: 0 },
-        turn: "white",
-        phase: "move",
-        dice: [6, 5],
-        remainingDice: [],
-        turnOver: true,
-        cube,
-        difficulty: "hard",
-        winner: null,
-      }),
+    // PLAYED, NOT LOADED: the race is an all-home bear-off (white on the 6,
+    // black on 19), so a 6-5 is played through the moves (off, then 6->1) and
+    // End Turn hands over a turn the build itself finished.
+    await seedRolled(
+      makeState({ ...race, bar: { white: 0, black: 0 }, cube, difficulty: "hard", winner: null }),
+      [6, 5],
     );
+    let state = await getState();
+    for (let guard = 0; guard < 12 && state.turn === "white" && state.phase === "move" && (state.legalMoves?.length ?? 0) > 0; guard++) {
+      const move = state.legalMoves[0];
+      state = await api("/api/move", { from: move.from, to: move.to, die: move.die });
+    }
     let play = await api("/api/endturn", {});
     for (let guard = 0; guard < 12 && play.turn === "black" && play.phase !== "doubleOffered" && !play.winner; guard++) {
       play = await api("/api/ai", {});
@@ -355,33 +353,16 @@ describe("Backgammon backend server-path integrity", () => {
           winner: null,
         }),
       );
-      await debugRoll([2, 1]);
-      let state = await api("/api/roll", {});
+      let state = await debugRollVerified([2, 1]);
       for (let guard = 0; guard < 4 && state.turn === "white" && state.phase === "move" && (state.legalMoves?.length ?? 0) > 0; guard++) {
         const move = state.legalMoves[0];
         state = await api("/api/move", { from: move.from, to: move.to, die: move.die });
       }
       if (!(state.turn === "white" && state.phase === "move" && state.remainingDice.length === 0 && !state.winner)) continue;
-      const position = { points: state.points, bar: state.bar, off: state.off };
-      if ((await endTurnToOffer())?.phase !== "doubleOffered") continue;
-
-      await api("/api/new", {});
-      await debugSetState(
-        makeState({
-          ...position,
-          turn: "white",
-          phase: "move",
-          dice: [2, 1],
-          remainingDice: [],
-          turnOver: true,
-          cube: { value: 1, owner: null },
-          difficulty: "hard",
-          winner: null,
-        }),
-      );
-      const seeded = await endTurnToOffer();
+      const played = await endTurnToOffer();
+      if (played?.phase !== "doubleOffered") continue; // drew no offer in play → G24's finding
       expect(
-        seeded?.phase,
+        played.phase,
         "[aspect: computer] [brief] the same race set up through the debug route drew no offer from the computer, though reached by play it did",
       ).toBe("doubleOffered");
       return;
@@ -730,19 +711,26 @@ describe("Backgammon backend server-path integrity", () => {
   // so the player was answering a double before the game had begun).
   it("[G33] REQ-CUBE-AI — the computer does not offer a double at an even start", async () => {
     for (const difficulty of ["easy", "medium", "hard"]) {
+      // PLAYED, NOT LOADED: white makes the canonical 3-1 opening (8/5, 6/5)
+      // through the server, so the computer's first turn and its cube decision
+      // are reached by play. The computer rolls its own dice inside /api/ai, and
+      // the no-double decision comes before that roll — no queue to prove.
       await api("/api/new", {});
       await debugSetState(
         makeState({
           points: openingPoints(),
-          turn: "black",
-          phase: "move",
-          dice: [3, 1],
-          remainingDice: [3, 1],
+          turn: "white",
+          phase: "roll",
+          dice: [],
+          remainingDice: [],
           difficulty,
           cube: { value: 1, owner: null },
         }),
       );
-      let state = await getState();
+      await debugRollVerified([3, 1]);
+      await api("/api/move", { from: 8, to: 5, die: 3 });
+      await api("/api/move", { from: 6, to: 5, die: 1 });
+      let state = await api("/api/endturn", {});
       let guard = 0;
       while (state.turn !== "white" && guard < 12) {
         state = await api("/api/ai", {});
@@ -755,7 +743,7 @@ describe("Backgammon backend server-path integrity", () => {
 
       // And through a real opening the computer wins (3 against 5), which is how a
       // player meets that first turn: run 1793634524's final build offered after
-      // its first opening move, a path the seeded position above never took.
+      // its first opening move, a path the turn above never took.
       await api("/api/new", { difficulty });
       let opened = await debugRollVerified([3, 5]);
       let offered = false;
@@ -800,21 +788,21 @@ describe("Backgammon backend server-path integrity", () => {
       const points = emptyPoints();
       points[7] = -1;
       points[3] = 2;
-      await debugSetState(
+      // PLAYED, NOT LOADED: white's 2-1 is a legal board-only turn (3->1, 3->2),
+      // so the finished turn handed over is one the build itself played.
+      await seedRolled(
         makeState({
           points,
           bar: { white: 0, black: 0 },
           off: { white: 13, black: 14 },
-          turn: "white",
-          phase: "move",
-          dice: [6, 5],
-          remainingDice: [],
-          turnOver: true,
           cube: { value: 2, owner: "white" },
           difficulty: "easy",
           winner: null,
         }),
+        [2, 1],
       );
+      await api("/api/move", { from: 3, to: 1, die: 2 });
+      await api("/api/move", { from: 3, to: 2, die: 1 });
       await debugRoll([...dice]);
       const state = await playParkedCubeTurn({ points, bar: { white: 0, black: 0 }, off: { white: 13, black: 14 } }, "easy");
       expect(state.turn, "[needs: G25] the computer never finished its turn").toBe("white");
@@ -828,9 +816,36 @@ describe("Backgammon backend server-path integrity", () => {
   });
 
   it("[G30] REQ-HIGHER-DIE — the computer obeys the higher-die rule", async () => {
+    // White must HOLD the judged layout when the computer's turn begins, and it
+    // gets there by play: A seeds 1 on 13 + 1 on 12, rolls 2-1 and plays 13/11,
+    // 12/11 (ending 2 on 11); B seeds 1 on 15 + 1 on 14 + 1 on 8, rolls 2-1 and
+    // plays 15/13, 14/13 (ending 2 on 13 and leaving the 8 blot). `white` is that
+    // judged layout; `startWhite`/`moves` are how white reaches it.
     const spots = [
-      { black: 5, white: { 11: 2 }, off: { white: 13, black: 14 }, dice: [2, 4], higher: 4 },
-      { black: 6, white: { 13: 2, 8: 1 }, off: { white: 12, black: 14 }, dice: [5, 2], higher: 5 },
+      {
+        black: 5,
+        white: { 11: 2 },
+        startWhite: { 13: 1, 12: 1 },
+        moves: [
+          { from: 13, to: 11, die: 2 },
+          { from: 12, to: 11, die: 1 },
+        ],
+        off: { white: 13, black: 14 },
+        dice: [2, 4],
+        higher: 4,
+      },
+      {
+        black: 6,
+        white: { 13: 2, 8: 1 },
+        startWhite: { 15: 1, 14: 1, 8: 1 },
+        moves: [
+          { from: 15, to: 13, die: 2 },
+          { from: 14, to: 13, die: 1 },
+        ],
+        off: { white: 12, black: 14 },
+        dice: [5, 2],
+        higher: 5,
+      },
     ];
     for (const spot of spots) {
       for (const difficulty of ["easy", "medium", "hard"]) {
@@ -842,22 +857,19 @@ describe("Backgammon backend server-path integrity", () => {
           await api("/api/new", {});
           const points = emptyPoints();
           points[spot.black] = -1;
-          for (const [at, n] of Object.entries(spot.white)) points[Number(at)] = n;
-          await debugSetState(
+          for (const [at, n] of Object.entries(spot.startWhite)) points[Number(at)] = n;
+          await seedRolled(
             makeState({
               points,
               bar: { white: 0, black: 0 },
               off: spot.off,
-              turn: "white",
-              phase: "move",
-              dice: [6, 5],
-              remainingDice: [],
-              turnOver: true,
               cube: { value: 2, owner: "white" },
               difficulty,
               winner: null,
             }),
+            [2, 1],
           );
+          for (const m of spot.moves) await api("/api/move", { from: m.from, to: m.to, die: m.die });
           await debugRoll(spot.dice);
           const state = await playParkedCubeTurn({ points, bar: { white: 0, black: 0 }, off: spot.off }, difficulty);
           expect(state.turn, "[needs: G25 G39] the computer never finished its turn").toBe("white");

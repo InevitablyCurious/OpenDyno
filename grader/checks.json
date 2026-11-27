@@ -168,7 +168,7 @@
     "G39": {
       "name": "The computer's roll takes the queued dice",
       "what": "A roll queued through /api/debug/roll is the next roll whoever rolls it — the computer's too, as the brief has it.",
-      "how": "Black's one piece on 7 with an open road, the player's turn finished and the cube the player's (no double first): queued 1-2 then 6-5, each followed by End Turn and the computer's turn, must move the piece 3 and then 11 pips. Told by the team, quoting what was queued and how far the computer moved. G30 and F94, which judge the computer's play on dice they queued, wait on it.",
+      "how": "Black's one piece on 7 with an open road, the cube the player's (no double first), white's turn played from a 2-1 (2 on 3: 3→1, 3→2): queued 1-2 then 6-5, each followed by End Turn and the computer's turn, must move the piece 3 and then 11 pips. Told by the team, quoting what was queued and how far the computer moved. G30 and F94, which judge the computer's play on dice they queued, wait on it.",
       "looks": "code"
     },
     "G40": {
@@ -180,7 +180,7 @@
     "G24": {
       "name": "Accepting the computer's double",
       "what": "Accepting the computer's double makes the cube 2 and owned by the player.",
-      "how": "Sets a double-offered state, accepts through the response endpoint, and asserts the cube is value 2 owner white in both the response and persisted state; then steps the computer's turn: it must not offer again on the player's cube ([aspect: again]) and must move ([aspect: plays]). On a later turn, in each race where the server offers with the cube in the middle, it must not offer with the cube the player's ([aspect: cubeheld]).",
+      "how": "Reaches a race the computer doubles in by play — white rolls 6-5, plays it out through /api/move and ends the turn — accepts the offer through the response endpoint, and asserts the cube is value 2 owner white in both the response and persisted state; then steps the computer's turn: it must not offer again on the player's cube ([aspect: again]) and must move ([aspect: plays]). On a later turn, in each race where the server offers with the cube in the middle, it must not offer with the cube the player's ([aspect: cubeheld]).",
       "looks": "code"
     },
     "G25": {
@@ -210,7 +210,7 @@
     "G30": {
       "name": "The computer plays the higher die when only one is playable",
       "what": "When only one of the computer's two dice can actually be played, it plays the higher one.",
-      "how": "Through the server, the way a game reaches the computer's turn: the player's turn finished, the computer's dice queued, End Turn, then one AI step at a time. In two spots where either number moves the computer's lone piece but not both (a 2 and a 4; a 5 and a 2), at every difficulty, three times each, the piece must move by the bigger number.",
+      "how": "Through the server, the way a game reaches the computer's turn: white plays to each seeded spot from a 2-1 (13/11, 12/11; 15/13, 14/13), the computer's dice queued, End Turn, then one AI step at a time. In two spots where either number moves the computer's lone piece but not both (a 2 and a 4; a 5 and a 2), at every difficulty, eight times each, the piece must move by the bigger number.",
       "looks": "code"
     },
     "G31": {
@@ -384,7 +384,7 @@
     "F18": {
       "name": "Dice values survive a reload",
       "what": "The rolled dice keep their exact values across a page reload.",
-      "how": "Sets the dice to 5 and 2, reloads, and requires the reported dice to still be 2 and 5.",
+      "how": "Queues 5-2 and presses Roll, reloads, and requires the reported dice to still be 2 and 5.",
       "looks": "page"
     },
     "F19": {
@@ -396,13 +396,13 @@
     "F20": {
       "name": "The doubling cube survives a reload",
       "what": "Who owns the cube, and therefore whether a double is allowed, stays the same across a reload.",
-      "how": "Sets the cube to be owned by black, reloads, and requires doubling to still be disallowed for white.",
+      "how": "At the standard opening, the player to roll and the cube in the middle, doubles through /api/double with the computer taking; reloads, and requires the cube to still be 2 and black's with doubling disallowed for white.",
       "looks": "page"
     },
     "F21": {
       "name": "Remaining dice survive a reload",
       "what": "The dice left to play mid-turn stay the same across a page reload.",
-      "how": "Sets one die already played (dice 5 and 2, remaining 2), reloads, and requires the remaining die to still be 2.",
+      "how": "Queues 5-2 and presses Roll, plays the 5 (13→8), reloads, and requires the remaining die to still be 2.",
       "looks": "page"
     },
     "F22": {
@@ -468,7 +468,7 @@
     "F33": {
       "name": "A double lets the player make four moves",
       "what": "A double gives the player four moves, not two.",
-      "how": "Sets a doubled dice state through the debug route, reloads, then clicks checker, hint, and move four times, asserting all four dice are consumed; a failure names how many moves the double gave, and one click that plays more than one move is told as that ([aspect: twice]). One click, one move: when a click spends more than one die of the double the player says so ([aspect: twice]), and when that click sent more than one move to /api/move the team says that too ([aspect: twicewhere]).",
+      "how": "Seeds a real 15-per-side board at the player's roll, reloads, queues 6-6-6-6 and presses Roll, then clicks checker, hint, and move four times, asserting all four dice are consumed; a failure names how many moves the double gave, and one click that plays more than one move is told as that ([aspect: twice]). One click, one move: when a click spends more than one die of the double the player says so ([aspect: twice]), and when that click sent more than one move to /api/move the team says that too ([aspect: twicewhere]).",
       "looks": "page"
     },
     "F35": {
@@ -498,7 +498,7 @@
     "F39": {
       "name": "Two dice, two moves",
       "what": "After any roll exactly two dice are on screen, and two different numbers give exactly two moves (a double's four are F33).",
-      "how": "Fixes the roll to 6-5 — the player's die first, so the player wins the opening roll and plays both numbers (a forced 5-6 would hand the turn to the computer) — and clicks Roll: two dice on screen ([aspect: extra]), two moves playable by clicking, no third; then seeds a later turn in the move phase with a double already rolled, since an opening roll is one die per side and can no longer be a double (G31): still two dice on screen ([aspect: double]). A third click that never comes back within 25 s is a frozen game ([aspect: frozen]), not 'no third move'.",
+      "how": "Fixes the roll to 6-5 — the player's die first, so the player wins the opening roll and plays both numbers (a forced 5-6 would hand the turn to the computer) — and clicks Roll: two dice on screen ([aspect: extra]), two moves playable by clicking, no third; then a real 15-per-side board at the player's roll with 6-6-6-6 queued and the page's own Roll dealing it, since an opening roll is one die per side and can no longer be a double (G31): still two dice on screen ([aspect: double]). A third click that never comes back within 25 s is a frozen game ([aspect: frozen]), not 'no third move'.",
       "looks": "page"
     },
     "F40": {
@@ -618,7 +618,7 @@
     "F59": {
       "name": "A piece lands at the far end",
       "what": "When a checker lands on a point that already holds checkers, it joins at the far end of the stack, farthest from the edge.",
-      "how": "White to move with a 2 left, one piece on 13 and one on 11: both are held in the page, and the piece on 13 is tapped to pick it up, up to eight times, and a move hint must come up ([aspect: pickup]); it is played onto 11. When both held pieces are the ones on 11, the arrival must be farther from the edge; a page that draws them afresh is not judged.",
+      "how": "A crafted 15-a-side board at the player's roll: queues 2-6, presses Roll, plays the 6 through /api/move (24→18) and reloads, leaving the 2 and the move 13→11 legal; one piece on 13 and one on 11: both are held in the page, and the piece on 13 is tapped to pick it up, up to eight times, and a move hint must come up ([aspect: pickup]); it is played onto 11. When both held pieces are the ones on 11, the arrival must be farther from the edge; a page that draws them afresh is not judged.",
       "looks": "page"
     },
     "F60": {
@@ -702,7 +702,7 @@
     "G33": {
       "name": "The computer does not offer a double at an even start",
       "what": "From the even opening position the computer's first turn, at any difficulty, offers no double.",
-      "how": "Through the running server: a game at the standard opening position with the computer to play 3-1 at easy, medium and hard; after its turn no double may be on offer.",
+      "how": "Through the running server at easy, medium and hard: white plays the opening 3-1 (8/5, 6/5) and ends the turn, then the computer's own turn runs; no double may be on offer.",
       "looks": "code"
     },
     "F72": {
@@ -768,7 +768,7 @@
     "F86": {
       "name": "A move hint looks like a faint green piece",
       "what": "A move hint is a dimmed, light-green marker the size of a piece, and it does not animate.",
-      "how": "Picks up a piece on a 3-5 and reads the first hint's own style: its box between 0.7 and 1.3 of a piece's width ([aspect: size]); a fill, border or text colour that is light green ([aspect: green]); that green, or the hint, see-through ([aspect: dim]); no running CSS animation ([aspect: still]).",
+      "how": "A 15-a-side board, white on 6 and black on 13, at the player's roll: queues 3-5, presses Roll, picks up a piece and reads the first hint's own style: its box between 0.7 and 1.3 of a piece's width ([aspect: size]); a fill, border or text colour that is light green ([aspect: green]); that green, or the hint, see-through ([aspect: dim]); no running CSS animation ([aspect: still]).",
       "looks": "page"
     },
     "F87": {
@@ -792,13 +792,13 @@
     "F90": {
       "name": "Taking the computer's double, the game plays on",
       "what": "When the computer offers a double during play and the player accepts, the computer plays its turn and the turn comes back to the player.",
-      "how": "In a browser: a position the computer leads by about 40 pips on hard, white to roll; rolls 2-1 through the page, plays it through the hints, clicks End Turn, waits for the page's own computer turn to offer (waits on F49), clicks Accept, and within 20 s requires the turn back with white or the game over.",
+      "how": "In a browser: a race the build itself doubles on, the middle of the rungs that draw an offer (each rung's white turn played out), re-seeded at the player's roll; queues 2-1 and presses Roll, plays it through the hints, clicks End Turn, waits for the page's own computer turn to offer (waits on F49), clicks Accept, and within 20 s requires the turn back with white or the game over.",
       "looks": "page"
     },
     "G35": {
       "name": "A seeded turn can double like a played one",
       "what": "A player turn set up through the debug route, cube centered, may double just as the same turn reached by play.",
-      "how": "Seeds white to roll on the opening board with a centered cube and asserts canDouble (after G11 shows a played turn can).",
+      "how": "Seeds a player turn in the roll phase with a centered cube and asserts canDouble, after the same turn reached by play (the computer wins the opening 3-5 and hands it over); then, for each race where the build's own cube function says double, seeds the race at the player's roll, rolls and plays out a 2-1 through the server, ends the turn, and requires the computer's own turn to draw its offer.",
       "looks": "code"
     },
     "F91": {

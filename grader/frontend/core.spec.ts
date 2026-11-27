@@ -2609,12 +2609,12 @@ function answerButton(page: Page, name: RegExp): Locator {
 // first rung is the race these checks always used.
 // With "middle" the race is the middle of the rungs the build offers on: a check
 // that plays a turn of white's before the offer needs room either side of it.
-// With `played` dice the player's turn on each rung is played (playRolledTurn),
-// not loaded: for a check that needs that finished turn to stay the player's.
+// Each rung's turn is played (seedRolled + rollPlayedOut), never loaded: for a
+// check that needs that finished turn to stay the player's.
 async function offerRace(
   page: Page,
   pick: "first" | "middle" = "first",
-  played?: number[],
+  played: number[],
 ): Promise<{ points: number[]; off: { white: number; black: number }; offered: boolean }> {
   const ladder: { points: number[]; off: { white: number; black: number } }[] = [];
   let six = 10, one = 1, whiteOff = 4;
@@ -2641,18 +2641,11 @@ async function offerRace(
   const offering: typeof ladder = [];
   for (const race of ladder) {
     await postJson(page, "/api/new", {});
-    if (played) {
-      // A rung the played roll finishes (the last checkers borne off: the 2026-11-21
-      // sweep's builds that never offered walked the whole ladder into it) is no
-      // race for the check — skipped, never a finding.
-      await seedRolled(page, { ...race, bar: { white: 0, black: 0 }, cube: { value: 1, owner: null }, difficulty: "hard", winner: null, message: "" }, played);
-      if (!turnStillPlayers(await rollPlayedOut(page))) continue;
-    } else {
-      await setupState(page, {
-        ...race, bar: { white: 0, black: 0 }, turn: "white", phase: "move", dice: [6, 5], remainingDice: [],
-        turnOver: true, cube: { value: 1, owner: null }, difficulty: "hard", winner: null, message: "",
-      });
-    }
+    // A rung the played roll finishes (the last checkers borne off: the 2026-11-21
+    // sweep's builds that never offered walked the whole ladder into it) is no
+    // race for the check — skipped, never a finding.
+    await seedRolled(page, { ...race, bar: { white: 0, black: 0 }, cube: { value: 1, owner: null }, difficulty: "hard", winner: null, message: "" }, played);
+    if (!turnStillPlayers(await rollPlayedOut(page))) continue;
     let state: any = await postJson(page, "/api/endturn", {});
     for (let guard = 0; guard < 12 && state?.turn === "black" && state?.phase !== "doubleOffered" && !state?.winner; guard++) {
       state = await postJson(page, "/api/ai", {});
@@ -2721,7 +2714,7 @@ test("[F90] REQ-DOUBLE-ACCEPT-PLAYS-ON — taking the computer's double, the gam
   // offering rungs so white's 2-1 leaves it inside.
   test.setTimeout(150_000);
   await openApp(page);
-  const { points, off } = await offerRace(page, "middle");
+  const { points, off } = await offerRace(page, "middle", [2, 1]);
   await setupState(page, {
     points,
     bar: { white: 0, black: 0 },
@@ -3287,12 +3280,8 @@ test("[F17] REQ-RELOAD — match score survives a reload", async ({ page }) => {
 test("[F18] REQ-RELOAD — dice values survive a reload", async ({ page }) => {
   await openApp(page);
   await postJson<ApiState>(page, "/api/new", {});
-  await setupState(page, {
-    phase: "move",
-    turn: "white",
-    dice: [5, 2],
-    remainingDice: [5, 2],
-  });
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [5, 2] });
+  await rollAndCheck(page, [5, 2], () => page.getByTestId("rollBtn").click());
   await page.reload();
   await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
   await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);
@@ -3314,23 +3303,36 @@ test("[F19] REQ-RELOAD — difficulty survives a reload", async ({ page }) => {
 test("[F20] REQ-RELOAD — the doubling cube survives a reload", async ({ page }) => {
   await openApp(page);
   await postJson<ApiState>(page, "/api/new", {});
-  await setupState(page, { cube: { value: 2, owner: "black" } });
+  await setupState(page, {
+    points: startingPoints(),
+    bar: { white: 0, black: 0 },
+    off: { white: 0, black: 0 },
+    turn: "white",
+    phase: "roll",
+    cube: { value: 1, owner: null },
+    difficulty: "medium",
+    winner: null,
+    message: "",
+  });
+  await page.reload();
+  await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
+  const doubled = await postJson<ApiState>(page, "/api/double", {});
+  expect(doubled.winner ?? null, "[needs: G12] the computer passed an even double").toBeNull();
   await page.reload();
   await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
   await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);
   const state = await readState(page);
+  expect(state.cube.value).toBe(2);
+  expect(state.cube.owner).toBe("black");
   expect(state.canDouble).toBe(false);
 });
 
 test("[F21] REQ-RELOAD — remaining dice survive a reload", async ({ page }) => {
   await openApp(page);
   await postJson<ApiState>(page, "/api/new", {});
-  await setupState(page, {
-    phase: "move",
-    turn: "white",
-    dice: [5, 2],
-    remainingDice: [2],
-  });
+  await postJson<ApiState>(page, "/api/debug/roll", { dice: [5, 2] });
+  await rollAndCheck(page, [5, 2], () => page.getByTestId("rollBtn").click());
+  await postJson<ApiState>(page, "/api/move", { from: 13, to: 8, die: 5 });
   await page.reload();
   await expect(page.getByTestId("board"), "[needs: F01]").toBeVisible();
   await expect(page.getByTestId("checker"), "[aspect: pieces] [needs: F02] after the reload not all 30 pieces are on the board").toHaveCount(30);

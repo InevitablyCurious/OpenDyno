@@ -466,11 +466,13 @@ test("[F86] REQ-HINT — a move hint looks like a faint green piece", async ({ p
     bar: { white: 0, black: 0 },
     off: { white: 0, black: 0 },
     turn: "white",
-    phase: "move",
-    dice: [3, 5],
-    remainingDice: [3, 5],
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
   });
   await page.reload();
+  await postDebugRoll(page, [3, 5]);
+  await rollAndCheck(page, [3, 5], () => page.getByTestId("rollBtn").click());
   const pickedUp = await pickUpAPiece(page, page.locator('[data-testid="hint"]'));
   expect(pickedUp, "[needs: REQ-HINT/hint F03 F60]").toBeTruthy();
   // Measured once the hints hold still, on one a player can see: run 1795223874

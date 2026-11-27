@@ -6,9 +6,10 @@ import { expect, pickUpAPiece, playerClick, rollAndCheck, setupState, test } fro
 //
 // The spec carries a double as four data entries, but it never asks the page
 // to DRAW four dice — what the player must feel is four moves, so that is
-// what the gate plays. An opening position is pushed through the debug API
-// with [6, 6, 6, 6], then the UI is driven the way a player drives it —
-// pick up a movable checker, click a hint, four times — and the server's
+// what the gate plays. A 15-per-side position is pushed through the debug API
+// at the player's roll with [6, 6, 6, 6] queued behind it, the page's own
+// Roll deals the double, and then the UI is driven the way a player drives
+// it — pick up a movable checker, click a hint, four times — and the server's
 // own state must show all four dice consumed. An app that draws two dice
 // but plays four moves passes; an app that draws four dice but plays two
 // fails.
@@ -64,12 +65,17 @@ test("[F33] REQ-DOUBLES — a double lets the player make four moves", async ({ 
     bar: { white: 0, black: 0 },
     off: { white: 0, black: 0 },
     turn: "white",
-    phase: "move",
-    dice: [6, 6, 6, 6],
-    remainingDice: [6, 6, 6, 6],
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
   });
 
   await page.reload();
+  // The double is the page's own roll, dealt by its own Roll button: the spec
+  // carries it as four entries, and the build must produce them itself rather
+  // than be handed a mid-move position that no roll ever reached.
+  await page.request.post("/api/debug/roll", { data: { dice: [6, 6, 6, 6] } });
+  await rollAndCheck(page, [6, 6, 6, 6], () => page.getByTestId("rollBtn").click());
   await expect(page.locator('[data-testid="board"]'), "[aspect: nomove] [needs: F01]").toBeVisible();
 
   const firstMove = "[aspect: nomove] [needs: REQ-HINT/hint F03 F25]";
@@ -252,8 +258,9 @@ test("[F39] REQ-DICE — a roll shows two dice, and two different numbers give t
 
   // A double: still only two dice on screen (its four moves are F33's). An
   // opening roll can no longer BE a double — the opening rolls ONE die per
-  // side — so the double is a LATER turn, set up the way F33 sets it up: a
-  // real 15-per-side board in the move phase with the double already rolled.
+  // side — so the double is a LATER turn, reached the way a player reaches it:
+  // a real 15-per-side board seeded at the player's roll, then the page's own
+  // Roll dealing the double (F33 does the same).
   const points = new Array(26).fill(0);
   points[24] = 2;
   points[13] = 5;
@@ -268,11 +275,23 @@ test("[F39] REQ-DICE — a roll shows two dice, and two different numbers give t
     bar: { white: 0, black: 0 },
     off: { white: 0, black: 0 },
     turn: "white",
-    phase: "move",
-    dice: [6, 6, 6, 6],
-    remainingDice: [6, 6, 6, 6],
+    phase: "roll",
+    dice: [],
+    remainingDice: [],
   });
   await page.reload();
   await expect(page.locator('[data-testid="board"]'), "[needs: F01]").toBeVisible();
-  expect(await landedDice(page), "[aspect: double] [needs: F45] more than two dice on screen after rolling a double").toBeLessThanOrEqual(2);
+  await page.request.post("/api/debug/roll", { data: { dice: [6, 6, 6, 6] } });
+  await rollAndCheck(page, [6, 6, 6, 6], () => page.getByTestId("rollBtn").click());
+  // A page that draws NO dice after a double passes "no more than two", so the
+  // double must also show the dice it is drawn with. The LIVE count is not
+  // enough on its own: a roll tumbles two dice before drawing the result
+  // (landedDice), so a build that animates two and then draws none would pass
+  // that line mid-tumble. Both bounds are read off the settled dice box.
+  await expect
+    .poll(() => visibleDice(page), { message: "[needs: REQ-RENDER/die F61] fewer than two dice after a roll", timeout: 5_000 })
+    .toBeGreaterThanOrEqual(2);
+  const drawn = await landedDice(page);
+  expect(drawn, "[needs: REQ-RENDER/die F61] fewer than two dice after rolling a double").toBeGreaterThanOrEqual(2);
+  expect(drawn, "[aspect: double] [needs: F45] more than two dice on screen after rolling a double").toBeLessThanOrEqual(2);
 });
