@@ -18,9 +18,10 @@ After each attempt the agent hears **only the earliest moment that still fails**
 deep in the game is not reported while the board itself is wrong, the same way a player never gets that far.
 
 **Conformance comes first.** Before anything else: the app starts, the names, tags and routes the spec fixes are
-there, and the debug route does what the spec says. The debug route matters because many checks set up a
-position through it instead of playing to it. If the route refuses a setup, that refusal is told first, once,
-by the team, instead of as twenty symptoms in later checks.
+there, and the debug route does what the spec says. Checks use the debug route only to set a legal start of a
+turn, then play to the position they judge, with real rolls, moves and End Turn, so a build that keeps its own
+record of the turn is never judged on a state it never produced (a guard holds every check to that). If the route
+refuses a setup, that refusal is told first, once, by the team, instead of as twenty symptoms in later checks.
 
 **Layers.** The page is built in three layers (board, pieces, gameplay). A grade during the board layer judges
 board checks only. A check from a finished layer that breaks again later is told, under its own opener: it was
