@@ -51,7 +51,6 @@ def _sample_manifest() -> CumulativeManifest:
             variant=entry.variant,
             phase_group=entry.phase_group,
             phase="DONE",
-            org_id="org-test",
         )
         for entry in schedule
     ]
@@ -59,7 +58,6 @@ def _sample_manifest() -> CumulativeManifest:
     return CumulativeManifest(
         created_at="2026-07-23T12:00:00Z",
         task="backgammon",
-        org_id="org-test",
         roster=roster,
         roster_hash=computed_roster_hash,
         config_fingerprint="cfg-12345",
@@ -178,14 +176,12 @@ def test_resume_or_create_creates_an_empty_log_then_resumes_without_clobber(
     manifest_path = tmp_path / "manifest.json"
     roster = _sample_roster()
     task = "backgammon"
-    org_id = "org-resume"
     config_fingerprint = "cfg-resume"
 
     created = resume_or_create(
         manifest_path,
         roster=roster,
         task=task,
-        org_id=org_id,
         config_fingerprint=config_fingerprint,
     )
 
@@ -205,7 +201,6 @@ def test_resume_or_create_creates_an_empty_log_then_resumes_without_clobber(
             variant=appended.variant,
             phase_group=appended.phase_group,
             phase="DONE",
-            org_id=org_id,
         )
     )
     created.updated_at = "2026-07-23T13:00:00Z"
@@ -215,7 +210,6 @@ def test_resume_or_create_creates_an_empty_log_then_resumes_without_clobber(
         manifest_path,
         roster=roster,
         task=task,
-        org_id=org_id,
         config_fingerprint=config_fingerprint,
     )
 
@@ -229,6 +223,5 @@ def test_resume_or_create_creates_an_empty_log_then_resumes_without_clobber(
             manifest_path,
             roster=list(reversed(roster)),
             task=task,
-            org_id=org_id,
             config_fingerprint=config_fingerprint,
         )

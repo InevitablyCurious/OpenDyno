@@ -467,7 +467,6 @@ class SessionRecord:
     run_id: str | None = None
     run_label: str | None = None
     session_id: str | None = None
-    org_id: str | None = None
     extraction_job_id: str | None = None
     session_fp: str | None = None
     candidate_refs: list[dict[str, Any]] = field(default_factory=list)
@@ -490,7 +489,6 @@ class SessionRecord:
             "run_id": self.run_id,
             "run_label": self.run_label,
             "session_id": self.session_id,
-            "org_id": self.org_id,
             "extraction_job_id": self.extraction_job_id,
             "session_fp": self.session_fp,
             "candidate_refs": [dict(candidate) for candidate in self.candidate_refs],
@@ -526,7 +524,6 @@ class SessionRecord:
             run_id=d.get("run_id"),
             run_label=d.get("run_label"),
             session_id=d.get("session_id"),
-            org_id=d.get("org_id"),
             extraction_job_id=d.get("extraction_job_id"),
             session_fp=d.get("session_fp"),
             candidate_refs=_dict_list(d.get("candidate_refs")),

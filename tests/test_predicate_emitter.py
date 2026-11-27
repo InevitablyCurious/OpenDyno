@@ -116,7 +116,6 @@ def _row(attempt, gate_results):
         "attempt": attempt,
         "sequence_index": 0,
         "variant": "a",
-        "org_id": "org",
         "session_id": "ses_x",
         "session_fp": "fp",
         "gate_results": gate_results,

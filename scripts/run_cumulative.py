@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from run_cumulative import (  # noqa: E402
     DEFAULT_MANIFEST_PATH,
-    DEFAULT_ORG_ID,
     DEFAULT_PROXY_RUNS_DIR,
     DEFAULT_SEED,
     DEFAULT_TASK_LABEL,

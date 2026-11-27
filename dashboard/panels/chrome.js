@@ -172,7 +172,6 @@ export function renderProvenance(board) {
     <span>${bit("policy", p.policy_version)} · ${anchorHtml}</span>
     <span>${esc(p.attestation ?? "bench-mock/self-declared")}</span>
     <span>${bit("worker", p.worker_image_fp)}</span>
-    <span>${bit("org", board.run?.org_id)}</span>
     <span>${bit("leader", p.leader_fp)}</span>
     <span>${bit("seed", p.seed)}</span>
     <span>clock: harness wall, not agent-reported</span>

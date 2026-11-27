@@ -115,7 +115,6 @@ export function emptyBoard() {
     max_attempts: null,
 
     run: {
-      org_id: null,
       model: null,
       variant: null, // "b" | "a" | null
       cell_label: null,

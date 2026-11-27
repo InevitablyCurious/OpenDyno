@@ -384,7 +384,6 @@ class ChallengeRunner(
         work_root: Path,
         model: str,
         variant: str = "a",
-        org_id: str = "",
         resume_budget: int = 2,
         token_cap: int = 200000,
         gate_timeout_s: int = DEFAULT_GATE_TIMEOUT_S,
@@ -495,9 +494,6 @@ class ChallengeRunner(
         elif resume_phase is not None:
             raise ValueError("resume_phase without resume_checkpoint")
         self.variant = str(variant)
-        # Bench identity for session titling (WO-STRIP-2b). Empty is legitimate
-        # (unit callers); the title then uses the "org" fallback component.
-        self.org_id = str(org_id or "")
         # Set once at cell start in _run_cell_impl (stable across attempts and
         # resumes); read by the serve-session create call and the first-run argv.
         self._cell_ts: int | None = None
@@ -883,9 +879,7 @@ class ChallengeRunner(
         # cell (serve session, first-run argv, result, status stream) carries
         # the identical deterministic title, stable across attempts/resumes.
         self._cell_ts = int(time.time())
-        self._session_title = bench_session_title(
-            self.org_id, self.variant, self._cell_ts
-        )
+        self._session_title = bench_session_title(self.variant, self._cell_ts)
         cell_cost_usd = 0.0
         run_dir = Path(run_dir).expanduser().resolve()
         run_dir.mkdir(parents=True, exist_ok=True)

@@ -12,7 +12,6 @@ here; that call lives in the runner methods left in __init__.py.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from harness.config import CLOUD_ORCAROUTER_PROVIDER
@@ -116,18 +115,12 @@ def build_worker_opencode_config(
     return config
 
 
-def _safe_title_org_component(org_id: str | None) -> str:
-    """Fold ``org_id`` to ``[A-Za-z0-9-]`` for embedding in a session title."""
-    folded = re.sub(r"[^A-Za-z0-9-]+", "-", str(org_id or "")).strip("-")
-    return folded or "org"
-
-
-def bench_session_title(org_id: str | None, variant: str, cell_ts: int) -> str:
+def bench_session_title(variant: str, cell_ts: int) -> str:
     """Deterministic, identifiable OpenCode session title for a bench cell.
 
-    Format: ``bench-<org_id>-<variant a|b>-<cell_ts>``. ``cell_ts`` is
+    Format: ``bench-<variant a|b>-<cell_ts>``. ``cell_ts`` is
     the epoch second captured ONCE at cell start, so the title is stable
     across every attempt and resume of that cell and lands verbatim in the
     exported session DB (``session.title``) for the prod dashboard.
     """
-    return f"bench-{_safe_title_org_component(org_id)}-{variant}-{int(cell_ts)}"
+    return f"bench-{variant}-{int(cell_ts)}"

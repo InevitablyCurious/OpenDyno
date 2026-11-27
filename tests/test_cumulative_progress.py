@@ -112,7 +112,6 @@ def _session_record(
         phase_group="b",
         phase="DONE",
         session_id=sid,
-        org_id="org-progress-test",
         extraction_job_id=f"job-{sequence_index}",
         session_fp=SessionRecord.session_fp_of(sid),
         candidate_refs=[],
@@ -610,7 +609,6 @@ def test_manifest_session_records_support_done_state_equivalent_convergence() ->
     manifest = CumulativeManifest(
         created_at="2026-07-24T00:00:00Z",
         task="backgammon",
-        org_id="org-progress-test",
         roster=roster,
         roster_hash=roster_hash(roster),
         config_fingerprint="cfg-progress-test",

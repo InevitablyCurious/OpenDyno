@@ -183,7 +183,6 @@ class PredicateOutcomeRecord:
     session_fp: str | None
     sequence_index: int | None
     variant: str | None
-    org_id: str | None
     attempt: object | None
     duration_ms: object | None
     reason: str | None
@@ -227,7 +226,6 @@ def build_records(
                 session_fp=status_row.get("session_fp"),
                 sequence_index=status_row.get("sequence_index"),
                 variant=status_row.get("variant"),
-                org_id=status_row.get("org_id"),
                 attempt=status_row.get("attempt"),
                 duration_ms=gate.get("duration_ms"),
                 reason=gate.get("reason"),

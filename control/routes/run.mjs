@@ -340,9 +340,6 @@ export const routes = [
         model,
         variant,
         kind,
-        // No launch names an org any more: the harness applies the campaign
-        // default itself and records it as the manifest's org_id.
-        org: null,
         manifest_arg: target.manifest_arg ?? null,
         pid,
         started_at: Date.now(),

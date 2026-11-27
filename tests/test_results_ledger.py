@@ -2,8 +2,8 @@
 
 Builds a synthetic scorecard (real RunManifest / ConvergencePoint to_dict()
 shape) plus a real StatusStream of per-cell attempt records, then asserts the
-emitted JSONL line's exact fields: the A cell carries variant=="a" and
-org_id is None; the B cell carries its per-cell org_id. WO-CONCUR-07: both
+emitted JSONL line's exact fields: the A cell carries variant=="a", the B
+cell variant=="b". WO-CONCUR-07: both
 variants also carry the ``contention`` covariates sub-dict (None only when the
 attempt published no progress). No
 metrics are invented: every value flows from the
@@ -39,7 +39,6 @@ def _manifest_to_dict() -> dict[str, Any]:
         served_model=None,
         requested_model="local/test-model",
         variant="mixed",
-        org_id="opendyno-org-0",
     ).to_dict()
 
 
@@ -136,7 +135,6 @@ def test_a_cell_record_shape(tmp_path: Path) -> None:
                 "type": "attempt",
                 "sequence_index": 0,
                 "variant": "a",
-                "org_id": "opendyno-org-0",
                 "served_model": None,
                 "verdict": "PASS",
                 "gate_totals": {"passed": 4, "failed": 0},
@@ -160,7 +158,6 @@ def test_a_cell_record_shape(tmp_path: Path) -> None:
     assert record["tree_id"] == "1787310000"
     assert record["run_id"] == "run-ledger-test"
     assert record["task"] == "backgammon"
-    assert record["org_id"] is None, "A baseline targets no org"
     assert record["model"] == "local/test-model"
     assert record["variant"] == "a"
     assert record["sequence_index"] == 0
@@ -219,7 +216,6 @@ def test_ledger_records_carry_contention_on_both_variants(tmp_path: Path) -> Non
                 "type": "attempt",
                 "sequence_index": 0,
                 "variant": "a",
-                "org_id": "opendyno-org-0",
                 "verdict": "PASS",
                 "session_fp": "fp-a-cell",
                 "session_id": "ses-a-cell",
@@ -231,7 +227,6 @@ def test_ledger_records_carry_contention_on_both_variants(tmp_path: Path) -> Non
                 "type": "attempt",
                 "sequence_index": 1,
                 "variant": "b",
-                "org_id": "org-b-target",
                 "verdict": "PASS",
                 "session_fp": "fp-b-cell",
                 "session_id": "ses-b-cell",
@@ -243,7 +238,6 @@ def test_ledger_records_carry_contention_on_both_variants(tmp_path: Path) -> Non
                 "type": "attempt",
                 "sequence_index": 2,
                 "variant": "a",
-                "org_id": "opendyno-org-0",
                 "verdict": "FAIL",
                 "session_fp": "fp-no-progress",
                 "session_id": "ses-no-progress",
@@ -287,7 +281,6 @@ def test_append_writes_jsonl_accumulates_and_preserves_torn_line(
                 "type": "attempt",
                 "sequence_index": 0,
                 "variant": "a",
-                "org_id": "opendyno-org-0",
                 "verdict": "PASS",
                 "session_fp": "fp-a-cell",
                 "session_id": "ses-a-cell",
@@ -383,7 +376,6 @@ def test_a_concurrent_cell_appends_only_its_own_record(tmp_path: Path) -> None:
                 "type": "attempt",
                 "sequence_index": seq,
                 "variant": "a",
-                "org_id": "opendyno-org-0",
                 "verdict": "FAIL",
                 "session_fp": f"fp-{seq}",
                 "session_id": f"ses-{seq}",

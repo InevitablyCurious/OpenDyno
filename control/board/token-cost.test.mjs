@@ -55,7 +55,6 @@ function attemptRow({ seq = 0, n = 1, variant = "a", workIn = 111, workOut = 222
     sequence_index: seq,
     attempt: n,
     variant,
-    org_id: "opendyno-org-0",
     verdict: "FAIL",
     terminal_outcome: false,
     terminal_reason: "gates_failed",
@@ -98,7 +97,6 @@ async function writeRun(root, records) {
   await writeFile(
     join(dir, "manifest.json"),
     JSON.stringify({
-      org_id: "opendyno-org-0",
       created_at: "2026-08-13T05:13:49Z",
       task: "backgammon-cumulative-primary",
       roster_hash: "abc",

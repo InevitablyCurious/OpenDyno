@@ -81,7 +81,6 @@ class CumulativeSequencer:
         runner: SessionRunner,
         roster: list[RosterEntry],
         task: str,
-        org_id: str,
         config_fingerprint: str,
         run_context: Mapping[str, Any] | None = None,
         chunk_plan_hash: str = "",
@@ -97,17 +96,11 @@ class CumulativeSequencer:
             normalized_manifest_path,
             roster=roster,
             task=task,
-            org_id=org_id,
             config_fingerprint=config_fingerprint,
             run_context=run_context,
             chunk_plan_hash=chunk_plan_hash,
         )
 
-        if manifest.org_id != org_id:
-            raise ValueError(
-                "cannot resume: org_id drift detected "
-                f"(manifest={manifest.org_id!r} expected={org_id!r})"
-            )
         if manifest.config_fingerprint != config_fingerprint:
             raise ValueError(
                 "cannot resume: config_fingerprint drift detected "
@@ -128,7 +121,6 @@ class CumulativeSequencer:
                     variant=session.variant,
                     phase_group=session.phase_group,
                     phase=SessionPhase.PREPARE_FIXTURE.value,
-                    org_id=org_id,
                 )
                 for session in self._manifest.schedule
             ]
@@ -154,7 +146,6 @@ class CumulativeSequencer:
             variant=entry.variant,
             phase_group=entry.phase_group,
             phase=SessionPhase.PREPARE_FIXTURE.value,
-            org_id=self._manifest.org_id,
         )
         self._manifest.schedule.append(entry)
         self._manifest.session_records.append(record)
@@ -216,7 +207,6 @@ class CumulativeSequencer:
                     session.sequence_index,
                     session.variant,
                 )
-                session.org_id = self._manifest.org_id
                 self._runner.prepare_fixture(session)
                 session.set_phase(SessionPhase.RUN_SESSION)
                 self._checkpoint()

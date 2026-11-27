@@ -87,7 +87,6 @@ def _build_runner(module: Any, tmp_path: Path, *, runs_dir: Path | None = None) 
     runner._proxy_base_url = "http://127.0.0.1:11434/v1"
     runner._proxy_token = "proxy-token-value"
     runner._progress = lambda message: None
-    runner._org_id = "org-test"
     runner._repo_root = tmp_path
     runner._run_manifest_base_path = str(runs_dir / "manifest.json")
     runner._run_manifest_written = False
@@ -175,7 +174,7 @@ def test_run_manifest_and_status_stream_written(tmp_path: Path) -> None:
     # (a) run manifest created with correct identity fields.
     manifest = _read_manifest(runs_dir)
     assert manifest["variant"] == "a"
-    assert manifest["org_id"] == "org-test"
+    assert "org_id" not in manifest, "OpenDyno has no orgs"
     assert manifest["requested_model"] == "local-llm-proxy/x"
     assert manifest["served_model"] is None  # fake meter returns []
     assert manifest["run_id"] == runs_dir.name
@@ -187,7 +186,6 @@ def test_run_manifest_and_status_stream_written(tmp_path: Path) -> None:
         "type",
         "sequence_index",
         "variant",
-        "org_id",
         "served_model",
         "verdict",
         "progress",
@@ -206,7 +204,7 @@ def test_run_manifest_and_status_stream_written(tmp_path: Path) -> None:
         assert record["schema_version"] == 1
         assert record["sequence_index"] == 0
         assert record["variant"] == "a"
-        assert record["org_id"] == "org-test"
+        assert "org_id" not in record
         assert record["extraction_state"] == "unknown"
         # WO-TRUNC-1: terminal outcome is recorded, never placeholder-null.
         assert record["terminal_outcome"] is True  # verdict PASS
@@ -340,7 +338,6 @@ def test_turn_terminal_records_appended_for_truncated_turns(tmp_path: Path) -> N
     assert turn["schema_version"] == 1
     assert turn["sequence_index"] == 0
     assert turn["variant"] == "a"
-    assert turn["org_id"] == "org-test"
     assert turn["terminal"] == "truncated_no_signal"
     assert turn["reason"] == "unknown"
     assert turn["turn_index"] == 7

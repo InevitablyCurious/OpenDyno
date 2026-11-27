@@ -37,7 +37,6 @@ def test_manifest_round_trip_with_and_without_run_context() -> None:
     manifest = CumulativeManifest(
         created_at="2026-07-30T01:00:00Z",
         task="backgammon",
-        org_id="org-test",
         roster=roster,
         roster_hash=roster_hash(roster),
         config_fingerprint="cfg",
@@ -70,7 +69,6 @@ def test_resume_keeps_original_run_context(tmp_path) -> None:
         path,
         roster=roster,
         task="backgammon",
-        org_id="org-test",
         config_fingerprint="cfg",
         run_context=first_context,
     )
@@ -78,7 +76,6 @@ def test_resume_keeps_original_run_context(tmp_path) -> None:
         path,
         roster=roster,
         task="backgammon",
-        org_id="org-test",
         config_fingerprint="cfg",
         run_context=second_context,
     )

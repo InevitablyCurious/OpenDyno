@@ -91,7 +91,6 @@ async function describeResult(dir, name) {
     name,
     readable: true,
     models,
-    org_id: manifest.org_id ?? null,
     task: manifest.task ?? null,
     seed: manifest.seed ?? null,
     created_at: manifest.created_at ?? null,

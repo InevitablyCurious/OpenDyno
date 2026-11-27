@@ -144,7 +144,6 @@ async function benchWithHistory(runs, { now = 1787310000_000 } = {}) {
     join(dir, "manifest.json"),
     JSON.stringify({
       created_at: "2026-08-20T15:48:58Z",
-      org_id: "opendyno-org-0",
       task: "backgammon-cumulative-primary",
       seed: 20260709,
       // The append log of clicks. A backup's counts come from the CELL
@@ -194,7 +193,6 @@ test("RESTORE: the list describes a backup by its CONTENT, not just its timestam
     assert.equal(b.counts.run_logs, 1);
     assert.equal(b.results[0].cells_a, 1);
     assert.equal(b.results[0].cells_b, 1);
-    assert.equal(b.results[0].org_id, "opendyno-org-0");
     assert.ok(b.bytes > 0);
     assert.equal(b.check.ok, true);
     // The id IS the moment, so the two can never disagree.

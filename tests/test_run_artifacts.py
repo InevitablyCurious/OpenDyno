@@ -25,7 +25,6 @@ def _manifest() -> RunManifest:
         served_model="qwen3.6-35b-bench",
         requested_model="local-llm-proxy/qwen3.6-35b-bench",
         variant="b",
-        org_id="org-1",
         source_commit="deadbeef1234",
         worker_image_fingerprint={"sha256": "abcd1234"},
         seed=42,
@@ -65,7 +64,6 @@ def _status_record(
         "schema_version": 1,
         "sequence_index": sequence_index,
         "variant": "b",
-        "org_id": "org-1",
         "served_model": {
             "model": "local-llm-proxy/qwen3.6-35b-bench",
             "upstream_model": "qwen3.6-35b",
@@ -118,7 +116,6 @@ def test_load_run_manifest_round_trips_all_fields(tmp_path) -> None:
     assert loaded.served_model == "qwen3.6-35b-bench"
     assert loaded.requested_model == "local-llm-proxy/qwen3.6-35b-bench"
     assert loaded.variant == "b"
-    assert loaded.org_id == "org-1"
     assert loaded.source_commit == "deadbeef1234"
     assert loaded.worker_image_fingerprint == {"sha256": "abcd1234"}
     assert loaded.seed == 42
@@ -287,7 +284,6 @@ def test_build_scorecard_reads_only_manifest_and_stream(tmp_path) -> None:
 
     assert scorecard["schema_version"] == RUN_ARTIFACTS_SCHEMA_VERSION
     assert scorecard["manifest"]["run_id"] == "run-abc"
-    assert scorecard["manifest"]["org_id"] == "org-1"
     assert scorecard["manifest"]["variant"] == "b"
     assert scorecard["stream_records"] == 4
     assert scorecard["scored_sessions"] == 2

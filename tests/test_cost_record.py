@@ -147,7 +147,6 @@ def _build_runner(
     runner._runs_dir = runs_dir
     runner._task_dir = tmp_path / "task"
     runner._task = "backgammon"
-    runner._org_id = "org-test"
     runner._repo_root = tmp_path
     runner._proxy_base_url = "http://127.0.0.1:11434/v1"
     runner._proxy_token = "proxy-token-value"

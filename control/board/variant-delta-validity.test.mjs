@@ -56,7 +56,6 @@ function attempt({
     sequence_index: seq,
     attempt: n,
     variant: mode,
-    org_id: "opendyno-org-0",
     verdict,
     terminal_outcome: false,
     terminal_reason: terminalReason,
@@ -282,7 +281,7 @@ test("ACTIVE RUN: a fresh manifest-only run outranks an older run WITH a status 
     );
     await writeFile(
       join(dead, "manifest.json"),
-      JSON.stringify({ org_id: "opendyno-org-0", created_at: "2026-08-12T07:04:09Z" }),
+      JSON.stringify({ created_at: "2026-08-12T07:04:09Z" }),
       "utf8",
     );
 
@@ -292,7 +291,7 @@ test("ACTIVE RUN: a fresh manifest-only run outranks an older run WITH a status 
     await mkdir(live, { recursive: true });
     await writeFile(
       join(live, "manifest.json"),
-      JSON.stringify({ org_id: "opendyno-org-0", created_at: "2026-08-13T05:13:49Z" }),
+      JSON.stringify({ created_at: "2026-08-13T05:13:49Z" }),
       "utf8",
     );
 
@@ -319,14 +318,14 @@ test("ACTIVE RUN: created_at beats mtime, so an archived rename cannot win", asy
     await mkdir(live, { recursive: true });
     await writeFile(
       join(live, "manifest.json"),
-      JSON.stringify({ org_id: "x", created_at: "2026-08-13T05:13:49Z" }),
+      JSON.stringify({ created_at: "2026-08-13T05:13:49Z" }),
       "utf8",
     );
 
     const archived = join(root, "cumulative.void-truncation-20260812T0253");
     await mkdir(archived, { recursive: true });
     const am = join(archived, "manifest.json");
-    await writeFile(am, JSON.stringify({ org_id: "x", created_at: "2026-08-12T07:04:09Z" }), "utf8");
+    await writeFile(am, JSON.stringify({ created_at: "2026-08-12T07:04:09Z" }), "utf8");
     // Touched AFTER the live run's manifest — the archive/rename case.
     const later = new Date(Date.now() + 60_000);
     await utimes(am, later, later);

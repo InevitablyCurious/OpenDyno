@@ -104,7 +104,6 @@ def _make_sequencer(
             )
         ],
         task="backgammon",
-        org_id="org-sequencer-test",
         config_fingerprint="cfg-sequencer-test",
     )
 
@@ -235,7 +234,6 @@ def test_stage_machine_has_no_extract_review_commit_or_index_ready_stages(
                 )
             ],
             task="backgammon",
-            org_id="org-sequencer-test",
             config_fingerprint="cfg-sequencer-test",
         )
 
@@ -334,7 +332,6 @@ def test_step_until_done_is_resume_safe_after_run_session_crash(tmp_path: Path) 
             )
         ],
         task="backgammon",
-        org_id="org-sequencer-test",
         config_fingerprint="cfg-sequencer-test",
     )
     done = resumed_sequencer.step_until_done()

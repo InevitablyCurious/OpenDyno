@@ -113,7 +113,6 @@ def _sequencer(tmp_path: Path, runner: _SeqRunner) -> CumulativeSequencer:
         runner=runner,
         roster=roster("p/a"),
         task="backgammon",
-        org_id="org-append-test",
         config_fingerprint="cfg-append-test",
     )
 

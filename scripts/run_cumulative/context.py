@@ -22,7 +22,6 @@ from harness.cumulative.results_ledger import append_run_records, read_tree_id
 from harness.cumulative.sequencer import CumulativeSequencer
 
 from .paths import (
-    DEFAULT_ORG_ID,
     PROMPTS_DIR,
     REPO_ROOT,
     PathLayout,
@@ -40,14 +39,6 @@ class CliContext(NamedTuple):
 
 
 def _build_context(args: argparse.Namespace, *, require_runtime: bool) -> CliContext:
-    # Card §2: --org is first-class; when omitted, every command falls back to
-    # the campaign default org. Centralised here so all subcommands (run,
-    # state, ...) resolve identically — previously str(None) reached
-    # the sequencer and `state` without --org died on a false org-drift error
-    # (2026-08-09). It is optional in both variants: a variant B cell's server is
-    # configured by the variant's own settings (harness/variant_slot.py).
-    if not str(getattr(args, "org", "") or "").strip():
-        args.org = DEFAULT_ORG_ID
     layout = _resolve_manifest_layout(str(args.manifest))
     layout.runs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -82,7 +73,6 @@ def _build_context(args: argparse.Namespace, *, require_runtime: bool) -> CliCon
         runner=runner,
         roster=roster,
         task=str(args.task),
-        org_id=str(args.org),
         config_fingerprint=config_fingerprint,
         run_context=current_run_context,
         chunk_plan_hash=compute_task_template_hash(PROMPTS_DIR) or "",

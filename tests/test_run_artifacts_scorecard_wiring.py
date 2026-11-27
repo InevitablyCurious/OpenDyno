@@ -94,7 +94,6 @@ class FakeRunner:
                 served_model=None,
                 requested_model=str(session.model),
                 variant=str(session.variant),
-                org_id=str(session.org_id),
             ),
         )
 
@@ -107,7 +106,6 @@ class FakeRunner:
                 "schema_version": 1,
                 "sequence_index": session.sequence_index,
                 "variant": str(session.variant),
-                "org_id": str(session.org_id),
                 "progress": progress_from_cell_result(telemetry).to_dict(),
                 "session_fp": str(session.session_fp),
                 "session_id": session.session_id,
@@ -133,7 +131,6 @@ def _make_sequencer(
             )
         ],
         task="backgammon",
-        org_id="org-wiring-test",
         config_fingerprint="cfg-wiring-test",
     )
     # ONE click appends ONE cell; these tests drive that cell to done.
@@ -210,7 +207,6 @@ def _write_scored_attempt(
             "schema_version": 1,
             "sequence_index": sequence_index,
             "variant": "b",
-            "org_id": "org-1",
             "progress": {
                 "problems_before": 3,
                 "problems_after": 1 if full_green else 2,
@@ -243,7 +239,6 @@ def _write_delivery(
             "schema_version": 1,
             "sequence_index": sequence_index,
             "variant": variant,
-            "org_id": "org-1",
             "delivery_state": delivery_state,
             "not_scored_reason": not_scored_reason,
         }
@@ -260,7 +255,6 @@ def _write_scorecard_manifest(tmp_path: Path) -> Path:
             served_model=None,
             requested_model="model-a",
             variant="b",
-            org_id="org-1",
         ),
     )
     return tmp_path / "manifest.json"
@@ -437,7 +431,6 @@ def _write_truncated_attempt(
         "schema_version": 1,
         "sequence_index": sequence_index,
         "variant": variant,
-        "org_id": "org-1",
         "progress": {
             "problems_before": 3,
             "problems_after": 1 if full_green else 2,
@@ -528,7 +521,6 @@ def test_cell_measured_blind_is_void_instrument_never_a_capability_fail(
         "schema_version": 1,
         "sequence_index": 0,
         "variant": "a",
-        "org_id": "org-1",
         "terminal_reason": "harness_error",
         # The signal the drive loop now emits when it loses the transcript.
         "observation_lost_turns": 1,

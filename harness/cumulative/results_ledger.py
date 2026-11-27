@@ -14,8 +14,8 @@ Invariants:
 - Torn-line-safe writer, matching ``StatusStream.append``: compact sorted-key
   JSON + newline, flush + fsync per record; readers skip unparseable lines.
 - None-honest: a field is None when its source does not carry it — never
-  zero-filled (``tree_id`` on the legacy flat layout, ``org_id``
-  on A cells, ``gate_totals``/``verdict`` when the stream lacks the record).
+  zero-filled (``tree_id`` on the legacy flat layout,
+  ``gate_totals``/``verdict`` when the stream lacks the record).
 """
 
 from __future__ import annotations
@@ -143,9 +143,6 @@ def build_run_records(
                 "tree_id": tree_id,
                 "run_id": run_id,
                 "task": task,
-                # Per-cell org: null on the A baseline by definition (the
-                # A variant targets no org); the stream's org_id on B.
-                "org_id": attempt.get("org_id") if variant == "b" else None,
                 "model": model,
                 "variant": variant,
                 "sequence_index": seq,

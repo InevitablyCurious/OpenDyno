@@ -32,7 +32,6 @@ from .context import (
 )
 from .paths import (
     DEFAULT_MANIFEST_PATH,
-    DEFAULT_ORG_ID,
     DEFAULT_PROXY_RUNS_DIR,
     DEFAULT_SEED,
     DEFAULT_TASK_LABEL,

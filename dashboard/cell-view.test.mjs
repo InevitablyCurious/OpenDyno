@@ -19,7 +19,7 @@ const AR = "backups/1789474325/1789474112/local/x";
 
 function board() {
   return {
-    run: { model: "m", org_id: null },
+    run: { model: "m" },
     runs: {
       list: [
         { run_dir: RD, sequence_index: 0, archived: false, status: "live" },

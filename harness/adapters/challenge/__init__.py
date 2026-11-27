@@ -125,7 +125,6 @@ from .hold_ui import (
 )
 from .worker_config import (
     build_worker_opencode_config,
-    _safe_title_org_component,
     bench_session_title,
 )
 

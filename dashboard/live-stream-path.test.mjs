@@ -49,7 +49,7 @@ async function fixture({ stream = STREAM } = {}) {
   await mkdir(cell, { recursive: true });
   await writeFile(
     join(campaign, "manifest.json"),
-    JSON.stringify({ created_at: "2099-01-01T00:00:00Z", org_id: "o", task: "t", roster: [{ model: "synthetic/model" }] }),
+    JSON.stringify({ created_at: "2099-01-01T00:00:00Z", task: "t", roster: [{ model: "synthetic/model" }] }),
   );
   await writeFile(join(campaign, "gate-roster.json"), JSON.stringify(ROSTER));
   if (stream) await writeFile(join(cell, "live.jsonl"), stream.map((r) => JSON.stringify(r)).join("\n") + "\n");

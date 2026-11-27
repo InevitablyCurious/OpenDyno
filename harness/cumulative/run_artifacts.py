@@ -24,7 +24,6 @@ Each record describes ONE attempt/cell of a scored session. Keys:
 - ``schema_version``: 1
 - ``sequence_index``: int — which roster cell this attempt belongs to
 - ``variant``: str ("a"/"b")
-- ``org_id``: str
 - ``served_model``: dict | None — API-reported served model, shape
   ``{"model": <requested>, "upstream_model": <served>|None}`` or None
 - ``verdict``: str
@@ -66,7 +65,7 @@ One record per cell whose delivery could not be verified, appended by the
 writer when a delivery attempt ends without a verifiable proof. The scorecard
 EXCLUDES these cells from the scored set and reports them distinctly as
 ``not_scored``. Keys: ``type``: "delivery", ``schema_version``: 1,
-``sequence_index`` (int), ``variant`` (str), ``org_id`` (str),
+``sequence_index`` (int), ``variant`` (str),
 ``delivery_state`` in {"unverified"} — only the fail-closed ``"unverified"``
 disposition excludes a cell; any other value is ignored by the reader —
 ``not_scored_reason`` (str, the reason the cell was not scored).
@@ -88,7 +87,7 @@ Turn-terminal accounting (WO-TRUNC-1):
 --------------------------------------
 One record per anomalously-ended turn, appended after the attempt records of
 the cell. Keys: ``type``: "turn_terminal", ``schema_version``: 1,
-``sequence_index``, ``variant``, ``org_id``, ``session_fp``,
+``sequence_index``, ``variant``, ``session_fp``,
 ``session_id``, ``phase`` (which worker invocation: initial / feedback-N /
 …), ``turn_index`` (step index within that invocation), ``terminal`` in
 {"truncated_no_signal","guard_abort","transport_error","stream_died_open",
@@ -136,7 +135,6 @@ class RunManifest:
     served_model: str | None = None
     requested_model: str | None = None
     variant: str = ""
-    org_id: str = ""
     source_commit: str | None = None
     worker_image_fingerprint: dict | str | None = None
     seed: int | None = None
@@ -176,7 +174,6 @@ class RunManifest:
             "served_model": self.served_model,
             "requested_model": self.requested_model,
             "variant": self.variant,
-            "org_id": self.org_id,
             "source_commit": self.source_commit,
             "worker_image_fingerprint": self.worker_image_fingerprint,
             "seed": self.seed,
@@ -199,7 +196,6 @@ class RunManifest:
             served_model=d.get("served_model"),
             requested_model=d.get("requested_model"),
             variant=str(d.get("variant", "")),
-            org_id=str(d.get("org_id", "")),
             source_commit=d.get("source_commit"),
             worker_image_fingerprint=d.get("worker_image_fingerprint"),
             seed=d.get("seed"),

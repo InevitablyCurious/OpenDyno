@@ -48,7 +48,6 @@ from harness.spend_key import (
 
 from .cost_from_disk import derive_cost_from_disk, derive_cost_meta
 from .paths import (
-    DEFAULT_ORG_ID,
     DEFAULT_PROXY_RUNS_DIR,
     GATE_ROSTER_TIMEOUT_S,
     REPO_ROOT,
@@ -374,7 +373,6 @@ class RealSessionRunner:
         self,
         *,
         task: str,
-        org_id: str,
         runs_dir: Path,
         repo_root: Path,
         proxy_base_url: str | None = None,
@@ -391,7 +389,6 @@ class RealSessionRunner:
         run_identity: str | None = None,
     ) -> None:
         self._task = task
-        self._org_id = org_id
         self._runs_dir = runs_dir
         self._repo_root = repo_root
         # WO-BENCH-WORKER-SANDBOX-HARDENING: ``proxy_base_url`` is ONLY the
@@ -649,7 +646,6 @@ class RealSessionRunner:
                 served_model=served_model,
                 requested_model=str(session.model),
                 variant=str(session.variant),
-                org_id=str(getattr(self, "_org_id", None) or ""),
                 source_commit=self._current_git_head(getattr(self, "_repo_root", None)),
                 worker_image_fingerprint=self._serialize_worker_fingerprint(result),
                 seed=getattr(self, "_seed", None),
@@ -771,7 +767,6 @@ class RealSessionRunner:
             "schema_version": 1,
             "sequence_index": session.sequence_index,
             "variant": str(session.variant),
-            "org_id": str(getattr(self, "_org_id", None) or ""),
             "served_model": served_model,
             "progress": progress_dict,
             # NO `work_*` TOKEN COUNTERS HERE. They are PER-ATTEMPT and are
@@ -1032,7 +1027,6 @@ class RealSessionRunner:
                     "schema_version": 1,
                     "sequence_index": session.sequence_index,
                     "variant": str(session.variant),
-                    "org_id": str(getattr(self, "_org_id", None) or ""),
                     "session_fp": session_fp,
                     "session_id": session_id,
                     "phase": str(anomaly.get("phase", "")),
@@ -1246,11 +1240,6 @@ class RealSessionRunner:
             "work_root": state.run_dir,
             "model": session.model,
             "variant": session.variant,
-            # WO-STRIP-2b: titles the cell's OpenCode session
-            # (bench-<org>-<variant>-<cell_ts>) for prod-dashboard
-            # identification. self._org_id is the authoritative source here —
-            # same seam the per-cell status record's org_id uses.
-            "org_id": str(getattr(self, "_org_id", None) or ""),
             "proxy_base_url": worker_proxy_base_url,
             "proxy_token": self._proxy_token,
             "logger": _LOG,
@@ -1436,9 +1425,6 @@ def _build_real_runner(
             key_fingerprint(proxy_token),
         )
 
-    org_id = str(getattr(args, "org", "") or "").strip() or DEFAULT_ORG_ID
-    args.org = org_id
-
     roster_filter = str(getattr(args, "roster_model", "") or "").strip()
     roster_marker = roster_filter.casefold() if roster_filter else None
     accepted_models: list[str] = []
@@ -1465,7 +1451,6 @@ def _build_real_runner(
 
     return RealSessionRunner(
         task=str(args.task),
-        org_id=str(args.org),
         # THE CAMPAIGN HOME ITSELF. It was `<campaign>/sessions` — which also made
         # the run manifest's `run_id` the literal string "sessions" on every run,
         # and pointed the manifest-path fallback one directory too deep. Cells now

@@ -492,18 +492,6 @@ def test_serve_drive_lost_observation_is_recorded_never_silently_clean(
 
 
 def test_bench_session_title_format_is_deterministic(tmp_path: Path) -> None:
-    """WO-STRIP-2b: ``bench-<org>-<variant>-<cell_ts>``, identifiably."""
-    title = bench_session_title("opendyno-org-0", "a", 1786777435)
-    assert title == "bench-opendyno-org-0-a-1786777435"
-    assert bench_session_title("opendyno-org-0", "b", 1786777435) == (
-        "bench-opendyno-org-0-b-1786777435"
-    )
-
-
-def test_bench_session_title_sanitizes_and_falls_back(tmp_path: Path) -> None:
-    """org_id is folded to [A-Za-z0-9-]; empty/none -> literal ``org``."""
-    assert bench_session_title("opendyno/org_0", "a", 1786777435) == (
-        "bench-opendyno-org-0-a-1786777435"
-    )
-    assert bench_session_title("", "b", 7) == "bench-org-b-7"
-    assert bench_session_title(None, "a", 7) == "bench-org-a-7"
+    """WO-STRIP-2b: ``bench-<variant>-<cell_ts>``, identifiably."""
+    assert bench_session_title("a", 1786777435) == "bench-a-1786777435"
+    assert bench_session_title("b", 1786777435) == "bench-b-1786777435"

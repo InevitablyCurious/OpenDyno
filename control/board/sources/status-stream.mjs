@@ -44,7 +44,6 @@ export async function readCell(ctx) {
       run: {
         variant: c.variant,
         cell_label: c.cell_label,
-        org_id: c.org_id,
         attempt: { current: c.attempt, max: null },
         turns: c.turns,
         tokens: {
@@ -87,7 +86,6 @@ function cellsFromRecords(records, dirName) {
         cell_label: `${dirName}-${String(seq).padStart(4, "0")}`,
         seq,
         variant: null,
-        org_id: null,
         attempt: null,
         verdict: null,
         complete: false,
@@ -129,7 +127,6 @@ function cellsFromRecords(records, dirName) {
     if (attempt !== null) c.attempt = Math.max(c.attempt ?? 0, attempt);
 
     c.variant = str(r.variant) ?? c.variant;
-    c.org_id = str(r.org_id) ?? c.org_id;
     c.verdict = str(r.verdict) ?? c.verdict;
     if (r.terminal_outcome === true || str(r.terminal_reason)) c.complete = true;
 

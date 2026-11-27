@@ -1,12 +1,12 @@
 // SOURCE: run-manifest — the active run's manifest.json (written at start):
-// provenance a skeptic checks first — org_id, model, seed, roster. policy_version
+// provenance a skeptic checks first — model, seed, roster. policy_version
 // and policy_anchor_status are always null now (the hub is no longer read).
 
 import { str, int } from "../contract.mjs";
 import { readJson, activeRun } from "./_runtime.mjs";
 
 export const id = "run-manifest";
-export const fields = ["provenance", "run.org_id", "run.model"];
+export const fields = ["provenance", "run.model"];
 export function describe() {
   return "run manifest — model identity, seed, provenance (RC-5)";
 }
@@ -38,7 +38,6 @@ export async function read(ctx) {
     },
     patch: {
       run: {
-        org_id: str(m.org_id),
         model,
         started_at: Date.parse(str(m.created_at) ?? "") || null,
       },

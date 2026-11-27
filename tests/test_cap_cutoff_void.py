@@ -49,7 +49,6 @@ def _manifest(tmp_path: Path) -> Path:
             served_model=None,
             requested_model="model-a",
             variant="b",
-            org_id="org-1",
         ),
     )
     return manifest_path
@@ -66,7 +65,6 @@ def _attempt(
         "schema_version": 1,
         "sequence_index": 0,
         "variant": "b",
-        "org_id": "org-1",
         "progress": {
             "problems_before": 3,
             "problems_after": 1 if full_green else 2,

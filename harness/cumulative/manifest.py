@@ -52,7 +52,6 @@ def roster_hash(roster: list[RosterEntry]) -> str:
 class CumulativeManifest:
     created_at: str
     task: str
-    org_id: str
     roster: list[RosterEntry]
     roster_hash: str
     config_fingerprint: str
@@ -76,7 +75,6 @@ class CumulativeManifest:
             "system_epoch": self.system_epoch,
             "created_at": self.created_at,
             "task": self.task,
-            "org_id": self.org_id,
             "roster": [entry.to_dict() for entry in self.roster],
             "roster_hash": self.roster_hash,
             "config_fingerprint": self.config_fingerprint,
@@ -97,7 +95,6 @@ class CumulativeManifest:
             schema_version=int(d["schema_version"]),
             created_at=str(d["created_at"]),
             task=str(d["task"]),
-            org_id=str(d["org_id"]),
             roster=[RosterEntry.from_dict(item) for item in roster_data],
             roster_hash=str(d["roster_hash"]),
             config_fingerprint=str(d["config_fingerprint"]),
@@ -196,7 +193,6 @@ def resume_or_create(
     *,
     roster: list[RosterEntry],
     task: str,
-    org_id: str,
     config_fingerprint: str,
     run_context: Mapping[str, Any] | None = None,
     chunk_plan_hash: str = "",
@@ -216,7 +212,6 @@ def resume_or_create(
     created = CumulativeManifest(
         created_at=now,
         task=task,
-        org_id=org_id,
         roster=list(roster),
         roster_hash=roster_hash(roster),
         config_fingerprint=config_fingerprint,
